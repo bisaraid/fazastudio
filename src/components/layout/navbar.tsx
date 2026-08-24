@@ -54,8 +54,8 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
 
           <div className="flex items-center gap-2 font-semibold">
             <Sparkles className="h-5 w-5 text-primary" />
-            <span className="hidden sm:inline">AutoContent Studio</span>
-            <span className="sm:hidden">ACS</span>
+            <span className="hidden sm:inline">Faza Studio</span>
+            <span className="sm:hidden">Faza Studio</span>
           </div>
 
           {/* Desktop nav links */}
@@ -146,7 +146,7 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
             <div className="flex items-center justify-between p-4 border-b">
               <div className="flex items-center gap-2 font-semibold">
                 <Sparkles className="h-5 w-5 text-primary" />
-                <span>AutoContent Studio</span>
+                <span>Faza Studio</span>
               </div>
               <button onClick={() => setShowMobileDrawer(false)} aria-label="Close menu">
                 <X className="h-5 w-5" />

@@ -86,7 +86,7 @@ export const PLANS: Plan[] = [
     features: [
       "5 kredit generate per bulan",
       "Kualitas 720p",
-      "Watermark Viraloop",
+      "Watermark Faza Studio",
       "Akses template dasar",
     ],
     highlighted: false,

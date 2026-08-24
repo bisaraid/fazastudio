@@ -53,7 +53,7 @@ export default function DashboardPage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
             <p className="text-muted-foreground mt-1">
-              Kelola dan buat konten baru dengan AutoContent Studio
+              Kelola dan buat konten baru dengan Faza Studio
             </p>
           </div>
           <Button

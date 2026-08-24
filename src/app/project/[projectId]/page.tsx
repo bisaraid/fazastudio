@@ -770,7 +770,7 @@ function AudioPanel({
                   </Button>
                   <a
                     href={audio.url}
-                    download="viraloop-audio.mp3"
+                    download="faza-studio-audio.mp3"
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-input text-xs font-medium hover:bg-muted/50 transition-colors"
                   >
                     <Download className="h-3.5 w-3.5" />

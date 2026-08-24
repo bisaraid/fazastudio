@@ -6,7 +6,7 @@ import { ThemeProvider } from "@/components/layout/theme-provider";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "AutoContent Studio — Viraloop",
+  title: "Faza Studio",
   description: "Buat konten viral dengan AI. Script, Audio, Subtitle, Video — semua otomatis.",
 };
 

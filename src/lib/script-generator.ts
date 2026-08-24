@@ -814,7 +814,7 @@ export async function generateScriptWithAI(
 
     return {
       id: generateId(),
-      title: `${topic} — AutoContent Studio`,
+      title: `${topic} — Faza Studio`,
       scenes: mappedScenes,
       fullScript,
       estimatedDuration: input.targetDuration || 60,
