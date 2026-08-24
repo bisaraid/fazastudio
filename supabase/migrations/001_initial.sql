@@ -1,0 +1,11 @@
+-- OBSOLETE — file ini TIDAK JADI dipakai.
+--
+-- KONTEKS:
+-- acs dan viraloop menggunakan SATU project Supabase yang SAMA
+-- (lefwhzfbqegohftltrqe.supabase.co). Semua tabel yang dibutuhkan
+-- Task 1-6 (content_categories, pattern_insights, usage_history,
+-- trending_suggestions, trend_signals) SUDAH ADA dan SUDAH BERISI DATA
+-- REAL dari crawler cron job yang jalan di Vercel (project viraloop).
+--
+-- TIDAK ADA migration yang perlu dijalankan.
+-- File ini boleh dihapus.
