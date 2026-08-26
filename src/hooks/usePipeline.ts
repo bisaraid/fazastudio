@@ -98,19 +98,17 @@ export function usePipeline() {
         error: null,
       }));
 
+      let progressInterval: ReturnType<typeof setInterval> | undefined;
+
       try {
-        // Simulate progress animation
-        const progressInterval = setInterval(() => {
+        // Progress bar tetap "hidup" SEDANG API berjalan (bukan diam di 0%).
+        // Interval di-clear di `finally` setelah API selesai — bukan sebelum fetch.
+        progressInterval = setInterval(() => {
           setProgress((prev) => ({
             ...prev,
-            progress: Math.min(prev.progress + Math.random() * 15, 90),
+            progress: Math.min(prev.progress + Math.random() * 12, 90),
           }));
-        }, 500);
-
-        // Simulate API delay (1-3 seconds)
-        await sleep(1500 + Math.random() * 1500);
-
-        clearInterval(progressInterval);
+        }, 400);
 
         switch (step) {
           case "script": {
@@ -477,6 +475,9 @@ export function usePipeline() {
           isRunning: false,
         }));
         return false;
+      } finally {
+        // Selalu hentikan interval progress setelah API selesai (sukses/gagal).
+        if (progressInterval) clearInterval(progressInterval);
       }
     },
     [store]
@@ -578,40 +579,6 @@ export function usePipeline() {
     []
   );
 
-  // Full Auto: generate all steps sequentially
-  const generateAll = useCallback(
-    async (formData: WizardFormData) => {
-      setProgress((prev) => ({ ...prev, isRunning: true, error: null }));
-
-      // Create project first
-      const project = await store.createProject(formData);
-      store.updateProjectStatus("processing");
-
-      const steps: PipelineStep[] = ["script", "audio", "subtitle", "video"];
-
-      for (const step of steps) {
-        const success = await generateSingleStep(step, project.id);
-        if (!success) {
-          store.updateProjectStatus("draft");
-          return;
-        }
-      }
-
-      // Mark as completed
-      store.updateProjectStatus("completed");
-      store.advanceStep("video");
-
-      setProgress((prev) => ({
-        ...prev,
-        currentStep: "export",
-        progress: 100,
-        statusMessage: "Semua selesai! Video siap di-export.",
-        isRunning: false,
-      }));
-    },
-    [generateSingleStep, store]
-  );
-
   const resetProgress = useCallback(() => {
     setProgress({
       currentStep: "script",
@@ -622,92 +589,11 @@ export function usePipeline() {
     });
   }, []);
 
-  // ===== EXPORT (ZIP) =====
-  const exportProject = useCallback(
-    async (projectId: string): Promise<{ success: boolean; error?: string }> => {
-      const project = useProjectStore.getState().projects.find((p) => p.id === projectId);
-      if (!project) return { success: false, error: "Project tidak ditemukan" };
-
-      setProgress((prev) => ({
-        ...prev,
-        currentStep: "export",
-        progress: 0,
-        statusMessage: "Menyiapkan file export...",
-        isRunning: true,
-        error: null,
-      }));
-
-      try {
-        const JSZip = (await import("jszip")).default;
-        const zip = new JSZip();
-
-        // 1. script.txt
-        const scriptText = project.script?.fullScript || project.script?.scenes?.map((s) => s.content).join("\n\n") || "";
-        zip.file("script.txt", scriptText);
-
-        // 2. audio.mp3 — download dari audio_url
-        if (project.audio?.url) {
-          const audioRes = await fetch(project.audio.url);
-          if (audioRes.ok) {
-            const audioBlob = await audioRes.blob();
-            zip.file("audio.mp3", audioBlob);
-          }
-        }
-
-        // 3. subtitle.srt — download dari subtitle_url
-        if (project.subtitle?.srtContent) {
-          zip.file("subtitle.srt", project.subtitle.srtContent);
-        }
-
-        // 4. video.mp4 — download dari video_url
-        if (project.video?.url) {
-          const videoRes = await fetch(project.video.url);
-          if (videoRes.ok) {
-            const videoBlob = await videoRes.blob();
-            zip.file("video.mp4", videoBlob);
-          }
-        }
-
-        const zipBlob = await zip.generateAsync({ type: "blob" });
-
-        // Trigger download otomatis
-        const url = URL.createObjectURL(zipBlob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${project.title || "project"}-export.zip`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        setProgress((prev) => ({
-          ...prev,
-          progress: 100,
-          statusMessage: "Export selesai! File ZIP terdownload.",
-          isRunning: false,
-        }));
-
-        return { success: true };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Export gagal";
-        setProgress((prev) => ({
-          ...prev,
-          progress: 0,
-          error: errorMessage,
-          isRunning: false,
-        }));
-        return { success: false, error: errorMessage };
-      }
-    },
-    []
-  );
 
   return {
     progress,
     generateStep,
     previewAudio,
-    generateAll,
     resetProgress,
-    exportProject,
   };
 }

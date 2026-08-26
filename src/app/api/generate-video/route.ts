@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join, dirname } from "path";
 import { validateApiKey } from "@/lib/api-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { getClientIp } from "@/lib/rate-limit";
+import { getServerIdentity, buildDeviceCookieHeader } from "@/lib/identity";
 import { checkCredits } from "@/lib/usage";
 
 /**
@@ -235,6 +235,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: auth.error || "Unauthorized" }, { status: 401 });
   }
 
+  // Identitas stable (device cookie) — dihitung di sini agar bisa diset di
+  // response headers SSE di bawah.
+  const identity = getServerIdentity(request);
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -270,8 +274,7 @@ export async function POST(request: NextRequest) {
         }
 
         // ===== CREDIT CHECK (guard only — credit already decremented at generate-script) =====
-        const identityKey = `anon:${getClientIp(request)}`;
-        const hasCredit = await checkCredits(identityKey);
+        const hasCredit = await checkCredits(identity.identityKey);
         if (!hasCredit) {
           send({ status: "error", statusCode: 402, message: "Kredit kamu habis! Upgrade untuk melanjutkan." });
           controller.close();
@@ -493,11 +496,14 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-    },
-  });
+  const headers: Record<string, string> = {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+  };
+  if (identity.isNew) {
+    headers["Set-Cookie"] = buildDeviceCookieHeader(identity.deviceId);
+  }
+
+  return new Response(stream, { headers });
 }

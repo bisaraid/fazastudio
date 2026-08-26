@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
-import { getClientIp } from "@/lib/rate-limit";
 import { getUsage } from "@/lib/usage";
+import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 
 /**
  * GET /api/usage
  *
- * Return usage credit/plan real untuk identity caller (based on IP for MVP).
+ * Return usage credit/plan real untuk identity caller (stable device cookie).
  * - Auth via validateApiKey
- * - identity_key = `anon:<ip>` (konsisten dengan identityKey generation routes)
+ * - identity diambil dari cookie `device_id` (anon:<uuid>), bukan IP.
  *
  * Response: { success: true, data: { plan, creditsTotal, creditsUsed, creditsRemaining } }
  */
@@ -19,11 +19,14 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const ip = getClientIp(request);
-    const identityKey = `anon:${ip}`;
-    const usage = await getUsage(identityKey);
+    const identity = getServerIdentity(request);
+    const usage = await getUsage(identity.identityKey);
 
-    return NextResponse.json({ success: true, data: usage });
+    const res = NextResponse.json({ success: true, data: usage });
+    if (identity.isNew) {
+      res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
+    }
+    return res;
   } catch (error) {
     console.error("[usage] GET error:", error);
     return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });

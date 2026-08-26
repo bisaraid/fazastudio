@@ -72,7 +72,6 @@ export const PIPELINE_STEPS = [
   { key: "audio" as const, label: "Audio", icon: "Music" },
   { key: "subtitle" as const, label: "Subtitle", icon: "Subtitles" },
   { key: "video" as const, label: "Video", icon: "Video" },
-  { key: "export" as const, label: "Export", icon: "Download" },
 ];
 
 export const PLANS: Plan[] = [

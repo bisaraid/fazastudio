@@ -11,7 +11,7 @@ import {
 } from "@/lib/tts";
 import { validateApiKey } from "@/lib/api-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { getClientIp } from "@/lib/rate-limit";
+import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 import { checkCredits } from "@/lib/usage";
 
 /**
@@ -160,7 +160,8 @@ export async function POST(request: NextRequest) {
 
     // ===== NON-PREVIEW: upload ke Supabase Storage bucket `acs-audio` =====
     // ===== CREDIT CHECK (guard only — credit already decremented at generate-script) =====
-    const identityKey = `anon:${getClientIp(request)}`;
+    const identity = getServerIdentity(request);
+    const identityKey = identity.identityKey;
     const hasCredit = await checkCredits(identityKey);
     if (!hasCredit) {
       return NextResponse.json(
@@ -211,7 +212,7 @@ export async function POST(request: NextRequest) {
       console.warn("[TTS] Update projects error:", updateProjectError);
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       success: true,
       data: {
         audioUrl,
@@ -219,6 +220,10 @@ export async function POST(request: NextRequest) {
         fileSize: buffer.length,
       },
     });
+    if (identity.isNew) {
+      res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
+    }
+    return res;
   } catch (error) {
     console.error("Generate TTS error:", error);
     return NextResponse.json(

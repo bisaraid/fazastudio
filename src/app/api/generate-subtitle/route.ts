@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { getClientIp } from "@/lib/rate-limit";
+import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 import { checkCredits } from "@/lib/usage";
 
 /**
@@ -159,7 +159,8 @@ export async function POST(request: NextRequest) {
     }
 
     // ===== CREDIT CHECK (guard only — credit already decremented at generate-script) =====
-    const identityKey = `anon:${getClientIp(request)}`;
+    const identity = getServerIdentity(request);
+    const identityKey = identity.identityKey;
     const hasCredit = await checkCredits(identityKey);
     if (!hasCredit) {
       return NextResponse.json(
@@ -265,7 +266,7 @@ export async function POST(request: NextRequest) {
       console.warn("[subtitle] Update projects error:", updateError);
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       success: true,
       data: {
         segments,
@@ -275,6 +276,10 @@ export async function POST(request: NextRequest) {
         subtitleUrl,
       },
     });
+    if (identity.isNew) {
+      res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
+    }
+    return res;
   } catch (error) {
     console.error("[generate-subtitle] Error:", error);
     return NextResponse.json(

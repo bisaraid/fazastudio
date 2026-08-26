@@ -12,6 +12,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { validateApiKey } from "@/lib/api-auth";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { decrementCredit } from "@/lib/usage";
+import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 
 export async function POST(request: NextRequest) {
   const ip = getClientIp(request);
@@ -70,8 +71,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate identityKey
-    const identityKey = `anon:${ip}`;
+    // Generate identityKey (stable device cookie, bukan IP)
+    const identity = getServerIdentity(request);
+    const identityKey = identity.identityKey;
 
     // ===== CREDIT CHECK (decrement ONCE per project) =====
     const hasCredit = await decrementCredit(identityKey);
@@ -141,7 +143,7 @@ export async function POST(request: NextRequest) {
       console.log(`[Script] Persist generated script: ${body.projectId}`);
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       success: true,
       data: {
         id: script.id,
@@ -154,6 +156,10 @@ export async function POST(request: NextRequest) {
         failedSegment: script.failedSegment ?? null,
       },
     });
+    if (identity.isNew) {
+      res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
+    }
+    return res;
   } catch (error) {
     console.error("[generate-script] Error:", error);
     return NextResponse.json(

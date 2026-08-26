@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { clearClientIdentity } from "@/lib/identity";
 
 interface NavbarProps {
   onMenuToggle?: () => void;
@@ -123,9 +124,19 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
                       <Settings className="h-4 w-4" />
                       Pengaturan
                     </button>
-                    <button className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent">
+                    <button
+                      onClick={() => {
+                        if (confirm("Ini akan menghapus semua data lokal dan riwayat proyek di perangkat ini. Lanjutkan?")) {
+                          clearClientIdentity();
+                          localStorage.clear();
+                          sessionStorage.clear();
+                          router.push("/");
+                        }
+                      }}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                    >
                       <LogOut className="h-4 w-4" />
-                      Keluar
+                      Reset Identitas
                     </button>
                   </div>
                 </>
@@ -167,9 +178,19 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
                 </button>
               ))}
               <div className="border-t my-3" />
-              <button className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-destructive hover:bg-destructive/10 transition-colors">
+              <button
+                onClick={() => {
+                  if (confirm("Ini akan menghapus semua data lokal dan riwayat proyek di perangkat ini. Lanjutkan?")) {
+                    clearClientIdentity();
+                    localStorage.clear();
+                    sessionStorage.clear();
+                    router.push("/");
+                  }
+                }}
+                className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-destructive hover:bg-destructive/10 transition-colors"
+              >
                 <LogOut className="h-5 w-5" />
-                Keluar
+                Reset Identitas
               </button>
             </nav>
           </div>

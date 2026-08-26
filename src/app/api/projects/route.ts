@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { getClientIp } from "@/lib/rate-limit";
+import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 
 export async function GET(request: NextRequest) {
   // ===== AUTH CHECK =====
@@ -11,8 +11,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const ip = getClientIp(request);
-    const identityKey = `anon:${ip}`;
+    const identity = getServerIdentity(request);
+    const identityKey = identity.identityKey;
 
     const supabase = createServiceRoleClient();
     const { data, error } = await supabase
@@ -26,7 +26,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Gagal mengambil projects" }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, data: data || [] });
+    const res = NextResponse.json({ success: true, data: data || [] });
+    if (identity.isNew) {
+      res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
+    }
+    return res;
   } catch (error) {
     console.error("[projects] GET error:", error);
     return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
@@ -42,8 +46,8 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const ip = getClientIp(request);
-    const identityKey = `anon:${ip}`;
+    const identity = getServerIdentity(request);
+    const identityKey = identity.identityKey;
 
     const supabase = createServiceRoleClient();
 
@@ -79,9 +83,59 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Gagal menyimpan project" }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, data });
+    const res = NextResponse.json({ success: true, data });
+    if (identity.isNew) {
+      res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
+    }
+    return res;
   } catch (error) {
     console.error("[projects] POST error:", error);
+    return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  // ===== AUTH CHECK =====
+  const auth = validateApiKey(request);
+  if (!auth.valid) {
+    return NextResponse.json({ success: false, error: auth.error || "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const projectId = request.nextUrl.searchParams.get("id");
+    if (!projectId || projectId.trim() === "") {
+      return NextResponse.json(
+        { success: false, error: "Parameter id wajib diisi" },
+        { status: 400 }
+      );
+    }
+
+    const identity = getServerIdentity(request);
+    const identityKey = identity.identityKey;
+
+    const supabase = createServiceRoleClient();
+    // Hapus hanya project milik identity caller — cegah hapus punya orang lain.
+    const { error } = await supabase
+      .from("projects")
+      .delete()
+      .eq("id", projectId)
+      .eq("identity_key", identityKey);
+
+    if (error) {
+      console.error("[projects] DELETE error:", error);
+      return NextResponse.json(
+        { success: false, error: "Gagal menghapus project" },
+        { status: 500 }
+      );
+    }
+
+    const res = NextResponse.json({ success: true });
+    if (identity.isNew) {
+      res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
+    }
+    return res;
+  } catch (error) {
+    console.error("[projects] DELETE error:", error);
     return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
   }
 }

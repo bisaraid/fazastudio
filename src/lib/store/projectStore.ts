@@ -31,10 +31,11 @@ interface ProjectState {
   setVideoResult: (result: VideoResult) => void;
   setFootageResult: (footage: FootageOption) => void;
   updateProjectStatus: (status: Project["status"]) => void;
+  updateProjectMeta: (meta: Partial<Pick<Project, "platform" | "targetDuration">>) => void;
   advanceStep: (step: PipelineStep) => void;
   resetWizardForm: () => void;
   updateWizardForm: (data: Partial<WizardFormData>) => void;
-  deleteProject: (projectId: string) => void;
+  deleteProject: (projectId: string) => Promise<void>;
 }
 
 const DEFAULT_WIZARD_FORM: WizardFormData = {
@@ -273,7 +274,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       video: result,
       steps: { ...currentProject.steps, video: "done" as StepStatus },
       status: "completed" as const,
-      currentStep: "export" as PipelineStep,
+      currentStep: "video" as PipelineStep,
       updatedAt: new Date().toISOString(),
     };
 
@@ -321,13 +322,31 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }));
   },
 
+  updateProjectMeta: (meta) => {
+    const { currentProject } = get();
+    if (!currentProject) return;
+
+    const updatedProject = {
+      ...currentProject,
+      ...meta,
+      updatedAt: new Date().toISOString(),
+    };
+
+    set((state) => ({
+      currentProject: updatedProject,
+      projects: state.projects.map((p) =>
+        p.id === updatedProject.id ? updatedProject : p
+      ),
+    }));
+  },
+
   advanceStep: (step: PipelineStep) => {
     const { currentProject } = get();
     if (!currentProject) return;
 
     // Subtitle adalah dependency internal dari Video — bukan destination step.
-    // UX final: Script → Audio → Video → Export.
-    const stepOrder: PipelineStep[] = ["script", "audio", "video", "export"];
+    // UX final: Script → Audio → Video. Export sudah tidak jadi step UI.
+    const stepOrder: PipelineStep[] = ["script", "audio", "video"];
     const currentIndex = stepOrder.indexOf(step);
     const nextStep = stepOrder[currentIndex + 1];
 
@@ -357,11 +376,29 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }));
   },
 
-  deleteProject: (projectId: string) => {
+  deleteProject: async (projectId: string) => {
     const { currentProject } = get();
+
+    // Optimistic update: hapus dari state lokal dulu agar UI langsung merespons.
     set((state) => ({
       projects: state.projects.filter((p) => p.id !== projectId),
       currentProject: currentProject?.id === projectId ? null : currentProject,
     }));
+
+    try {
+      const res = await fetch(`/api/projects?id=${encodeURIComponent(projectId)}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        // Gagal hapus di DB → reload lagi agar UI tidak menipu (project tidak nyambung).
+        console.error("[store] deleteProject gagal di API:", res.status);
+        await get().loadProjects();
+      }
+    } catch (err) {
+      // Jaringan/error lain → reload agar state konsisten dengan DB.
+      console.error("[store] deleteProject error:", err);
+      await get().loadProjects();
+    }
   },
 }));

@@ -2,22 +2,22 @@
 
 import { PipelineStep } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { Check, FileText, Music, Video, Download } from "lucide-react";
+import { Check, FileText, Music, Video } from "lucide-react";
 
 const STEP_ICONS: Record<PipelineStep, typeof FileText> = {
   script: FileText,
   audio: Music,
   subtitle: Music, // subtitle adalah dependency internal — tidak tampil sebagai step visual
   video: Video,
-  export: Download,
+  export: Video, // export tidak dirender — fallback icon (untuk type-safety)
 };
 
 const STEP_LABELS: Record<PipelineStep, string> = {
   script: "Script",
   audio: "Audio",
-  subtitle: "Subtitle", // tetap ada di type, tapi tidak dirender sebagai step
+  subtitle: "Subtitle",
   video: "Video",
-  export: "Export",
+  export: "Export", // tidak dirender
 };
 
 interface PipelineStepperProps {
@@ -27,8 +27,8 @@ interface PipelineStepperProps {
 }
 
 // Subtitle adalah dependency internal dari Video — bukan destination step.
-// UX final: Script → Audio → Video → Export.
-const STEP_ORDER: PipelineStep[] = ["script", "audio", "video", "export"];
+// UX final: Script → Audio → Video. Export sudah tidak jadi step UI.
+const STEP_ORDER: PipelineStep[] = ["script", "audio", "video"];
 
 export function PipelineStepper({ currentStep, steps, onStepClick }: PipelineStepperProps) {
   const currentIndex = STEP_ORDER.indexOf(currentStep);

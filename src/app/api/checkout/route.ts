@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
-import { getClientIp } from "@/lib/rate-limit";
+import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 import Midtrans from "midtrans-client";
 
 /**
@@ -64,7 +64,8 @@ export async function GET(request: NextRequest) {
   const isProduction = process.env.MIDTRANS_IS_PRODUCTION === "true";
 
   try {
-    const identityKey = `anon:${getClientIp(request)}`;
+    const identity = getServerIdentity(request);
+    const identityKey = identity.identityKey;
     const orderId = `${plan}_${Date.now()}_${b64urlEncode(identityKey)}`;
 
     const snap = new Midtrans.Snap({
@@ -91,11 +92,15 @@ export async function GET(request: NextRequest) {
 
     const response = await snap.createTransaction(parameter);
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       success: true,
       token: response.token,
       redirect_url: response.redirect_url || null,
     });
+    if (identity.isNew) {
+      res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
+    }
+    return res;
   } catch (error) {
     console.error("[checkout] Midtrans error:", error);
     return NextResponse.json(
