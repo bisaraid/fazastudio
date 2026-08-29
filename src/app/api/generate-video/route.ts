@@ -178,6 +178,52 @@ async function fetchPexelsBackground(query: string): Promise<string> {
   return best?.link || files[0]?.link;
 }
 
+/** Bangun query pencarian Pexels dari satu scene (prioritas imagePrompt → heading → content). */
+function buildSceneQuery(scene: any, fallbackGenre?: string): string {
+  const raw =
+    scene?.imagePrompt ||
+    scene?.visualPrompt ||
+    scene?.image_prompt ||
+    scene?.heading ||
+    scene?.content ||
+    "";
+  const cleaned = String(raw).replace(/\[.*?\]/g, "").replace(/\s+/g, " ").trim();
+  // Ambil bagian deskriptif ringkas (max ~10 kata) agar query Pexels relevan.
+  const words = cleaned ? cleaned.split(" ") : [];
+  const q = words.length > 10 ? words.slice(0, 10).join(" ") : cleaned;
+  if (q) return q;
+  return fallbackGenre || "cinematic";
+}
+
+/** Ambil video unik per scene secara otomatis. Kembalikan [{ path, duration }]. */
+async function fetchSceneVisuals(
+  scenes: any[],
+  workDir: string,
+  fallbackGenre?: string
+): Promise<{ path: string; duration: number; ok: boolean }[]> {
+  const limited = scenes ? scenes.slice(0, 10) : [];
+  if (limited.length === 0) return [];
+
+  // Fetch paralel per scene (maks 10) agar cepat.
+  const results = await Promise.all(
+    limited.map(async (scene, i) => {
+      const query = buildSceneQuery(scene, fallbackGenre);
+      try {
+        const url = await fetchPexelsBackground(query);
+        const buf = await fetchBuffer(url);
+        const path = join(workDir, `auto-scene-${i}.mp4`);
+        await writeFile(path, buf);
+        return { path, duration: 0, ok: true };
+      } catch (e) {
+        console.warn(`[Video] Gagal fetch visual scene ${i} (${query}):`, e);
+        return { path: "", duration: 0, ok: false };
+      }
+    })
+  );
+
+  return results;
+}
+
 async function fetchBuffer(url: string): Promise<Buffer> {
   // Data URI base64
   if (url.startsWith("data:")) {
@@ -267,6 +313,8 @@ export async function POST(request: NextRequest) {
           platform,
           // Timeline: footage per scene untuk concat (jika ada)
           sceneFootage,
+          // Scene list dari script — untuk visual otomatis per-scene
+          scenes,
         } = body;
 
         if (!audioUrl || !subtitleUrl || !projectId) {
@@ -376,7 +424,56 @@ export async function POST(request: NextRequest) {
         const scalePad = `scale=${outW}:${outH}:force_original_aspect_ratio=decrease,pad=${outW}:${outH}:(ow-iw)/2:(oh-ih)/2`;
 
         let args: string[];
-        if (hasSceneFootage) {
+
+        // ===== OTOMATIS PER-SCENE: bila tidak ada sceneFootage manual & ada data scene,
+        // pecah visual jadi video unik per scene mengikuti durasi total audio.
+        let autoSceneClipped: { path: string; duration: number; ok: boolean }[] | null = null;
+        if (!hasSceneFootage && Array.isArray(scenes) && scenes.length > 0) {
+          autoSceneClipped = await fetchSceneVisuals(scenes, workDir, genre);
+          const valid = autoSceneClipped.filter((s) => s.ok);
+          console.log(`[Video] Auto per-scene: ${valid.length}/${scenes.length} scene visual dipakai`);
+          // Jika tidak ada yang valid, fallback ke single-clip (biarkan null).
+          if (valid.length === 0) autoSceneClipped = null;
+        }
+
+        if (autoSceneClipped && autoSceneClipped.length > 0) {
+          // Durasi per scene dibagi rata dari total audio.
+          const visible = autoSceneClipped.filter((s) => s.ok);
+          const perSceneDur = totalDuration / visible.length;
+          const sceneInputs = visible.map((s) => ({ path: s.path, duration: perSceneDur }));
+
+          // Bangun filter_complex: scale+pad+trim tiap scene → concat → subtitles
+          const parts: string[] = [];
+          const concatInputs: string[] = [];
+          for (let i = 0; i < sceneInputs.length; i++) {
+            const dur = sceneInputs[i].duration;
+            parts.push(
+              `[${i}:v]${scalePad},trim=duration=${dur},setpts=PTS-STARTPTS[v${i}]`
+            );
+            concatInputs.push(`[v${i}]`);
+          }
+          const filterComplex =
+            parts.join(";") +
+            `;${concatInputs.join("")}concat=n=${sceneInputs.length}:v=1:a=0[base];` +
+            `[base]subtitles=${escapedSubtitlePath}:force_style='${forceStyle}'[vout]`;
+
+          args = [
+            ...sceneInputs.map((s) => ["-stream_loop", "-1", "-i", s.path]).flat(),
+            "-i", inputAudio,
+            "-filter_complex", filterComplex,
+            "-map", "[vout]",
+            "-map", `${sceneInputs.length}:a`,
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-c:a", "aac",
+            "-shortest",
+            "-t", String(totalDuration),
+            "-movflags", "+faststart",
+            "-y",
+            outputFile,
+          ];
+          console.log(`[Video] Render auto per-scene (concat ${sceneInputs.length} clips)`);
+        } else if (hasSceneFootage) {
           // Fetch + tulis tiap footage scene ke file terpisah
           const sceneInputs: { path: string; duration: number }[] = [];
           for (let i = 0; i < sceneFootage.length; i++) {

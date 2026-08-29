@@ -91,7 +91,22 @@ function mapDbRowToProject(row: any): Project {
     targetDuration: row.target_duration ?? 0,
     platform: (row.platform || "") as any,
     mode: "step-by-step",
-    status: (row.status || "draft") as Project["status"],
+    // Status dihitung (derive) dari data konten yang nyata — bukan dari kolom
+    // "status" yang mudah basi/lupa di-update. Ini membuat dashboard selalu
+    // sinkron dengan progress step.
+    //   - ada video            → "completed"
+    //   - ada script/audio     → "processing"
+    //   - belum ada apa-apa    → "draft"
+    // Aturan: "completed" DB tetap dihormati sebagai override, tapi jika ada
+    // video, otomatis dianggap selesai.
+    status: (() => {
+      const derived =
+        row.video_url ? "completed"
+        : row.script || row.audio_url ? "processing"
+        : "draft";
+      if (row.status === "completed" && derived !== "draft") return "completed";
+      return derived as Project["status"];
+    })(),
     currentStep: "script",
     // Derive step status dari data DB — jangan reset semua ke "pending".
     // Jika data sudah ada di DB, step dianggap "done".

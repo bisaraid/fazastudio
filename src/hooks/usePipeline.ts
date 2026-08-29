@@ -445,6 +445,9 @@ export function usePipeline() {
                 subtitleStyle: project.subtitle?.style,
                 // Timeline: footage per scene untuk concat (jika ada)
                 sceneFootage,
+                // Scene list dari script — untuk visual otomatis per-scene
+                // (route akan memilih video unik per scene bila sceneFootage kosong).
+                scenes: project.script?.scenes || [],
               }),
             });
 
