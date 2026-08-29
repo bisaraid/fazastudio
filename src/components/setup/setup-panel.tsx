@@ -57,10 +57,8 @@ export function SetupPanel({
 }: SetupPanelProps) {
   const { updateProjectSetup } = useProjectStore();
 
-  const [platform, setPlatform] = useState<Platform>(initialPlatform || "tiktok");
-  const [targetDuration, setTargetDuration] = useState<number>(
-    initialDuration || DURATION_BY_PLATFORM[initialPlatform || "tiktok"][0].seconds
-  );
+  const [platform, setPlatform] = useState<Platform | null>(initialPlatform ?? null);
+  const [targetDuration, setTargetDuration] = useState<number>(initialDuration ?? 0);
   const [genre, setGenre] = useState<Genre | null>(initialGenre || null);
   const [customGenre, setCustomGenre] = useState<string>(initialCustomGenre || "");
   const [animateDuration, setAnimateDuration] = useState(false);
@@ -131,7 +129,7 @@ export function SetupPanel({
       genre: genre as Genre,
       customGenre: isCustomGenre ? customGenre : undefined,
       topic,
-      platform,
+      platform: platform as Platform,
       targetDuration,
     });
     onContinue();
@@ -181,7 +179,7 @@ export function SetupPanel({
                 : "flex flex-wrap gap-2"
             }
           >
-            {DURATION_BY_PLATFORM[platform].map((d) => {
+            {DURATION_BY_PLATFORM[platform!].map((d) => {
               const active = durationChosen && targetDuration === d.seconds;
               return (
                 <button

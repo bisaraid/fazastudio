@@ -195,14 +195,14 @@ export interface VideoResult {
 // ============================================================
 
 export interface WizardFormData {
-  genre: Genre;
+  genre: Genre | "";
   customGenre?: string;
   topic: string;
   tone: Tone;
   targetDuration: number;
   /** Label durasi (mis. "30 detik", "3 menit") — sub-opsi dari platform */
   duration?: string;
-  platform: Platform;
+  platform: Platform | "";
   mode: PipelineMode;
   voiceName: string;
   voiceLanguage: string;

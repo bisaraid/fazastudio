@@ -40,7 +40,7 @@ interface ProjectState {
     topic: string;
     platform: Platform;
     targetDuration: number;
-  }) => void;
+  }) => Promise<void>;
   advanceStep: (step: PipelineStep) => void;
   resetWizardForm: () => void;
   updateWizardForm: (data: Partial<WizardFormData>) => void;
@@ -48,12 +48,12 @@ interface ProjectState {
 }
 
 const DEFAULT_WIZARD_FORM: WizardFormData = {
-  genre: "edukasi",
+  genre: "",
   customGenre: undefined,
   topic: "",
   tone: "kasual",
-  targetDuration: 60,
-  platform: "tiktok",
+  targetDuration: 0,
+  platform: "",
   mode: "step-by-step",
   voiceName: "Sari",
   voiceLanguage: "id-ID",
@@ -84,11 +84,11 @@ function mapDbRowToProject(row: any): Project {
   return {
     id: row.id,
     title: row.title || "",
-    genre: (row.category_id ? "custom" : "edukasi") as any,
+    genre: (row.genre_slug || "") as any,
     topic: row.title || "",
     tone: "kasual",
-    targetDuration: 60,
-    platform: "tiktok",
+    targetDuration: row.target_duration ?? 0,
+    platform: (row.platform || "") as any,
     mode: "step-by-step",
     status: (row.status || "draft") as Project["status"],
     currentStep: "script",
@@ -156,12 +156,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const newProject: Project = {
       id: generateId(),
       title: formData.topic,
-      genre: formData.genre,
+      genre: formData.genre as Genre,
       customGenre: formData.customGenre,
       topic: formData.topic,
       tone: formData.tone,
       targetDuration: formData.targetDuration,
-      platform: formData.platform,
+      platform: formData.platform as Platform,
       mode: formData.mode,
       status: "draft",
       currentStep: "script",
@@ -369,7 +369,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }));
   },
 
-  updateProjectSetup: (data) => {
+  updateProjectSetup: async (data) => {
     const { currentProject } = get();
     if (!currentProject) return;
 
@@ -386,6 +386,28 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         p.id === updatedProject.id ? updatedProject : p
       ),
     }));
+
+    // Persist setup konten ke database via PATCH /api/projects
+    try {
+      const res = await fetch("/api/projects", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: updatedProject.id,
+          genre: data.genre,
+          platform: data.platform,
+          targetDuration: data.targetDuration,
+        }),
+      });
+
+      if (!res.ok) {
+        console.warn(
+          `[projectStore] updateProjectSetup gagal persist (HTTP ${res.status})`
+        );
+      }
+    } catch (error) {
+      console.error("[projectStore] updateProjectSetup persist error:", error);
+    }
   },
 
   advanceStep: (step: PipelineStep) => {

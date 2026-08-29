@@ -65,6 +65,11 @@ export function createR2Client(): S3Client {
       accessKeyId: cfg.accessKeyId,
       secretAccessKey: cfg.secretAccessKey,
     },
+    // Timeout upload/download — tanpa ini, koneksi yang menggantung membuat
+    // render video "stuck di 100%" selamanya (upload R2 tidak pernah selesai).
+    requestHandler: {
+      requestTimeout: 120_000, // 2 menit
+    },
   });
 }
 

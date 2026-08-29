@@ -419,6 +419,10 @@ export async function POST(request: NextRequest) {
             "-preset", "veryfast",
             "-c:a", "aac",
             "-shortest",
+            // Batasi output tepat di durasi audio — konsisten dengan cabang
+            // single-clip. `-shortest` dengan footage ter-loop bisa berhenti
+            // di durasi footage yang lebih pendek; `-t` menjamin panjang audio.
+            "-t", String(totalDuration),
             "-y",
             outputFile,
           ];
@@ -435,6 +439,11 @@ export async function POST(request: NextRequest) {
             "-preset", "veryfast",
             "-c:a", "aac",
             "-shortest",
+            // Batasi output tepat di durasi audio. `-shortest` tidak bisa
+            // diandalkan untuk menghentikan input yang di-loop tak terbatas
+            // (-stream_loop -1) — tanpa ini render bisa mengamuk jadi
+            // puluhan menit / ratusan MB.
+            "-t", String(totalDuration),
             "-y",
             outputFile,
           ];
@@ -474,13 +483,20 @@ export async function POST(request: NextRequest) {
 
         send({ percent: 100 });
 
+        // ===== PASCA-RENDER: beri tahu klien bahwa FFmpeg selesai,
+        // sekarang masuk tahap upload ke storage. Tanpa ini UI tampak
+        // "beku di 100%" selama upload berjalan.
+        send({ status: "uploading", message: "Mengunggah video ke cloud..." });
+
         const outputBuffer = await readFile(outputFile);
 
         // 4. Upload ke Cloudflare R2 (bukan Supabase Storage).
         //    Cek plan user → tentukan prefix folder:
         //    - free    → "free/"    (lifecycle R2 hapus setelah 24 jam)
-        //    - pro/team → "premium/" (permanen, tanpa lifecycle rule)
+        //    - premium → "premium/" (permanen, tanpa lifecycle rule)
+        console.time("[Video] getUsage");
         const usage = await getUsage(identity.identityKey);
+        console.timeEnd("[Video] getUsage");
         const plan = usage.plan;
         const isFree = plan === "free";
         const prefix = isFree ? "free/" : "premium/";
@@ -488,7 +504,9 @@ export async function POST(request: NextRequest) {
 
         let videoUrl: string;
         try {
+          console.time("[Video] uploadToR2");
           videoUrl = await uploadToR2(outputBuffer, key, "video/mp4");
+          console.timeEnd("[Video] uploadToR2");
         } catch (uploadError) {
           console.error("[video] R2 upload error:", uploadError);
           send({ status: "error", message: "Gagal upload video ke storage" });

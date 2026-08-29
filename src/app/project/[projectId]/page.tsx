@@ -95,8 +95,15 @@ export default function ProjectEditorPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadProjects();
-    setCurrentProject(projectId);
+    let cancelled = false;
+    (async () => {
+      // Muat data terbaru dulu — jika server sudah selesai upload video
+      // (video_url terisi di DB), status step video akan langsung "done"
+      // dan user tidak perlu render ulang dari awal.
+      await loadProjects();
+      if (cancelled) return;
+      setCurrentProject(projectId);
+    })();
 
     // Timeout: if project not found after 5 seconds, show error
     const timeout = setTimeout(() => {
@@ -106,7 +113,10 @@ export default function ProjectEditorPage() {
       }
     }, 5000);
 
-    return () => clearTimeout(timeout);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
   }, [projectId, loadProjects, setCurrentProject]);
 
   // Auto-generate script hanya setelah Setup selesai (pindah ke tab Script).
@@ -219,9 +229,11 @@ export default function ProjectEditorPage() {
             <div className="min-w-0">
               <h1 className="text-xl font-bold truncate">{currentProject.title}</h1>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Badge variant="outline">{currentProject.genre}</Badge>
-                <span className="hidden sm:inline">{currentProject.platform}</span>
-                <span className="hidden sm:inline">•</span>
+                {currentProject.genre && <Badge variant="outline">{currentProject.genre}</Badge>}
+                {currentProject.platform && (
+                  <span className="hidden sm:inline">{currentProject.platform}</span>
+                )}
+                {currentProject.platform && <span className="hidden sm:inline">•</span>}
                 <span className="hidden sm:inline">Step by Step</span>
               </div>
             </div>
@@ -341,6 +353,7 @@ export default function ProjectEditorPage() {
                 project={currentProject}
                 isGenerating={progress.isRunning && progress.currentStep === "video"}
                 progress={progress.progress}
+                statusMessage={progress.statusMessage}
                 onGenerate={() => handleGenerateStep("video")}
                 onApprove={() => handleApproveStep("video")}
               />
@@ -1284,6 +1297,7 @@ function VideoPanel({
   project,
   isGenerating,
   progress,
+  statusMessage,
   onGenerate,
   onApprove,
 }: {
@@ -1291,6 +1305,7 @@ function VideoPanel({
   project: any;
   isGenerating: boolean;
   progress: number;
+  statusMessage: string;
   onGenerate: () => void;
   onApprove: () => void;
 }) {
@@ -1488,11 +1503,14 @@ function VideoPanel({
         {/* ===== RENDER ACTION (tunggal) ===== */}
         {isGenerating ? (
           <>
-            <div className="w-full h-14 flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Merender... {Math.round(progress)}%
+            <div className="w-full rounded-xl bg-primary text-primary-foreground flex flex-col items-center gap-1 py-4 px-4">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-2xl font-semibold tabular-nums leading-none">{Math.round(progress)}%</span>
+              </div>
+              <span className="text-xs text-primary-foreground/70">{statusMessage || "Merender..."}</span>
             </div>
-            <Progress value={progress} className="h-2 w-full" />
+            <Progress value={progress} className="h-1 w-full" />
           </>
         ) : video ? (
           isVideoExpired ? (

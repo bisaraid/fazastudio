@@ -41,12 +41,12 @@ export default function DashboardPage() {
 
   const handleCreateNew = async () => {
     const project = await createProject({
-      genre: "edukasi",
+      genre: "",
       customGenre: undefined,
       topic: "",
       tone: "kasual",
-      targetDuration: 60,
-      platform: "tiktok",
+      targetDuration: 0,
+      platform: "",
       mode: "step-by-step",
       voiceName: "Sari",
       voiceLanguage: "id-ID",

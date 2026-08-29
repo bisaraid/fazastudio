@@ -74,6 +74,9 @@ export async function POST(request: NextRequest) {
         subtitle_url: body.subtitleUrl || null,
         video_url: body.videoUrl || null,
         hook_pattern: body.hookPattern || null,
+        genre_slug: body.genre || null,
+        platform: body.platform || null,
+        target_duration: body.targetDuration ?? null,
       })
       .select()
       .single();
@@ -149,7 +152,7 @@ export async function PATCH(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { projectId, script } = body;
+    const { projectId } = body;
 
     // Validasi field wajib
     if (!projectId || typeof projectId !== "string" || projectId.trim() === "") {
@@ -158,30 +161,42 @@ export async function PATCH(request: NextRequest) {
         { status: 400 }
       );
     }
-    if (!script) {
+
+    // Build update payload — hanya field yang disediakan (opsional)
+    const updates: Record<string, unknown> = {};
+
+    // Field setup konten (opsional)
+    if (body.genre !== undefined) updates.genre_slug = body.genre;
+    if (body.platform !== undefined) updates.platform = body.platform;
+    if (body.targetDuration !== undefined) updates.target_duration = body.targetDuration;
+
+    // Field script (opsional — backward compat)
+    if (body.script !== undefined) updates.script = JSON.stringify(body.script);
+
+    // Tidak ada field yang diupdate
+    if (Object.keys(updates).length === 0) {
       return NextResponse.json(
-        { success: false, error: "Field script wajib diisi" },
+        { success: false, error: "Tidak ada field yang bisa diupdate" },
         { status: 400 }
       );
     }
 
+    updates.updated_at = new Date().toISOString();
+
     const supabase = createServiceRoleClient();
 
-    // Update kolom script (TEXT) + updated_at
+    // Update kolom yang disediakan + updated_at
     const { error } = await supabase
       .from("projects")
-      .update({
-        script: JSON.stringify(script),
-        updated_at: new Date().toISOString(),
-      })
+      .update(updates)
       .eq("id", projectId);
 
     if (error) {
       console.error("[projects] PATCH error:", error);
-      return NextResponse.json({ success: false, error: "Gagal menyimpan script project" }, { status: 500 });
+      return NextResponse.json({ success: false, error: "Gagal mengupdate project" }, { status: 500 });
     }
 
-    console.log(`[Script] Persist edited script: ${projectId}`);
+    console.log(`[Update] Persist project field: ${projectId}`);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("[projects] PATCH error:", error);

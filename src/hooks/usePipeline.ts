@@ -461,8 +461,21 @@ export function usePipeline() {
             let resolution: string | undefined;
             let streamError: string | null = null;
 
+            // Safety timeout: jika stream idle terlalu lama (mis. upload R2
+            // menggantung), hentikan loop agar spinner UI tidak "beku di 100%".
+            const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+
             while (true) {
-              const { done, value } = await reader.read();
+              const idle = new Promise<"idle">((resolve) =>
+                setTimeout(() => resolve("idle"), IDLE_TIMEOUT_MS)
+              );
+              const raced = await Promise.race([reader.read(), idle]);
+              if (raced === "idle") {
+                streamError =
+                  "Koneksi stream video terputus (timeout 5 menit). Coba render ulang.";
+                break;
+              }
+              const { done, value } = raced;
               if (done) break;
               buffer += decoder.decode(value, { stream: true });
 
@@ -487,6 +500,14 @@ export function usePipeline() {
                   // (abaikan nilai yang lebih kecil dari yang sudah tercapai),
                   // dan set pesan tahap video berdasarkan persen.
                   setProgress((prev) => bumpProgress(prev, msg.percent, step));
+                } else if (msg.status === "uploading") {
+                  // FFmpeg selesai — sekarang tahap upload ke storage.
+                  // Tampilkan pesan eksplisit agar UI tidak terlihat beku di 100%.
+                  console.log("[SSE] uploading:", msg.message);
+                  setProgress((prev) => ({
+                    ...prev,
+                    statusMessage: msg.message || "Mengunggah video ke cloud...",
+                  }));
                 } else if (msg.status === "done") {
                   console.log("[SSE done] videoUrl:", msg.videoUrl);
                   videoUrl = msg.videoUrl;
