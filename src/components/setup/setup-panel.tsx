@@ -71,6 +71,12 @@ export function SetupPanel({
   const [topicSource, setTopicSource] = useState<TopicSource>("empty");
   const [trendingLoading, setTrendingLoading] = useState(false);
 
+  // Progressive disclosure — muncul bertahap: Platform → Durasi → Genre → Topik.
+  // Nilai initial* tetap sebagai isi field, bukan untuk mem-bypass gating.
+  const [platformChosen, setPlatformChosen] = useState(false);
+  const [durationChosen, setDurationChosen] = useState(false);
+  const [genreChosen, setGenreChosen] = useState(false);
+
   const isCustomGenre = genre === "custom";
 
   const loadSuggestions = useCallback(async (genreValue: string) => {
@@ -87,20 +93,37 @@ export function SetupPanel({
   }, [genre, loadSuggestions]);
 
   const handleSelectPlatform = (p: Platform) => {
+    setPlatformChosen(true);
     if (p !== platform) setAnimateDuration(true);
     setPlatform(p);
     const first = DURATION_BY_PLATFORM[p][0].seconds;
     setTargetDuration(first);
+    // Platform berubah → reset durasi dulu (harus dipilih ulang di platform baru).
+    setDurationChosen(false);
+    setGenreChosen(false);
   };
 
   const handleSelectGenre = (g: Genre) => {
     setGenre(g);
     if (g !== "custom") setCustomGenre("");
+    // Genre dipilih (bukan dgn input kustom) → langsung tandai genreChosen.
+    // Untuk "custom", genreChosen di-set saat customGenre diisi (lihat di bawah).
+    if (g !== "custom") setGenreChosen(true);
   };
+
+  // Kustom diisi → genreChosen jadi true (membuka bagian Topik).
+  useEffect(() => {
+    if (genre === "custom" && customGenre.trim().length > 0) {
+      setGenreChosen(true);
+    } else if (genre === "custom") {
+      setGenreChosen(false);
+    }
+  }, [genre, customGenre]);
 
   const genreReady =
     genre !== null && (genre !== "custom" || customGenre.trim().length > 0);
-  const canContinue = topic.trim().length > 0 && genreReady;
+  const canContinue =
+    topic.trim().length > 0 && genreReady && platformChosen && durationChosen && genreChosen;
 
   const handleContinue = () => {
     if (!canContinue) return;
@@ -147,38 +170,44 @@ export function SetupPanel({
         </div>
       </section>
 
-      {/* Durasi */}
-      <section className="space-y-2">
-        <label className="text-sm font-medium">Durasi</label>
-        <div
-          className={
-            animateDuration
-              ? "flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200 ease-out"
-              : "flex flex-wrap gap-2"
-          }
-        >
-          {DURATION_BY_PLATFORM[platform].map((d) => {
-            const active = targetDuration === d.seconds;
-            return (
-              <button
-                key={d.label}
-                type="button"
-                onClick={() => setTargetDuration(d.seconds)}
-                className={`h-10 rounded-full px-4 text-sm font-medium transition-colors ${
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : "border border-border text-muted-foreground"
-                }`}
-              >
-                {d.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+      {/* Durasi — muncul setelah platform dipilih */}
+      {platformChosen && (
+        <section className="space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-200 ease-out">
+          <label className="text-sm font-medium">Durasi</label>
+          <div
+            className={
+              animateDuration
+                ? "flex flex-wrap gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200 ease-out"
+                : "flex flex-wrap gap-2"
+            }
+          >
+            {DURATION_BY_PLATFORM[platform].map((d) => {
+              const active = durationChosen && targetDuration === d.seconds;
+              return (
+                <button
+                  key={d.label}
+                  type="button"
+                  onClick={() => {
+                    setDurationChosen(true);
+                    setTargetDuration(d.seconds);
+                  }}
+                  className={`h-10 rounded-full px-4 text-sm font-medium transition-colors ${
+                    active
+                      ? "bg-primary text-primary-foreground"
+                      : "border border-border text-muted-foreground"
+                  }`}
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
-      {/* Genre */}
-      <section className="space-y-2">
+      {/* Genre — muncul setelah durasi dipilih */}
+      {durationChosen && (
+        <section className="space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-200 ease-out">
           <label className="text-sm font-medium">Genre</label>
           <div className="grid grid-cols-3 gap-2">
             {GENRES.map((g) => {
@@ -209,9 +238,11 @@ export function SetupPanel({
             />
           )}
         </section>
+      )}
 
-      {/* Topik */}
-      <section className="space-y-3">
+      {/* Topik — muncul setelah genre dipilih */}
+      {genreChosen && (
+        <section className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-200 ease-out">
           <label className="text-sm font-medium">Topik</label>
           <div className="flex rounded-lg border border-border overflow-hidden">
             <button
@@ -259,6 +290,7 @@ export function SetupPanel({
             />
           )}
         </section>
+      )}
 
       {/* Lanjut */}
       <div className="border-t pt-4">
