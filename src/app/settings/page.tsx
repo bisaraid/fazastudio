@@ -16,6 +16,8 @@ export default function SettingsPage() {
   const [usage, setUsage] = useState<{ plan: PlanTier; creditsTotal: number; creditsUsed: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [payMessage, setPayMessage] = useState<string | null>(null);
+  // FIX 3 — jenis pesan menentukan warna (success hijau / warn amber).
+  const [payMessageTone, setPayMessageTone] = useState<"success" | "warn">("success");
 
   // Fetch usage real dari /api/usage (based on client IP / identity)
   useEffect(() => {
@@ -63,6 +65,7 @@ export default function SettingsPage() {
 
   // Setelah pembayaran sukses: polling /api/usage hingga plan berubah, lalu tampilkan pesan sukses
   const handlePaymentSuccess = (planId: string) => {
+    let resolved = false;
     const interval = setInterval(async () => {
       try {
         const res = await fetch("/api/usage");
@@ -70,7 +73,9 @@ export default function SettingsPage() {
         const newPlan = data?.data?.plan;
         if (newPlan === planId) {
           clearInterval(interval);
+          resolved = true;
           setUsage(data.data);
+          setPayMessageTone("success");
           setPayMessage(
             planId === "pro"
               ? "Pembayaran berhasil! Paket Pro kini aktif."
@@ -83,7 +88,16 @@ export default function SettingsPage() {
     }, 3000);
 
     // Pengaman: hentikan polling setelah 30 detik
-    setTimeout(() => clearInterval(interval), 30000);
+    // FIX 3 — jika masih belum terkonfirmasi, beri tahu user dengan pesan ramah.
+    setTimeout(() => {
+      clearInterval(interval);
+      if (!resolved) {
+        setPayMessageTone("warn");
+        setPayMessage(
+          "Pembayaran belum terkonfirmasi. Jika sudah bayar, tunggu beberapa menit lalu refresh halaman."
+        );
+      }
+    }, 30000);
   };
 
   // Buka popup Midtrans Snap untuk plan terpilih (tanpa redirect ke halaman baru)
@@ -103,11 +117,18 @@ export default function SettingsPage() {
       }
 
       setPayMessage(null);
+      setPayMessageTone("success");
       snap.pay(data.token, {
         onSuccess: () => handlePaymentSuccess(planId),
-        onPending: () => {},
+        onPending: () => {
+          setPayMessageTone("warn");
+          setPayMessage("Pembayaran sedang diproses. Kami akan mengaktifkan plan kamu otomatis.");
+        },
         onError: () => alert("Pembayaran gagal. Silakan coba lagi."),
-        onClose: () => {},
+        onClose: () => {
+          setPayMessageTone("warn");
+          setPayMessage("Pembayaran dibatalkan.");
+        },
       });
     } catch {
       alert("Gagal membuat pembayaran. Coba lagi.");
@@ -130,7 +151,13 @@ export default function SettingsPage() {
 
         {/* Usage Indicator (REAL data dari /api/usage) */}
         {payMessage && (
-          <div className="mb-8 border border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg p-4 text-sm">
+          <div
+            className={`mb-8 border rounded-lg p-4 text-sm ${
+              payMessageTone === "success"
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+            }`}
+          >
             {payMessage}
           </div>
         )}

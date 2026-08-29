@@ -12,7 +12,6 @@ import {
   Settings,
   User,
   LayoutDashboard,
-  PlusCircle,
   CreditCard,
   X,
 } from "lucide-react";
@@ -37,7 +36,6 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
 
   const mobileNavLinks = [
     { label: "Dashboard", icon: LayoutDashboard, href: "/" },
-    { label: "Buat Konten", icon: PlusCircle, href: "/buat" },
     { label: "Pengaturan", icon: CreditCard, href: "/settings" },
   ];
 
@@ -68,14 +66,6 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
               className="text-muted-foreground hover:text-foreground"
             >
               Dashboard
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.push("/buat")}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              Buat Konten
             </Button>
             <Button
               variant="ghost"

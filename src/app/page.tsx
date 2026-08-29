@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/lib/store/projectStore";
 import { Navbar } from "@/components/layout/navbar";
@@ -20,6 +20,7 @@ import {
   ArrowRight,
   Trash2,
   Sparkles,
+  Loader2,
 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import { Project } from "@/lib/types";
@@ -32,11 +33,59 @@ const STATUS_MAP: Record<string, { label: string; variant: "secondary" | "succes
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { projects, loadProjects, deleteProject } = useProjectStore();
+  const { projects, loadProjects, deleteProject, createProject } = useProjectStore();
 
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  const handleCreateNew = async () => {
+    const project = await createProject({
+      genre: "edukasi",
+      customGenre: undefined,
+      topic: "",
+      tone: "kasual",
+      targetDuration: 60,
+      platform: "tiktok",
+      mode: "step-by-step",
+      voiceName: "Sari",
+      voiceLanguage: "id-ID",
+      voiceSpeed: 1.0,
+      voiceEmotion: "netral",
+      visualStyle: "stock",
+    });
+    if (project?.id) {
+      router.push(`/project/${project.id}`);
+    }
+  };
+
+  // FIX 2 — bungkus handleCreateNew dengan loading + error state.
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const handleCreateClick = async () => {
+    if (isCreating) return;
+    setIsCreating(true);
+    setCreateError(null);
+    try {
+      await handleCreateNew();
+    } catch {
+      setCreateError("Gagal membuat konten. Coba lagi.");
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  // FIX 1 — hapus dengan konfirmasi + feedback error.
+  const handleDeleteProject = async (projectId: string) => {
+    const confirmed = confirm("Hapus project ini? Tindakan tidak bisa dibatalkan.");
+    if (!confirmed) return;
+    try {
+      await deleteProject(projectId);
+    } catch {
+      alert("Gagal menghapus project. Coba lagi.");
+    }
+  };
 
   const stats = {
     total: projects.length,
@@ -57,14 +106,24 @@ export default function DashboardPage() {
               Kelola dan buat konten baru dengan Faza Studio
             </p>
           </div>
-          <Button
-            size="lg"
-            className="gap-2"
-            onClick={() => router.push("/buat")}
-          >
-            <Plus className="h-5 w-5" />
-            Buat Konten Baru
-          </Button>
+          <div className="flex flex-col items-stretch sm:items-end gap-2">
+            <Button
+              size="lg"
+              className="gap-2"
+              onClick={handleCreateClick}
+              disabled={isCreating}
+            >
+              {isCreating ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Plus className="h-5 w-5" />
+              )}
+              {isCreating ? "Membuat..." : "Buat Konten Baru"}
+            </Button>
+            {createError && (
+              <p className="text-sm text-destructive text-right">{createError}</p>
+            )}
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -121,7 +180,7 @@ export default function DashboardPage() {
                   Mulai buat konten pertamamu — pilih topik, dan Faza Studio akan
                   mengubahnya menjadi script, suara, subtitle, dan video dalam satu alur.
                 </p>
-                <Button size="lg" onClick={() => router.push("/buat")} className="gap-2">
+                <Button size="lg" onClick={handleCreateNew} className="gap-2">
                   <Plus className="h-5 w-5" />
                   Buat Project Pertama
                 </Button>
@@ -134,7 +193,7 @@ export default function DashboardPage() {
                   key={project.id}
                   project={project}
                   onOpen={() => router.push(`/project/${project.id}`)}
-                  onDelete={() => deleteProject(project.id)}
+                  onDelete={() => handleDeleteProject(project.id)}
                 />
               ))}
             </div>

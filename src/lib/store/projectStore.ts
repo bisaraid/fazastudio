@@ -9,6 +9,8 @@ import {
   PipelineStep,
   StepStatus,
   FootageOption,
+  Genre,
+  Platform,
 } from "@/lib/types";
 import { generateId } from "@/lib/utils";
 
@@ -32,6 +34,13 @@ interface ProjectState {
   setFootageResult: (footage: FootageOption) => void;
   updateProjectStatus: (status: Project["status"]) => void;
   updateProjectMeta: (meta: Partial<Pick<Project, "platform" | "targetDuration">>) => void;
+  updateProjectSetup: (data: {
+    genre: Genre;
+    customGenre?: string;
+    topic: string;
+    platform: Platform;
+    targetDuration: number;
+  }) => void;
   advanceStep: (step: PipelineStep) => void;
   resetWizardForm: () => void;
   updateWizardForm: (data: Partial<WizardFormData>) => void;
@@ -160,6 +169,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     };
 
     // Simpan ke Supabase via API
+    let persisted = false;
     try {
       const res = await fetch("/api/projects", {
         method: "POST",
@@ -172,13 +182,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         }),
       });
       const json = await res.json();
-      if (json.success && json.data) {
-        newProject.id = json.data.id;
-        newProject.createdAt = json.data.created_at;
-        newProject.updatedAt = json.data.updated_at;
+      if (!res.ok || !json.success || !json.data) {
+        // Gagal menyimpan di DB → lempar error agar UI (tombol "Buat Konten Baru")
+        // bisa menampilkan pesan, dan JANGAN tambahkan project palsu ke daftar.
+        throw new Error(json?.error || `Gagal menyimpan project (HTTP ${res.status})`);
       }
+      newProject.id = json.data.id;
+      newProject.createdAt = json.data.created_at;
+      newProject.updatedAt = json.data.updated_at;
+      persisted = true;
     } catch (error) {
       console.error("[projectStore] createProject error:", error);
+      throw error instanceof Error
+        ? error
+        : new Error("Gagal membuat project. Coba lagi.");
+    }
+
+    if (!persisted) {
+      throw new Error("Gagal membuat project. Coba lagi.");
     }
 
     const { projects } = get();
@@ -346,6 +367,25 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }));
   },
 
+  updateProjectSetup: (data) => {
+    const { currentProject } = get();
+    if (!currentProject) return;
+
+    const updatedProject: Project = {
+      ...currentProject,
+      ...data,
+      customGenre: data.customGenre,
+      updatedAt: new Date().toISOString(),
+    };
+
+    set((state) => ({
+      currentProject: updatedProject,
+      projects: state.projects.map((p) =>
+        p.id === updatedProject.id ? updatedProject : p
+      ),
+    }));
+  },
+
   advanceStep: (step: PipelineStep) => {
     const { currentProject } = get();
     if (!currentProject) return;
@@ -400,11 +440,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         // Gagal hapus di DB → reload lagi agar UI tidak menipu (project tidak nyambung).
         console.error("[store] deleteProject gagal di API:", res.status);
         await get().loadProjects();
+        throw new Error(`Gagal menghapus project (HTTP ${res.status})`);
       }
     } catch (err) {
       // Jaringan/error lain → reload agar state konsisten dengan DB.
       console.error("[store] deleteProject error:", err);
       await get().loadProjects();
+      throw err instanceof Error ? err : new Error("Gagal menghapus project. Coba lagi.");
     }
   },
 }));

@@ -240,7 +240,7 @@ export function TimelineEditor({
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{scene.heading}</p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {scene.duration}s • {footage ? footage.query : "Sistem memilih otomatis"}
+                        {scene.duration} detik • {footage ? "✓ Footage dipilih" : "Ketuk untuk pilih footage"}
                       </p>
                     </div>
                     <span className={`text-muted-foreground transform transition-transform ${expanded ? "rotate-180" : ""}`}>
@@ -257,13 +257,12 @@ export function TimelineEditor({
                               key={f.id}
                               onClick={() => handleSelectFootage(scene.id, f)}
                               className={`relative aspect-video rounded-lg overflow-hidden border-2 bg-muted transition-all ${sceneFootage[scene.id]?.id === f.id ? "border-primary ring-2 ring-primary/30" : "border-border hover:border-primary/50"}`}
-                              title={f.query}
                             >
                               {f.thumbnail && !brokenThumbs.has(f.id) ? (
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img
                                   src={f.thumbnail}
-                                  alt={f.query}
+                                  alt="Pilihan footage"
                                   className="w-full h-full object-cover"
                                   onError={() => { setBrokenThumbs((prev) => new Set(prev).add(f.id)); }}
                                   loading="lazy"

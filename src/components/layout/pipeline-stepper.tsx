@@ -23,38 +23,43 @@ const STEP_LABELS: Record<PipelineStep, string> = {
 interface PipelineStepperProps {
   currentStep: PipelineStep;
   steps: Record<PipelineStep, "pending" | "generating" | "done" | "error">;
-  onStepClick?: (step: PipelineStep) => void;
 }
 
 // Subtitle adalah dependency internal dari Video — bukan destination step.
-// UX final: Script → Audio → Video. Export sudah tidak jadi step UI.
+// UX final: Setup → Script → Audio → Video. Export sudah tidak jadi step UI.
 const STEP_ORDER: PipelineStep[] = ["script", "audio", "video"];
 
-export function PipelineStepper({ currentStep, steps, onStepClick }: PipelineStepperProps) {
+export function PipelineStepper({ currentStep, steps }: PipelineStepperProps) {
   const currentIndex = STEP_ORDER.indexOf(currentStep);
 
   return (
     <div className="w-full py-4">
       <div className="flex items-center justify-between">
+        {/* Setup = langkah pertama (selalu done, karena sudah lewat dari dashboard) */}
+        <div className="flex flex-1 items-center">
+          <div className="flex flex-col items-center gap-1.5">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-primary bg-primary text-primary-foreground">
+              <Check className="h-5 w-5" />
+            </div>
+            <span className="hidden sm:inline text-xs font-medium text-primary">Setup</span>
+          </div>
+          <div className="flex-1 mx-2">
+            <div className="relative h-[2px]">
+              <div className="absolute inset-0 bg-primary rounded-full" />
+            </div>
+          </div>
+        </div>
+
         {STEP_ORDER.map((step, index) => {
           const Icon = STEP_ICONS[step];
           const isCompleted = steps[step] === "done";
           const isCurrent = step === currentStep;
           const isError = steps[step] === "error";
-          const isClickable = index <= currentIndex + 1 && onStepClick;
 
           return (
             <div key={step} className="flex flex-1 items-center">
-              {/* Step indicator */}
-              <button
-                onClick={() => isClickable && onStepClick?.(step)}
-                disabled={!isClickable}
-                className={cn(
-                  "flex flex-col items-center gap-1.5 transition-all",
-                  isClickable ? "cursor-pointer" : "cursor-default",
-                  isCurrent && "step-active"
-                )}
-              >
+              {/* Step indicator — non-interaktif, hanya menunjukkan posisi */}
+              <div className="flex flex-col items-center gap-1.5">
                 <div
                   className={cn(
                     "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all duration-300",
@@ -81,7 +86,7 @@ export function PipelineStepper({ currentStep, steps, onStepClick }: PipelineSte
                 >
                   {STEP_LABELS[step]}
                 </span>
-              </button>
+              </div>
 
               {/* Connector line */}
               {index < STEP_ORDER.length - 1 && (
