@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, CheckCircle2, Play, Pause, Video } from "lucide-react";
+import { Loader2, RefreshCw, CheckCircle2, Play, Pause, Video, ChevronDown } from "lucide-react";
 import { useProjectStore } from "@/lib/store/projectStore";
 import { FootageOption, Scene } from "@/lib/types";
 
@@ -39,6 +39,12 @@ export function TimelineEditor({
   // Opsi footage per scene: { sceneId: FootageOption[] }
   const [footageOptions, setFootageOptions] = useState<Record<string, FootageOption[]>>({});
   const [loadingSceneId, setLoadingSceneId] = useState<string | null>(null);
+  // Expand/collapse opsi footage per scene (default: collapse semua, hemat ruang).
+  const [expandedSceneId, setExpandedSceneId] = useState<string | null>(null);
+  // Collapsed seluruh scene footage picker di belakang satu toggle (default hidden).
+  const [isFootageOpen, setIsFootageOpen] = useState(false);
+  // Thumbnail yang gagal dimuat → ditampilkan placeholder (supaya grid tetap visual).
+  const [brokenThumbs, setBrokenThumbs] = useState<Set<string>>(new Set());
   const [playhead, setPlayhead] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -109,6 +115,50 @@ export function TimelineEditor({
     }
   };
 
+  // Batch: prefetch opsi footage untuk SEMUA scene sekaligus (backend-driven).
+  // User tinggal pilih thumbnail — tidak perlu klik "Cari Footage" per scene.
+  const handleBatchFetchFootage = async () => {
+    const targets = scenes.filter((s) => !footageOptions[s.id] || footageOptions[s.id].length === 0);
+    if (targets.length === 0) return;
+
+    setLoadingSceneId("__batch__");
+    try {
+      const payload = targets.map((s) => ({
+        sceneId: s.id,
+        query: s.visualPrompt || project?.topic || "",
+        genre: project?.genre,
+      }));
+      const res = await fetch("/api/footage/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenes: payload, perPage: 4 }),
+      });
+      const json = await res.json();
+      if (json.success && json.data) {
+        setFootageOptions((prev) => ({ ...prev, ...json.data }));
+        // Auto-expand scene PERTAMA yang punya opsi, agar thumbnail langsung terlihat.
+        if (!expandedSceneId) {
+          const first = Object.keys(json.data).find((k) => (json.data[k] || []).length > 0);
+          if (first) setExpandedSceneId(first);
+        }
+      } else {
+        console.warn("[TimelineEditor] Batch footage gagal:", json.error);
+      }
+    } catch (err) {
+      console.error("[TimelineEditor] Batch footage error:", err);
+    } finally {
+      setLoadingSceneId(null);
+    }
+  };
+
+  // Auto prefetch saat scene tersedia (agar user langsung lihat thumbnail).
+  useEffect(() => {
+    if (scenes.length > 0) {
+      handleBatchFetchFootage();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenes.length]);
+
   const handleSelectFootage = (sceneId: string, footage: FootageOption) => {
     setSceneFootage((prev) => ({ ...prev, [sceneId]: footage }));
     // Simpan ke store (perluas scene.footage)
@@ -142,144 +192,110 @@ export function TimelineEditor({
   });
 
   return (
-    <div className="space-y-4">
-      {/* Audio hidden untuk scrubber sync */}
-      {audioUrl && (
-        <audio ref={audioRef} src={audioUrl} className="hidden" />
-      )}
+    <div className="space-y-3">
+      {/* Audio hidden (kompatibilitas) */}
+      {audioUrl && (<audio ref={audioRef} src={audioUrl} className="hidden" />)}
 
-      {/* ===== TRACK FOOTAGE ===== */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs font-medium text-muted-foreground">Track Footage (per scene)</h4>
-          <Badge variant="outline">{scenes.length} scene</Badge>
-        </div>
-        <div className="space-y-2">
-          {scenes.map((scene, i) => {
-            const footage = sceneFootage[scene.id];
-            const options = footageOptions[scene.id] || [];
-            return (
-              <div key={scene.id} className="rounded-lg border border-border p-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground w-6 shrink-0">{i + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{scene.heading}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {scene.duration}s • {footage ? footage.query : "Belum ada footage"}
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleFetchFootage(scene)}
-                    disabled={loadingSceneId === scene.id}
-                    className="gap-1 shrink-0"
+      {/* Toggle Kustomisasi Footage (collapsed by default) */}
+      <button
+        type="button"
+        onClick={() => setIsFootageOpen((v) => !v)}
+        className="inline-flex min-h-[44px] items-center gap-2 py-2 text-sm font-medium text-primary hover:underline"
+      >
+        <span>🎬 Kustomisasi Footage</span>
+        <span className={`text-muted-foreground transform transition-transform ${isFootageOpen ? "rotate-180" : ""}`}>
+          <ChevronDown className="h-4 w-4" />
+        </span>
+      </button>
+
+      {isFootageOpen && (
+        <div className="space-y-3 border-t border-border pt-3">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-xs font-medium text-muted-foreground">Pilih footage per scene</h4>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleBatchFetchFootage}
+              disabled={loadingSceneId === "__batch__"}
+              className="gap-1 shrink-0"
+            >
+              {loadingSceneId === "__batch__" ? (<Loader2 className="h-3.5 w-3.5 animate-spin" />) : (<RefreshCw className="h-3.5 w-3.5" />)}
+              Muat Ulang Semua
+            </Button>
+          </div>
+
+          <div className="space-y-2">
+            {scenes.map((scene, i) => {
+              const footage = sceneFootage[scene.id];
+              const options = footageOptions[scene.id] || [];
+              const expanded = expandedSceneId === scene.id;
+              return (
+                <div key={scene.id} className="rounded-lg border border-border p-2">
+                  <button
+                    type="button"
+                    className="flex w-full min-h-[44px] items-center gap-2 text-left"
+                    onClick={() => setExpandedSceneId(expanded ? null : scene.id)}
                   >
-                    {loadingSceneId === scene.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    )}
-                    Pilih Footage
-                  </Button>
+                    <span className="text-xs text-muted-foreground w-6 shrink-0">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{scene.heading}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {scene.duration}s • {footage ? footage.query : "Sistem memilih otomatis"}
+                      </p>
+                    </div>
+                    <span className={`text-muted-foreground transform transition-transform ${expanded ? "rotate-180" : ""}`}>
+                      <ChevronDown className="h-4 w-4" />
+                    </span>
+                  </button>
+
+                  {expanded && (
+                    <div className="mt-2">
+                      {options.length > 0 ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          {options.map((f) => (
+                            <button
+                              key={f.id}
+                              onClick={() => handleSelectFootage(scene.id, f)}
+                              className={`relative aspect-video rounded-lg overflow-hidden border-2 bg-muted transition-all ${sceneFootage[scene.id]?.id === f.id ? "border-primary ring-2 ring-primary/30" : "border-border hover:border-primary/50"}`}
+                              title={f.query}
+                            >
+                              {f.thumbnail && !brokenThumbs.has(f.id) ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={f.thumbnail}
+                                  alt={f.query}
+                                  className="w-full h-full object-cover"
+                                  onError={() => { setBrokenThumbs((prev) => new Set(prev).add(f.id)); }}
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="absolute inset-0 bg-gradient-to-br from-slate-600 to-slate-800 flex items-center justify-center">
+                                  <Video className="h-5 w-5 text-white/70" />
+                                </div>
+                              )}
+                              {sceneFootage[scene.id]?.id === f.id && (
+                                <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full p-0.5">
+                                  <CheckCircle2 className="h-3 w-3" />
+                                </div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground py-2">
+                          {loadingSceneId === "__batch__" || loadingSceneId === scene.id
+                            ? "Memuat opsi footage..."
+                            : "Belum ada opsi. Gunakan Muat Ulang Semua."}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
-
-                {/* Opsi footage */}
-                {options.length > 0 && (
-                  <div className="grid grid-cols-4 gap-2 mt-2">
-                    {options.map((f) => (
-                      <button
-                        key={f.id}
-                        onClick={() => handleSelectFootage(scene.id, f)}
-                        className={`relative aspect-video rounded-lg overflow-hidden border-2 transition-all ${
-                          sceneFootage[scene.id]?.id === f.id
-                            ? "border-primary ring-2 ring-primary/30"
-                            : "border-border hover:border-primary/50"
-                        }`}
-                        title={f.query}
-                      >
-                        {f.thumbnail && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={f.thumbnail} alt={f.query} className="w-full h-full object-cover" />
-                        )}
-                        {sceneFootage[scene.id]?.id === f.id && (
-                          <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full p-0.5">
-                            <CheckCircle2 className="h-3 w-3" />
-                          </div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
-
-      {/* ===== TRACK SUBTITLE ===== */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs font-medium text-muted-foreground">Track Subtitle</h4>
-          <Badge variant="outline">{segments.length} cue</Badge>
-        </div>
-        <div className="relative h-16 rounded-lg border border-border bg-muted/30 overflow-hidden">
-          {segments.map((seg: any, i: number) => {
-            const start = seg.startTime ?? seg.start ?? 0;
-            const end = seg.endTime ?? seg.end ?? 0;
-            const left = (start / totalDuration) * 100;
-            const width = Math.max(1, ((end - start) / totalDuration) * 100);
-            return (
-              <div
-                key={i}
-                className="absolute top-1 bottom-1 rounded bg-primary/20 border border-primary/40 flex items-center justify-center overflow-hidden"
-                style={{ left: `${left}%`, width: `${width}%` }}
-                title={seg.text}
-              >
-                <span className="text-[10px] px-1 truncate">{seg.text}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ===== SCRUBBER / PLAYHEAD ===== */}
-      <div>
-        <div className="flex items-center gap-2 mb-2">
-          <Button variant="outline" size="icon" className="h-8 w-8 rounded-full" onClick={togglePlay} disabled={!audioUrl}>
-            {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-          </Button>
-          <input
-            type="range"
-            min="0"
-            max={totalDuration}
-            step="0.1"
-            value={playhead}
-            onChange={handleSeek}
-            className="flex-1"
-          />
-          <span className="text-xs text-muted-foreground shrink-0">
-            {playhead.toFixed(1)}s / {totalDuration.toFixed(1)}s
-          </span>
-        </div>
-      </div>
-
-      {/* ===== RENDER ===== */}
-      <div className="flex justify-end pt-2">
-        <Button onClick={handleRender} disabled={isGenerating} className="gap-2">
-          {isGenerating ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Merender... {Math.round(progress)}%
-            </>
-          ) : (
-            <>
-              <Video className="h-4 w-4" />
-              Render Video (per scene)
-            </>
-          )}
-        </Button>
-      </div>
+      )}
     </div>
   );
 }

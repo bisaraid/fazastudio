@@ -327,11 +327,44 @@ export async function POST(request: NextRequest) {
         console.log(`[Video] Audio duration: ${totalDuration}s`);
 
         // Compose: background + audio + subtitle overlay, output 1080x1920 portrait
-        // FontSize & posisi diambil dari subtitleStyle (jika ada), default 24/bottom/white
+        // FontSize & posisi diambil dari subtitleStyle (jika ada), default 24/bottom/white.
+        // STYLE NETFLIX-READABLE:
+        // - Outline (stroke) otomatis untuk keterbacaan di footage terang.
+        // - Opsional kotak semi-transparan (BorderStyle=4) bila backgroundColor diisi.
         const fontSize = subtitleStyle?.fontSize || 24;
         const alignment = subtitleStyle?.position === "top" ? 8 : 2;
-        const isWhite = subtitleStyle?.color === "black" ? false : true;
-        const forceStyle = `FontSize=${fontSize},Alignment=${alignment},PrimaryColour=&H00${isWhite ? "FFFFFF" : "000000"}`;
+        const textColor = (subtitleStyle?.color || "#FFFFFF").replace("#", "").toUpperCase();
+        const PrimaryColour = `&H00${textColor}`;
+
+        // Stroke — default 2px hitam agar teks terbaca di video terang.
+        const strokeWidth = Math.max(0, subtitleStyle?.strokeWidth ?? 2);
+        const strokeColorHex = (subtitleStyle?.strokeColor || "#000000").replace("#", "").toUpperCase();
+
+        // Kotak semi-transparan (opsional, ala Netflix). BorderStyle=4 pakai BackColour.
+        // Kotak diaktifkan hanya jika backgroundColor diisi.
+        const useBox = !!subtitleStyle?.backgroundColor;
+        let backSpec = "";
+        if (useBox) {
+          const bgHex = (subtitleStyle!.backgroundColor || "#000000").replace("#", "").toUpperCase();
+          const alpha = Math.round(
+            // &HAABBGGRR, alpha dulu. Default ~160 (≈63% opacity)
+            Math.min(255, Math.max(0, subtitleStyle?.backgroundAlpha ?? 160))
+          );
+          const alphaHex = alpha.toString(16).padStart(2, "0");
+          // ASS BackColour = &HAABBGGRR (blue-green-red order)
+          const bbggrr = bgHex.length === 6 ? `${bgHex.slice(4, 6)}${bgHex.slice(2, 4)}${bgHex.slice(0, 2)}` : "000000";
+          backSpec = `BackgroundColour=&H${alphaHex}${bbggrr},BorderStyle=4,Outline=0,BackColour=&H${alphaHex}${bbggrr}`;
+        }
+
+        // Gabungkan style. Jika tidak pakai kotak, beri Outline+Shadow untuk stroke.
+        const forceStyle = [
+          `FontSize=${fontSize}`,
+          `Alignment=${alignment}`,
+          `PrimaryColour=${PrimaryColour}`,
+          useBox
+            ? backSpec
+            : `Outline=${strokeWidth},OutlineColour=&H00${strokeColorHex},Shadow=1,ShadowColour=&H80000000,BorderStyle=1`,
+        ].join(",");
 
         // Escape path SRT untuk filtergraph FFmpeg (Windows: `C:\` dan `\` harus di-escape).
         const escapedSubtitlePath = escapeFilterPath(subtitleFile);

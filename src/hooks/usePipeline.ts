@@ -50,6 +50,70 @@ const STEP_MESSAGES: Record<PipelineStep, string> = {
 };
 
 /**
+ * Tahap pesan per progress (%) — agar user selalu tahu apa yang sistem kerjakan.
+ * Pesan dipilih berdasarkan persentase terakhir yang dilewati (monotonik).
+ */
+const STEP_STAGES: Record<PipelineStep, { at: number; msg: string }[]> = {
+  script: [
+    { at: 3, msg: "Mempersiapkan topik..." },
+    { at: 18, msg: "Menentukan hook & struktur naskah..." },
+    { at: 40, msg: "Menulis pembuka (hook)..." },
+    { at: 62, msg: "Mengembangkan narasi & scene..." },
+    { at: 85, msg: "Menyempurnakan penutup & CTA..." },
+    { at: 96, msg: "Menyimpan naskah..." },
+  ],
+  audio: [
+    { at: 5, msg: "Menyiapkan teks narasi..." },
+    { at: 25, msg: "Menghasilkan suara (TTS)..." },
+    { at: 55, msg: "Memproses & mengoptimalkan audio..." },
+    { at: 85, msg: "Mengunggah audio ke cloud..." },
+    { at: 96, msg: "Menyelesaikan audio..." },
+  ],
+  subtitle: [
+    { at: 5, msg: "Memuat audio untuk transkripsi..." },
+    { at: 20, msg: "Mengirim ke transkripsi (Whisper)..." },
+    { at: 60, msg: "Menyinkronkan timing subtitle..." },
+    { at: 85, msg: "Menyusun SRT/VTT..." },
+    { at: 96, msg: "Menyimpan subtitle..." },
+  ],
+  video: [
+    { at: 5, msg: "Menyiapkan footage & audio..." },
+    { at: 20, msg: "Merender video (FFmpeg)..." },
+    { at: 60, msg: "Menyusun caption/subtitle..." },
+    { at: 85, msg: "Mengompresi & finalisasi..." },
+    { at: 96, msg: "Mengunggah video ke cloud..." },
+  ],
+  export: [{ at: 0, msg: "Menyiapkan hasil akhir..." }],
+};
+
+/** Pilih pesan tahap berdasarkan progress terakhir yang dilewati. */
+function stageMessage(step: PipelineStep, progress: number): string {
+  const stages = STEP_STAGES[step] || [];
+  let msg = STEP_MESSAGES[step];
+  for (const s of stages) {
+    if (progress >= s.at) msg = s.msg;
+  }
+  return msg;
+}
+
+/**
+ * Update progress secara MONOTONIK (hanya naik, tidak pernah turun).
+ * Dipakai oleh interval & SSE agar angka tidak "maju-mundur".
+ */
+function bumpProgress(
+  prev: PipelineProgress,
+  next: number,
+  step?: PipelineStep
+): PipelineProgress {
+  const target = Math.min(100, Math.max(prev.progress, next));
+  return {
+    ...prev,
+    progress: target,
+    statusMessage: step ? stageMessage(step, target) : prev.statusMessage,
+  };
+}
+
+/**
  * Mapping Genre ACS → CategoryId ViraLoop (1:1 karena sudah disamakan)
  */
 function mapGenreToCategory(genre: Genre): CategoryId {
@@ -101,14 +165,17 @@ export function usePipeline() {
       let progressInterval: ReturnType<typeof setInterval> | undefined;
 
       try {
-        // Progress bar tetap "hidup" SEDANG API berjalan (bukan diam di 0%).
-        // Interval di-clear di `finally` setelah API selesai — bukan sebelum fetch.
+        // Progress MONOTONIK dengan pesan tahap — hanya naik, tidak pernah turun.
+        // Untuk VIDEO, interval TIDAK memakai angka acak (sumber utamanya SSE);
+        // cukup nudge kecil agar tidak terlihat "beku" saat menunggu frame pertama.
+        // Untuk script/audio/subtitle: interval naik pelan sampai 92% (API tak kirim %).
+        const isVideoStep = step === "video";
+        const cap = isVideoStep ? 40 : 92;
         progressInterval = setInterval(() => {
-          setProgress((prev) => ({
-            ...prev,
-            progress: Math.min(prev.progress + Math.random() * 12, 90),
-          }));
-        }, 400);
+          setProgress((prev) =>
+            bumpProgress(prev, Math.min(prev.progress + (isVideoStep ? 1 : 2.5), cap), step)
+          );
+        }, isVideoStep ? 450 : 260);
 
         switch (step) {
           case "script": {
@@ -289,9 +356,11 @@ export function usePipeline() {
               })),
               segments,
               style: {
-                fontSize: 24,
-                color: "#FFFFFF",
+                fontSize: 28,
+                color: "#FFD700",
                 position: "bottom",
+                strokeColor: "#000000",
+                strokeWidth: 2,
               },
               srtContent: subJson.data.srtContent || "",
               vttContent: subJson.data.vttContent || subJson.data.srtContent || "",
@@ -414,7 +483,10 @@ export function usePipeline() {
                 // ===== TRACING SEMENTARA — untuk verifikasi alur SSE =====
                 console.log("[SSE]", msg);
                 if (typeof msg.percent === "number") {
-                  setProgress((prev) => ({ ...prev, progress: msg.percent }));
+                  // Progress nyata dari FFmpeg — lewat bumpProgress agar monotonik
+                  // (abaikan nilai yang lebih kecil dari yang sudah tercapai),
+                  // dan set pesan tahap video berdasarkan persen.
+                  setProgress((prev) => bumpProgress(prev, msg.percent, step));
                 } else if (msg.status === "done") {
                   console.log("[SSE done] videoUrl:", msg.videoUrl);
                   videoUrl = msg.videoUrl;

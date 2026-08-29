@@ -19,6 +19,7 @@ import {
   BarChart3,
   ArrowRight,
   Trash2,
+  Sparkles,
 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import { Project } from "@/lib/types";
@@ -110,11 +111,18 @@ export default function DashboardPage() {
         <div className="space-y-4">
           <h2 className="text-xl font-semibold">Project Terbaru</h2>
           {projects.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <FileText className="h-12 w-12 text-muted-foreground/50 mb-4" />
-                <p className="text-muted-foreground mb-4">Belum ada project</p>
-                <Button onClick={() => router.push("/buat")}>
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center justify-center py-14 px-6 text-center">
+                <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-5">
+                  <Sparkles className="h-8 w-8 text-primary" />
+                </div>
+                <h3 className="text-lg font-semibold mb-1">Belum ada project</h3>
+                <p className="text-muted-foreground text-sm max-w-md mb-6">
+                  Mulai buat konten pertamamu — pilih topik, dan Faza Studio akan
+                  mengubahnya menjadi script, suara, subtitle, dan video dalam satu alur.
+                </p>
+                <Button size="lg" onClick={() => router.push("/buat")} className="gap-2">
+                  <Plus className="h-5 w-5" />
                   Buat Project Pertama
                 </Button>
               </CardContent>
@@ -208,11 +216,14 @@ function ProjectCard({
                 e.stopPropagation();
                 onDelete();
               }}
-              className="text-muted-foreground hover:text-destructive transition-colors"
+              aria-label="Hapus project"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
             >
               <Trash2 className="h-4 w-4" />
             </button>
-            <ArrowRight className="h-4 w-4 text-primary" />
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-full text-primary">
+              <ArrowRight className="h-4 w-4" />
+            </span>
           </div>
         </div>
       </CardContent>

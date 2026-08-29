@@ -44,6 +44,15 @@ export interface TrendingResult {
 }
 
 /**
+ * Normalisasi slug kategori ACS → slug DB ViraLoop.
+ * Satu-satunya perbedaan: UI ACS memakai "horor" (ejaan Indonesia),
+ * sedangkan DB ViraLoop memakai "horror". Sisanya identik.
+ */
+function normalizeCategorySlug(slug: string): string {
+  return slug === "horor" ? "horror" : slug;
+}
+
+/**
  * Ambil trending suggestions dari tabel `trending_suggestions` (DB).
  * Jika query gagal ATAU result kosong → return [] (tanpa fallback palsu).
  *
@@ -63,12 +72,14 @@ export async function getTrendingSuggestions(
       .order("generated_at", { ascending: false })
       .limit(limit);
 
-    // Filter by category jika diberikan — cari UUID dari slug dulu
+    // Filter by category jika diberikan — cari UUID dari slug dulu.
+    // ⚠️ Normalisasi slug ACS → slug DB: "horor" (UI ACS) ↔ "horror" (DB ViraLoop).
     if (categoryId) {
+      const dbSlug = normalizeCategorySlug(categoryId);
       const { data: catData, error: catError } = await supabase
         .from("content_categories")
         .select("id")
-        .eq("slug", categoryId)
+        .eq("slug", dbSlug)
         .single();
 
       if (!catError && catData) {
@@ -122,4 +133,45 @@ export async function fetchTrendingTopics(category: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+export type TopicSource = "trending" | "ai" | "manual" | "empty";
+
+export interface TopicSuggestResult {
+  ideas: string[];
+  source: TopicSource;
+}
+
+/**
+ * Ambil topik saran untuk UI "Pilih Trending":
+ * 1. Coba data trending dari DB (/api/trending-ideas).
+ * 2. Jika kosong/gagal → fallback ke Saran AI (/api/suggest-ideas, on-demand).
+ * 3. Kembalikan juga `source` agar UI bisa menampilkan keterangan "Saran AI".
+ */
+export async function fetchTopicSuggestions(category: string): Promise<TopicSuggestResult> {
+  // 1. Trending DB
+  try {
+    const res = await fetch(`/api/trending-ideas?category=${encodeURIComponent(category)}`);
+    if (res.ok) {
+      const data = await res.json();
+      const ideas: string[] = Array.isArray(data.ideas) ? data.ideas : [];
+      if (ideas.length > 0) return { ideas, source: "trending" };
+    }
+  } catch {
+    // fallthrough ke AI
+  }
+
+  // 2) Fallback AI on-demand — TANPA mengubah isi; UI akan menandai asal AI.
+  try {
+    const aiRes = await fetch(`/api/suggest-ideas?category=${encodeURIComponent(category)}`);
+    if (aiRes.ok) {
+      const data = await aiRes.json();
+      const ideas: string[] = Array.isArray(data.ideas) ? data.ideas : [];
+      if (ideas.length > 0) return { ideas, source: "ai" };
+    }
+  } catch {
+    // fallthrough ke empty
+  }
+
+  return { ideas: [], source: "empty" };
 }

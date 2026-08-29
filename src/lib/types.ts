@@ -151,6 +151,14 @@ export interface SubtitleStyle {
   color: string;
   position: "bottom" | "top";
   fontFamily?: string;
+  /** Warna outline/stroke teks (untuk keterbacaan di footage terang). FFmpeg OutlineColour. */
+  strokeColor?: string;
+  /** Ketebalan outline (px). Default 2. 0 = tanpa outline. */
+  strokeWidth?: number;
+  /** Kotak semi-transparan di belakang teks — gaya Netflix. FFmpeg BorderStyle=4. */
+  backgroundColor?: string;
+  /** Transparansi kotak (0-255, 255 = opaque). NETflix biasanya ~160. */
+  backgroundAlpha?: number;
 }
 
 export interface SubtitleResult {

@@ -1207,9 +1207,17 @@ function VideoPanel({
   const [audioError, setAudioError] = useState<string | null>(null);
   // Audio preview via proxy (server-side fetch + range support)
   const audioProxyUrl = useAudioProxyUrl(project?.audio?.url);
+  // Video preview via proxy — fix CORS/range di <video>
+  const videoProxyUrl = useVideoProxyUrl(video?.url);
   // Subtitle caption/style editing (localhost — tidak trigger TTS/transcription)
   const segments = project?.subtitle?.segments || [];
-  const style = project?.subtitle?.style || { fontSize: 24, color: "#FFFFFF", position: "bottom" };
+  const style = project?.subtitle?.style || {
+    fontSize: 28,
+    color: "#FFD700",
+    position: "bottom",
+    strokeColor: "#000000",
+    strokeWidth: 2,
+  };
 
   useEffect(() => {
     if (video && !isEditing) {
@@ -1271,7 +1279,8 @@ function VideoPanel({
   };
 
   // Edit style dasar (tidak trigger TTS — hanya update subtitle state + re-render)
-  const handleStyleChange = (patch: { fontSize?: number; color?: string; position?: "bottom" | "top" }) => {
+  // Mendukung: fontSize, color, position, strokeColor, strokeWidth, backgroundColor, backgroundAlpha
+  const handleStyleChange = (patch: Partial<NonNullable<typeof style>>) => {
     if (!project?.subtitle) return;
     useProjectStore.getState().setSubtitleResult({
       ...project.subtitle,
@@ -1297,435 +1306,101 @@ function VideoPanel({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-lg">Video</CardTitle>
-        <div className="flex items-center gap-2">
-          {video && !isEditing && (
-            <>
-              <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} className="gap-1">
-                <Edit3 className="h-3.5 w-3.5" />
-                Edit
-              </Button>
-              <Button variant="outline" size="sm" onClick={onGenerate} disabled={isGenerating} className="gap-1">
-                <RefreshCw className="h-3.5 w-3.5" />
-                Regenerate
-              </Button>
-            </>
-          )}
-          {isEditing && (
-            <Button size="sm" onClick={() => { setIsEditing(false); onGenerate(); }} className="gap-1">
-              <Sparkles className="h-3.5 w-3.5" />
-              Render Ulang
-            </Button>
-          )}
-          {!video && !isGenerating && (
-            <Button size="sm" onClick={onGenerate} className="gap-1">
-              <Sparkles className="h-3.5 w-3.5" />
-              Render Video
-            </Button>
-          )}
-        </div>
+        {video && !isGenerating && (
+          <Button variant="outline" size="sm" onClick={onGenerate} className="gap-1">
+            <RefreshCw className="h-3.5 w-3.5" />
+            Render Ulang
+          </Button>
+        )}
       </CardHeader>
-      <CardContent>
-        {/* ===== PLATFORM & DURASI (target output — di-set di step render) ===== */}
-        <div className="mb-4 rounded-lg border border-border p-3 space-y-3">
-          <div>
-            <h4 className="text-sm font-medium">Platform Tujuan</h4>
-            <p className="text-xs text-muted-foreground">Tentukan orientasi & durasi output video.</p>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {Object.entries(PLATFORM_CONFIG).map(([key, config]) => (
-              <button
-                key={key}
-                onClick={() => {
-                  const platform = key as Platform;
-                  const dur = config.defaultDuration;
-                  useProjectStore.getState().updateProjectMeta({
-                    platform,
-                    targetDuration: durationLabelToSeconds(dur),
-                  });
-                }}
-                className={`rounded-lg border p-3 text-left transition-colors ${
-                  project?.platform === key
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border hover:border-primary/40"
-                }`}
-              >
-                <div className="text-sm font-medium">{config.label}</div>
-                <div className="text-xs text-muted-foreground">{config.description}</div>
-              </button>
-            ))}
-          </div>
-          {project?.platform && (
-            <div className="space-y-2">
-              <label className="text-xs text-muted-foreground">Durasi Konten</label>
-              <div className="flex flex-wrap gap-2">
-                {PLATFORM_CONFIG[(project.platform) as keyof typeof PLATFORM_CONFIG]?.durations.map((dur: string) => (
-                  <button
-                    key={dur}
-                    onClick={() => {
-                      useProjectStore.getState().updateProjectMeta({ targetDuration: durationLabelToSeconds(dur) });
-                    }}
-                    className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                      (project?.targetDuration) === durationLabelToSeconds(dur)
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border hover:border-primary/40"
-                    }`}
-                  >
-                    {dur}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ===== COMPOSITION PREVIEW: footage + audio + subtitle bersamaan ===== */}
-        <div className="space-y-4 mb-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium">Composition Preview</h3>
-            <Badge variant="outline">Footage + Audio + Subtitle</Badge>
-          </div>
-
-          {/* Footage preview */}
-          <div className="rounded-lg overflow-hidden border border-border bg-muted/30">
-            {selectedFootage?.thumbnail ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={selectedFootage.thumbnail}
-                alt={selectedFootage.query || "footage"}
-                className="w-full h-40 object-cover"
-              />
-            ) : (
-              <div className="h-40 flex items-center justify-center text-muted-foreground text-sm">
-                <Video className="h-8 w-8 mr-2" />
-                Belum ada footage dipilih
-              </div>
-            )}
-          </div>
-
-          {/* Audio player */}
-          {project?.audio?.url ? (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
-              <audio
-                ref={audioRef}
-                src={audioProxyUrl || project.audio.url}
-                className="hidden"
-                onError={() => setAudioError("Gagal memuat audio. Cek URL/format.")}
-                onLoadedMetadata={() => setAudioError(null)}
-              />
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8 rounded-full"
-                onClick={togglePlay}
-                disabled={!project.audio.url}
-                title="Play / Pause"
-              >
-                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-              </Button>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium truncate">{project.audio.voiceName || "Audio"}</p>
-                <p className="text-xs text-muted-foreground">{project.audio.provider || "TTS"}</p>
-              </div>
-              {audioError && (
-                <span className="text-xs text-destructive">{audioError}</span>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Belum ada audio. Generate audio dulu.</p>
-          )}
-
-          {/* Subtitle segments + edit caption */}
-          {segments.length > 0 ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-medium text-muted-foreground">Subtitle / Caption</h4>
-                <span className="text-xs text-muted-foreground">{segments.length} segmen</span>
-              </div>
-              <div className="max-h-40 overflow-y-auto space-y-1">
-                {segments.map((seg: any) => (
-                  <div key={seg.id} className="flex items-center gap-2 text-sm">
-                    <span className="text-xs text-muted-foreground w-16 shrink-0 font-mono">
-                      {formatTime(seg.startTime)}
-                    </span>
-                    <input
-                      type="text"
-                      value={seg.text}
-                      onChange={(e) => handleEditCaption(seg.id, e.target.value)}
-                      className="flex-1 px-2 py-1 rounded border border-input bg-background text-sm"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Belum ada subtitle. Generate subtitle dulu.</p>
-          )}
-
-          {/* Style dasar */}
-          {project?.subtitle && (
-            <div className="space-y-2 border-t pt-3">
-              <h4 className="text-xs font-medium text-muted-foreground">Style Caption</h4>
-              <div className="flex flex-wrap gap-3 items-center">
-                <label className="text-xs">Font: {style.fontSize}</label>
-                <input
-                  type="range"
-                  min="16"
-                  max="48"
-                  step="2"
-                  value={style.fontSize}
-                  onChange={(e) => handleStyleChange({ fontSize: parseInt(e.target.value) })}
-                  className="w-24"
-                />
-                <select
-                  value={style.color}
-                  onChange={(e) => handleStyleChange({ color: e.target.value })}
-                  className="px-2 py-1 rounded border border-input bg-background text-xs"
+      <CardContent className="space-y-6">
+        {/* ===== PLATFORM (read-only) ===== */}
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Platform</label>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(PLATFORM_CONFIG).map(([key, config]) => {
+              const isActive = project?.platform === key;
+              return (
+                <div
+                  key={key}
+                  className={`flex h-11 items-center rounded-full px-5 text-sm font-medium ${
+                    isActive
+                      ? "bg-primary text-primary-foreground"
+                      : "border border-border text-muted-foreground"
+                  }`}
                 >
-                  <option value="#FFFFFF">Putih</option>
-                  <option value="#000000">Hitam</option>
-                  <option value="#FFD700">Kuning</option>
-                </select>
-                <select
-                  value={style.position}
-                  onChange={(e) => handleStyleChange({ position: e.target.value as "bottom" | "top" })}
-                  className="px-2 py-1 rounded border border-input bg-background text-xs"
-                >
-                  <option value="bottom">Bawah</option>
-                  <option value="top">Atas</option>
-                </select>
-              </div>
-            </div>
-          )}
+                  {config.label}
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Untuk mengubah platform atau durasi, buat proyek baru
+          </p>
         </div>
 
-        {/* ===== TIMELINE EDITOR ===== */}
-        <div className="border-t pt-4 mb-4">
-          <TimelineEditor
-            project={project}
-            isGenerating={isGenerating}
-            progress={progress}
-            onRender={handleTimelineRender}
-          />
-        </div>
+{/* ===== KUSTOMISASI FOOTAGE (collapsed, sistem auto-pilih) ===== */}
+        <TimelineEditor
+          project={project}
+          isGenerating={isGenerating}
+          progress={progress}
+          onRender={handleTimelineRender}
+        />
 
+        {/* ===== RENDER ACTION (tunggal) ===== */}
         {isGenerating ? (
-          <div className="space-y-4 py-8">
-            <div className="flex items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <>
+            <div className="w-full h-14 flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Merender... {Math.round(progress)}%
             </div>
-            <div className="space-y-2">
-              <Progress value={progress} className="h-2" />
-              <p className="text-center text-sm text-muted-foreground">
-                Merender video... {Math.round(progress)}%
-              </p>
-            </div>
-          </div>
+            <Progress value={progress} className="h-2 w-full" />
+          </>
         ) : video ? (
-          <div className="space-y-4">
-            {isEditing ? (
-              <div className="space-y-3">
-                <Badge variant="warning">Mode Edit</Badge>
-                <div className="grid grid-cols-1 gap-2">
-                  {VISUAL_STYLES.map((style) => (
-                    <button
-                      key={style.value}
-                      onClick={() => setEditStyle(style.value)}
-                      className={`flex items-center gap-3 p-3 rounded-lg border transition-all text-left ${
-                        editStyle === style.value
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:border-primary/50"
-                      }`}
-                    >
-                      <div>
-                        <div className="font-medium text-sm">{style.label}</div>
-                        <div className="text-xs text-muted-foreground">{style.description}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-lg overflow-hidden border border-border bg-black">
-                <video
-                  src={video.url}
-                  controls
-                  className="w-full aspect-video object-contain"
-                  poster={video.thumbnailUrl}
-                />
-              </div>
-            )}
-
-            {/* Ganti Footage — re-render tanpa ulang pipeline sebelumnya */}
-            <div className="space-y-3 border-t pt-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">Pilih Footage</h3>
-                <Button variant="outline" size="sm" onClick={handleFetchFootage} disabled={isFootageLoading} className="gap-1">
-                  {isFootageLoading ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                  Muat Opsi Footage
-                </Button>
-              </div>
-
-              {selectedFootage && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Badge variant="success">Footage Dipilih</Badge>
-                  <span className="truncate">{selectedFootage.query || selectedFootage.id}</span>
-                </div>
-              )}
-
-              {isFootageLoading ? (
-                <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Mencari footage...
-                </div>
-              ) : footageOptions.length > 0 ? (
-                <div className="grid grid-cols-3 gap-2">
-                  {footageOptions.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => handleSelectFootage(f)}
-                      className={`relative aspect-video rounded-lg overflow-hidden border-2 transition-all ${
-                        selectedFootageId === f.id
-                          ? "border-primary ring-2 ring-primary/30"
-                          : "border-border hover:border-primary/50"
-                      }`}
-                      title={f.query}
-                    >
-                      {/* Thumbnail */}
-                      {f.thumbnail && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={f.thumbnail}
-                          alt={f.query}
-                          className="w-full h-full object-cover"
-                        />
-                      )}
-                      {/* Overlay durasi */}
-                      <div className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-[10px] px-1.5 py-0.5 text-right">
-                        {f.duration ? `${f.duration}s` : "?"}
-                      </div>
-                      {/* Check icon saat terpilih */}
-                      {selectedFootageId === f.id && (
-                        <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full p-0.5">
-                          <CheckCircle2 className="h-3 w-3" />
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Klik "Muat Opsi Footage" untuk melihat pilihan footage yang ditawarkan sistem.
-                </p>
-              )}
+          <>
+            <div className="w-full h-14 flex items-center justify-center gap-2 rounded-xl bg-emerald-500/10 text-emerald-600 text-sm font-semibold">
+              ✅ Video Selesai
             </div>
-
-            <div className="flex flex-wrap justify-end gap-2 pt-2">
+            <div className="rounded-lg overflow-hidden border border-border bg-black">
+              <video
+                src={videoProxyUrl || video.url}
+                controls
+                className="w-full aspect-video object-contain"
+                poster={video.thumbnailUrl}
+                onError={(e) => {
+                  const el = e.currentTarget;
+                  if (el.src !== video.url) {
+                    el.src = video.url;
+                    el.load();
+                  }
+                }}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               {project?.audio?.url && (
                 <a
                   href={project.audio.url}
                   download="faza-studio-audio.mp3"
-                  className="inline-flex items-center gap-2 rounded-lg border border-input px-3 py-2 text-sm font-medium hover:bg-accent"
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-input bg-background text-sm font-medium hover:bg-accent"
                 >
                   <Download className="h-4 w-4" />
                   Download Audio
                 </a>
               )}
-              {project?.video?.url && (
-                <a
-                  href={project.video.url}
-                  download={`${project.title || "video"}.mp4`}
-                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-                >
-                  <Download className="h-4 w-4" />
-                  Download Video
-                </a>
-              )}
+              <a
+                href={video.url}
+                download={`${project.title || "video"}.mp4`}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                <Download className="h-4 w-4" />
+                Download Video
+              </a>
             </div>
-          </div>
+          </>
         ) : (
-          <div className="space-y-4">
-            {/* Pilih Footage sebelum render */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-medium">Pilih Footage</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Pilih video background dari sistem, atau langsung render dengan rekomendasi otomatis.
-                  </p>
-                </div>
-                <Button variant="outline" size="sm" onClick={handleFetchFootage} disabled={isFootageLoading} className="gap-1">
-                  {isFootageLoading ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                  Muat Opsi Footage
-                </Button>
-              </div>
-
-              {selectedFootage && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Badge variant="success">Footage Dipilih</Badge>
-                  <span className="truncate">{selectedFootage.query || selectedFootage.id}</span>
-                </div>
-              )}
-
-              {isFootageLoading ? (
-                <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Mencari footage...
-                </div>
-              ) : footageOptions.length > 0 ? (
-                <div className="grid grid-cols-3 gap-2">
-                  {footageOptions.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => handleSelectFootage(f)}
-                      className={`relative aspect-video rounded-lg overflow-hidden border-2 transition-all ${
-                        selectedFootageId === f.id
-                          ? "border-primary ring-2 ring-primary/30"
-                          : "border-border hover:border-primary/50"
-                      }`}
-                      title={f.query}
-                    >
-                      {f.thumbnail && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={f.thumbnail}
-                          alt={f.query}
-                          className="w-full h-full object-cover"
-                        />
-                      )}
-                      <div className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-[10px] px-1.5 py-0.5 text-right">
-                        {f.duration ? `${f.duration}s` : "?"}
-                      </div>
-                      {selectedFootageId === f.id && (
-                        <div className="absolute top-1 right-1 bg-primary text-primary-foreground rounded-full p-0.5">
-                          <CheckCircle2 className="h-3 w-3" />
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Klik "Muat Opsi Footage" untuk melihat pilihan footage yang ditawarkan sistem.
-                </p>
-              )}
-            </div>
-
-            {/* Aksi render */}
-            <div className="flex justify-end pt-2">
-              <Button onClick={onGenerate} disabled={isGenerating} className="gap-2">
-                <Sparkles className="h-4 w-4" />
-                Render Video
-              </Button>
-            </div>
-          </div>
+          <Button onClick={onGenerate} className="w-full h-14 gap-2">
+            🎬 Render Video
+          </Button>
         )}
       </CardContent>
     </Card>
@@ -1780,6 +1455,124 @@ function useAudioProxyUrl(audioUrl: string | null | undefined): string | null {
   }, [audioUrl]);
 
   return proxyUrl;
+}
+
+/**
+ * Server-side video proxy untuk PREVIEW di editor — pola sama seperti useAudioProxyUrl.
+ * Browser <video> gagal memutar Supabase URL langsung karena COEP/CORS/range,
+ * jadi route /api/video-proxy yang meneruskan dengan header benar & range support.
+ * video.url TETAP Supabase URL untuk download/backend.
+ */
+function useVideoProxyUrl(videoUrl: string | null | undefined): string | null {
+  const [proxyUrl, setProxyUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!videoUrl) {
+      setProxyUrl(null);
+      return;
+    }
+    const proxy = `/api/video-proxy?url=${encodeURIComponent(videoUrl)}`;
+    setProxyUrl(proxy);
+  }, [videoUrl]);
+
+  return proxyUrl;
+}
+
+/** Konversi hex warna (#RRGGBB) + alpha (0-255) menjadi CSS rgba(). */
+function hexWithAlpha(hex: string | undefined, alpha: number, fallback: string): string {
+  const h = (hex || "#000000").replace("#", "");
+  if (h.length !== 6) return fallback;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const a = Math.min(1, Math.max(0, alpha / 255));
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+/**
+ * Preview Caption WYSIWYG — menampilkan teks subtitle dengan style terpilih
+ * (font, warna, posisi, outline/kotak) secara real-time tanpa perlu render.
+ * Aksesibilitas/keterbacaan ala Netflix hijau di footage terang.
+ */
+function SubtitlePreview({
+  segments,
+  style,
+}: {
+  segments: any[];
+  style: { fontSize: number; color: string; position: "bottom" | "top"; strokeColor?: string; strokeWidth?: number; backgroundColor?: string; backgroundAlpha?: number };
+}) {
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  const safeSegments = segments.length > 0 ? segments : [];
+  const idx = Math.min(activeIdx, Math.max(0, safeSegments.length - 1));
+  const active = safeSegments[idx];
+  const text = active?.text || "";
+  const topPos = style.position === "top";
+
+  // Gaya teks
+  const strokeOn = !style.backgroundColor; // mode stroke (default)
+  const strokeW = Math.max(0, style.strokeWidth ?? 2);
+  const textShadow = strokeOn
+    ? `${strokeW}px 0 0 ${style.strokeColor || "#000000"},
+       -${strokeW}px 0 0 ${style.strokeColor || "#000000"},
+       0 ${strokeW}px 0 ${style.strokeColor || "#000000"},
+       0 -${strokeW}px 0 ${style.strokeColor || "#000000"},
+       ${strokeW}px ${strokeW}px 0 ${style.strokeColor || "#000000"},
+       -${strokeW}px ${strokeW}px 0 ${style.strokeColor || "#000000"},
+       ${strokeW}px -${strokeW}px 0 ${style.strokeColor || "#000000"},
+       -${strokeW}px -${strokeW}px 0 ${style.strokeColor || "#000000"}`
+    : "none";
+
+  const boxBg = style.backgroundColor
+    ? hexWithAlpha(style.backgroundColor, style.backgroundAlpha ?? 160, "rgba(0,0,0,0.6)")
+    : "transparent";
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-medium text-muted-foreground">Preview Caption</h4>
+        <span className="text-[11px] text-muted-foreground">
+          {safeSegments.length > 1
+            ? `Segmen ${idx + 1}/${safeSegments.length}`
+            : "Segmen 1"}
+        </span>
+      </div>
+
+      {/* Kotak preview (rasio ~16:9, background gelap agar teks terlihat) */}
+      <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-gradient-to-br from-slate-800 to-slate-900 border border-border">
+        <div
+          className="absolute inset-x-4 text-center font-bold leading-snug break-words"
+          style={{
+            top: topPos ? "8%" : undefined,
+            bottom: topPos ? undefined : "10%",
+            color: style.color || "#FFFFFF",
+            fontSize: `${style.fontSize}px`,
+            textShadow,
+            backgroundColor: boxBg,
+            padding: boxBg !== "transparent" ? "6px 12px" : undefined,
+            borderRadius: boxBg !== "transparent" ? "4px" : undefined,
+          }}
+        >
+          {text || "…"}
+        </div>
+      </div>
+
+      {/* Pilih segmen untuk preview */}
+      {safeSegments.length > 1 && (
+        <select
+          value={idx}
+          onChange={(e) => setActiveIdx(parseInt(e.target.value, 10))}
+          className="w-full px-2 py-1 rounded border border-input bg-background text-xs"
+        >
+          {safeSegments.map((s: any, i: number) => (
+            <option key={s.id ?? i} value={i}>
+              {formatTime(s.startTime)} — {String(s.text || "").slice(0, 32)}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
 }
 
 // ============================================================
