@@ -264,6 +264,7 @@ export async function POST(request: NextRequest) {
           backgroundUrl: userBackgroundUrl,
           subtitleSegments,
           subtitleStyle,
+          platform,
           // Timeline: footage per scene untuk concat (jika ada)
           sceneFootage,
         } = body;
@@ -327,44 +328,41 @@ export async function POST(request: NextRequest) {
         const totalDuration = await getAudioDuration(ffmpegPath, inputAudio);
         console.log(`[Video] Audio duration: ${totalDuration}s`);
 
-        // Compose: background + audio + subtitle overlay, output 1080x1920 portrait
-        // FontSize & posisi diambil dari subtitleStyle (jika ada), default 24/bottom/white.
-        // STYLE NETFLIX-READABLE:
-        // - Outline (stroke) otomatis untuk keterbacaan di footage terang.
-        // - Opsional kotak semi-transparan (BorderStyle=4) bila backgroundColor diisi.
-        const fontSize = subtitleStyle?.fontSize || 24;
-        const alignment = subtitleStyle?.position === "top" ? 8 : 2;
-        const textColor = (subtitleStyle?.color || "#FFFFFF").replace("#", "").toUpperCase();
-        const PrimaryColour = `&H00${textColor}`;
+        // Resolusi output mengikuti platform (TikTok/Reels → 9:16, YouTube → 16:9).
+        const isHorizontal = platform === "youtube";
+        const outW = isHorizontal ? 1920 : 1080;
+        const outH = isHorizontal ? 1080 : 1920;
+        const outRes = `${outW}x${outH}`;
 
-        // Stroke — default 2px hitam agar teks terbaca di video terang.
-        const strokeWidth = Math.max(0, subtitleStyle?.strokeWidth ?? 2);
-        const strokeColorHex = (subtitleStyle?.strokeColor || "#000000").replace("#", "").toUpperCase();
+        // ===== SUBTITLE STYLE MODERN (Montserrat Bold, tanpa background box) =====
+        // fontSize proporsional terhadap tinggi resolusi:
+        //   - Portrait 9:16  (1080x1920) → height * 0.045 (~48-86 px)
+        //   - Landscape 16:9 (1920x1080) → height * 0.055 (~59 px)
+        //   - Square   1:1              → height * 0.048
+        // dikunci ke rentang 32..96.
+        const ratio =
+          outW === outH ? 0.048 : outW > outH ? 0.055 : 0.045;
+        const fontSize = Math.min(96, Math.max(32, Math.round(outH * ratio)));
 
-        // Kotak semi-transparan (opsional, ala Netflix). BorderStyle=4 pakai BackColour.
-        // Kotak diaktifkan hanya jika backgroundColor diisi.
-        const useBox = !!subtitleStyle?.backgroundColor;
-        let backSpec = "";
-        if (useBox) {
-          const bgHex = (subtitleStyle!.backgroundColor || "#000000").replace("#", "").toUpperCase();
-          const alpha = Math.round(
-            // &HAABBGGRR, alpha dulu. Default ~160 (≈63% opacity)
-            Math.min(255, Math.max(0, subtitleStyle?.backgroundAlpha ?? 160))
-          );
-          const alphaHex = alpha.toString(16).padStart(2, "0");
-          // ASS BackColour = &HAABBGGRR (blue-green-red order)
-          const bbggrr = bgHex.length === 6 ? `${bgHex.slice(4, 6)}${bgHex.slice(2, 4)}${bgHex.slice(0, 2)}` : "000000";
-          backSpec = `BackgroundColour=&H${alphaHex}${bbggrr},BorderStyle=4,Outline=0,BackColour=&H${alphaHex}${bbggrr}`;
-        }
+        // Posisi: 2 = bottom-center (ASS).
+        const alignment = 2;
+        // Teks putih bersih.
+        const PrimaryColour = `&H00FFFFFF`;
+        // Outline hitam tipis (3) + shadow hitam tebal (distance 2, opacity 0.6).
+        const strokeWidth = 3;
+        const strokeColorHex = "000000";
 
-        // Gabungkan style. Jika tidak pakai kotak, beri Outline+Shadow untuk stroke.
+        // Gabungkan style — font Montserrat bila tersedia (fallback Arial),
+        // warna putih, outline tipis + shadow tebal, tanpa background box.
         const forceStyle = [
+          "FontName=Montserrat",
           `FontSize=${fontSize}`,
-          `Alignment=${alignment}`,
           `PrimaryColour=${PrimaryColour}`,
-          useBox
-            ? backSpec
-            : `Outline=${strokeWidth},OutlineColour=&H00${strokeColorHex},Shadow=1,ShadowColour=&H80000000,BorderStyle=1`,
+          `Outline=${strokeWidth},OutlineColour=&H00${strokeColorHex}`,
+          "Shadow=2,ShadowColour=&H99000000",
+          "BorderStyle=1",
+          `Alignment=${alignment}`,
+          "MarginV=" + Math.round(outH * 0.12),
         ].join(",");
 
         // Escape path SRT untuk filtergraph FFmpeg (Windows: `C:\` dan `\` harus di-escape).
@@ -373,8 +371,9 @@ export async function POST(request: NextRequest) {
         // ===== TIMELINE: jika ada sceneFootage, render per-scene (concat) =====
         const hasSceneFootage = Array.isArray(sceneFootage) && sceneFootage.length > 0;
 
-        // Filter scale+pad untuk semua cabang (single clip & concat)
-        const scalePad = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2";
+        // Filter scale+pad untuk semua cabang (single clip & concat).
+        // Rasio mengikuti platform tujuan (TikTok/Reels → 9:16, YouTube → 16:9).
+        const scalePad = `scale=${outW}:${outH}:force_original_aspect_ratio=decrease,pad=${outW}:${outH}:(ow-iw)/2:(oh-ih)/2`;
 
         let args: string[];
         if (hasSceneFootage) {
@@ -543,7 +542,7 @@ export async function POST(request: NextRequest) {
 
         // ===== TRACING SEMENTARA — verifikasi send done event =====
         console.log("[Video] Sending done event, videoUrl:", videoUrl);
-        send({ status: "done", videoUrl, format: "mp4", resolution: "1080x1920" });
+        send({ status: "done", videoUrl, format: "mp4", resolution: outRes });
         controller.close();
       } catch (error) {
         console.error("[generate-video] Error:", error);

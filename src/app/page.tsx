@@ -107,21 +107,25 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex flex-col items-stretch sm:items-end gap-2">
-            <Button
-              size="lg"
-              className="gap-2"
-              onClick={handleCreateClick}
-              disabled={isCreating}
-            >
-              {isCreating ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Plus className="h-5 w-5" />
-              )}
-              {isCreating ? "Membuat..." : "Buat Konten Baru"}
-            </Button>
-            {createError && (
-              <p className="text-sm text-destructive text-right">{createError}</p>
+            {projects.length > 0 && (
+              <>
+                <Button
+                  size="lg"
+                  className="gap-2"
+                  onClick={handleCreateClick}
+                  disabled={isCreating}
+                >
+                  {isCreating ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <Plus className="h-5 w-5" />
+                  )}
+                  {isCreating ? "Membuat..." : "Buat Konten Baru"}
+                </Button>
+                {createError && (
+                  <p className="text-sm text-destructive text-right">{createError}</p>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -180,9 +184,13 @@ export default function DashboardPage() {
                   Mulai buat konten pertamamu — pilih topik, dan Faza Studio akan
                   mengubahnya menjadi script, suara, subtitle, dan video dalam satu alur.
                 </p>
-                <Button size="lg" onClick={handleCreateClick} className="gap-2">
-                  <Plus className="h-5 w-5" />
-                  Buat Project Pertama
+                <Button size="lg" onClick={handleCreateClick} disabled={isCreating} className="gap-2">
+                  {isCreating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                  {isCreating ? "Membuat..." : "Buat Project Pertama"}
                 </Button>
               </CardContent>
             </Card>
@@ -217,9 +225,19 @@ function ProjectCard({
   const completedSteps = (["script", "audio", "video"] as const)
     .filter((s) => project.steps[s] === "done").length;
 
+  // Fallback judul agar kartu tidak kosong (mis. project baru tanpa topic).
+  const cardTitle =
+    project.title?.trim() ||
+    project.topic?.trim() ||
+    (project.genre ? `${project.genre} project` : "Proyek Baru");
+
   // FIX 3 — badge video free 24 jam / kedaluwarsa di kartu.
+  // Hanya tampil bila project benar-benar punya video (bukan "Draft" kosong).
+  const hasVideo = Boolean(project.video?.url);
   const isFreeVideoExpiring =
-    project.videoStoragePlan === "free" && !!project.videoExpiresAt;
+    hasVideo &&
+    project.videoStoragePlan === "free" &&
+    !!project.videoExpiresAt;
   const isVideoExpired =
     isFreeVideoExpiring &&
     new Date(project.videoExpiresAt as string).getTime() <= Date.now();
@@ -229,7 +247,7 @@ function ProjectCard({
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="space-y-1">
-            <CardTitle className="text-base line-clamp-1">{project.title}</CardTitle>
+            <CardTitle className="text-base line-clamp-1">{cardTitle}</CardTitle>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span>{project.genre}</span>
               <span>•</span>

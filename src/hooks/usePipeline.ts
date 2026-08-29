@@ -13,6 +13,7 @@ import {
 } from "@/lib/types";
 import { CategoryId } from "@/lib/categories/types";
 import { DurationTier } from "@/lib/duration";
+import { providerLabel } from "@/lib/constants";
 import { generateId, sleep } from "@/lib/utils";
 
 export interface PipelineProgress {
@@ -192,6 +193,7 @@ export function usePipeline() {
                 customGenre: project.customGenre,
                 duration,
                 targetDuration: project.targetDuration,
+                platform: project.platform,
                 identityKey: `anon:${project.id}`,
                 projectId,
               }),
@@ -299,12 +301,7 @@ export function usePipeline() {
               id: generateId(),
               url: audioUrl,
               duration: project.script.estimatedDuration,
-              voiceName:
-                usedProvider === "elevenlabs"
-                  ? "ElevenLabs"
-                  : usedProvider === "cartesia"
-                  ? "Cartesia"
-                  : "Google TTS",
+              voiceName: providerLabel(usedProvider),
               provider: usedProvider as "elevenlabs" | "cartesia" | "google",
               language: "id-ID",
               speed: opts.speed || 1.0,
@@ -440,6 +437,7 @@ export function usePipeline() {
                 subtitleUrl: project.subtitle.url || project.subtitle.srtContent,
                 projectId: project.id,
                 genre: project.genre,
+                platform: project.platform,
                 backgroundUrl,
                 // SOURCE OF TRUTH — dikirim dari project state terbaru.
                 // subtitleUrl tetap sebagai fallback backward compat di renderer.

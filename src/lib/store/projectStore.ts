@@ -13,6 +13,7 @@ import {
   Platform,
 } from "@/lib/types";
 import { generateId } from "@/lib/utils";
+import { providerLabel } from "@/lib/constants";
 
 interface ProjectState {
   // Projects list
@@ -104,7 +105,18 @@ function mapDbRowToProject(row: any): Project {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     script,
-    audio: row.audio_url ? { id: row.id, url: row.audio_url, duration: 0, voiceName: "Auto", language: "id-ID", speed: 1.0, emotion: "netral" } : undefined,
+    audio: row.audio_url
+      ? {
+          id: row.id,
+          url: row.audio_url,
+          duration: 0,
+          voiceName: providerLabel(row.audio_provider),
+          provider: (row.audio_provider || "google") as AudioResult["provider"],
+          language: "id-ID",
+          speed: row.audio_speed ?? 1.0,
+          emotion: row.audio_emotion || "netral",
+        }
+      : undefined,
     subtitle: row.subtitle_url
       ? {
           id: row.id,
@@ -313,6 +325,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         p.id === updatedProject.id ? updatedProject : p
       ),
     }));
+
+    // Persist status "completed" ke DB agar dashboard menampilkan "Selesai" benar.
+    fetch("/api/projects", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: updatedProject.id,
+        status: "completed",
+      }),
+    }).catch((err) =>
+      console.warn("[projectStore] setVideoResult persist status error:", err)
+    );
   },
 
   setFootageResult: (footage: FootageOption) => {
@@ -376,6 +400,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const updatedProject: Project = {
       ...currentProject,
       ...data,
+      // Judul project mengikuti topic (agar kartu menampilkan judul yang terisi).
+      title: data.topic || currentProject.title || "",
       customGenre: data.customGenre,
       updatedAt: new Date().toISOString(),
     };
@@ -397,6 +423,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           genre: data.genre,
           platform: data.platform,
           targetDuration: data.targetDuration,
+          title: data.topic,
         }),
       });
 

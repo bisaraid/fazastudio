@@ -169,6 +169,10 @@ export async function PATCH(request: NextRequest) {
     if (body.genre !== undefined) updates.genre_slug = body.genre;
     if (body.platform !== undefined) updates.platform = body.platform;
     if (body.targetDuration !== undefined) updates.target_duration = body.targetDuration;
+    // Judul project (dari topic — agar kartu menampilkan judul)
+    if (body.title !== undefined) updates.title = body.title;
+    // Status project (mis. "completed" saat video selesai)
+    if (body.status !== undefined) updates.status = body.status;
 
     // Field script (opsional — backward compat)
     if (body.script !== undefined) updates.script = JSON.stringify(body.script);

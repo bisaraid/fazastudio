@@ -55,8 +55,20 @@ export const VISUAL_STYLES: { value: VisualStyle; label: string; description: st
   { value: "cinematic", label: "Sinematik", description: "Gaya film sinematik" },
 ];
 
+// Label TTS dalam bahasa manusia untuk UI — JANGAN tampilkan nama backend
+// (cartesia / elevenlabs / google) kepada user.
+export const PROVIDER_LABELS: Record<string, string> = {
+  cartesia: "Profesional",
+  elevenlabs: "Premium",
+  google: "Standar (Gratis)",
+};
+
+/** Konversi provider backend → label manusia untuk tampilan. */
+export function providerLabel(provider?: string | null): string {
+  return (provider && PROVIDER_LABELS[provider]) || "Standar (Gratis)";
+}
+
 export const DURATION_OPTIONS: { value: number; label: string }[] = [
-  { value: 15, label: "15 detik" },
   { value: 30, label: "30 detik" },
   { value: 60, label: "1 menit" },
   { value: 180, label: "3 menit" },

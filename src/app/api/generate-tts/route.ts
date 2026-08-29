@@ -202,10 +202,22 @@ export async function POST(request: NextRequest) {
       .getPublicUrl(filePath);
     const audioUrl = publicUrlData.publicUrl;
 
-    // Update kolom audio_url di tabel projects
+    // Update kolom audio_url + metadata TTS di tabel projects
+    const audioSettings = (settings || {}) as {
+      voice_id?: string;
+      speed?: number;
+      emotion?: string;
+    };
     const { error: updateProjectError } = await supabase
       .from("projects")
-      .update({ audio_url: audioUrl, updated_at: new Date().toISOString() })
+      .update({
+        audio_url: audioUrl,
+        audio_provider: usedProvider || provider || "google",
+        audio_voice: audioSettings.voice_id || "",
+        audio_speed: audioSettings.speed ?? 1.0,
+        audio_emotion: audioSettings.emotion || "netral",
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", projectId);
 
     if (updateProjectError) {

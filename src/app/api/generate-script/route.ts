@@ -92,6 +92,7 @@ export async function POST(request: NextRequest) {
         customGenre: body.customGenre,
         duration: body.duration,
         targetDuration: body.targetDuration || 60,
+        platform: body.platform,
         affiliateInput: body.affiliateInput,
         identityKey,
       },

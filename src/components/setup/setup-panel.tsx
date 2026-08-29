@@ -15,13 +15,11 @@ interface DurationOption {
 
 const DURATION_BY_PLATFORM: Record<Platform, DurationOption[]> = {
   tiktok: [
-    { label: "15 det", seconds: 15 },
     { label: "30 det", seconds: 30 },
     { label: "60 det", seconds: 60 },
     { label: "90 det", seconds: 90 },
   ],
   reels: [
-    { label: "15 det", seconds: 15 },
     { label: "30 det", seconds: 30 },
     { label: "60 det", seconds: 60 },
     { label: "90 det", seconds: 90 },

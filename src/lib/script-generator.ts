@@ -17,6 +17,7 @@ import {
 import { getCategoryConfig, getCustomCategoryConfig } from "@/lib/categories";
 import { getCategoryConfig as getAutoCategoryConfig } from "@/lib/categories/config";
 import { getDurationConfigForCategory, DurationTier } from "@/lib/duration";
+import { Platform } from "@/lib/types";
 import {
   parseScriptJson,
   validateScriptScenes,
@@ -52,6 +53,8 @@ export interface GenerateScriptInput {
   duration: DurationTier;
   /** Durasi target dalam detik (untuk estimasi) */
   targetDuration?: number;
+  /** Platform tujuan (TikTok/YouTube/dll) — menyesuaikan gaya & kepadatan narasi */
+  platform?: Platform;
   affiliateInput?: AffiliateInput;
   affiliateMode?: AffiliateMode;
   identityKey?: string;
@@ -124,6 +127,95 @@ function resolveConfig(categoryId: CategoryId, config?: CategoryConfig): Categor
 // PROMPT BUILDERS
 // ============================================================
 
+/** Estimasi jumlah scene agar pas dengan durasi target (detik).
+ *  Video pendek → sedikit scene singkat; video panjang → lebih banyak scene.
+ *  Asumsi ~4-6 detik narasi per scene untuk konten singkat. */
+function scenesForDuration(seconds: number): number {
+  const s = seconds || 60;
+  if (s <= 30) return 3;
+  if (s <= 60) return 5;
+  if (s <= 120) return 8;
+  if (s <= 240) return 12;
+  if (s <= 480) return 18;
+  return 24;
+}
+
+/** Estimasi target jumlah kata narasi agar video sesuai durasi (detik).
+ *  Asumsi kecepatan bicara normal ~2.4 kata/detik (~150 wpm). */
+function estimateWordsForDuration(seconds: number): number {
+  const words = Math.round((seconds || 60) * 2.4);
+  return Math.max(20, words);
+}
+
+/** Potong narasi setiap scene agar total kata tidak melebihi target.
+ *  Mengembalikan salinan baru, narasi asli tidak diubah.
+ *  Strategi: alokasikan budget kata per scene secara proporsional, lalu
+ *  potong tiap scene dari akhir kalimat agar tidak kasar di tengah kalimat. */
+function enforceWordBudget(
+  scenes: GeneratedScene[],
+  targetWords: number
+): GeneratedScene[] {
+  if (scenes.length === 0) return scenes;
+
+  // Hitung total kata saat ini
+  const totalWords = scenes.reduce(
+    (sum, s) => sum + (s.content || s.narration || "").split(/\s+/).filter(Boolean).length,
+    0
+  );
+  if (totalWords <= targetWords) return scenes;
+
+  const ratio = targetWords / totalWords;
+  const raw = scenes.map((s) => {
+    const words = (s.content || s.narration || "")
+      .split(/\s+/)
+      .filter(Boolean);
+    const budget = Math.max(1, Math.round(words.length * ratio));
+    const trimmed = words.slice(0, budget).join(" ");
+    return { ...s, content: trimmed, narration: trimmed };
+  });
+
+  // Koreksi: pastikan total setelah potong tidak melebihi target (budget sisa)
+  let over = raw
+    .reduce((sum, s) => sum + (s.content || "").split(/\s+/).filter(Boolean).length, 0) -
+    targetWords;
+  if (over > 0) {
+    // Potong dari scene terakhir ke depan
+    for (let i = raw.length - 1; i >= 0 && over > 0; i--) {
+      const w = (raw[i].content || "").split(/\s+/).filter(Boolean);
+      const keep = Math.max(1, w.length - over);
+      const trimmed = w.slice(0, keep).join(" ");
+      over -= (w.length - keep);
+      raw[i] = { ...raw[i], content: trimmed, narration: trimmed };
+    }
+  }
+
+  return raw;
+}
+
+/** Petunjuk durasi + platform untuk dimasukkan ke prompt segment. */
+function buildDurationGuidance(
+  targetDuration?: number,
+  platform?: Platform
+): string {
+  const sec = targetDuration && targetDuration > 0 ? targetDuration : undefined;
+  if (sec) {
+    const words = estimateWordsForDuration(sec);
+    const mins = Math.floor(sec / 60);
+    const secs = sec % 60;
+    const label = mins > 0 ? `${mins} menit${secs > 0 ? ` ${secs} detik` : ""}` : `${secs} detik`;
+    return `Durasi TARGET: ${label} (~${words} kata total narasi untuk seluruh video).
+SESUAIKAN panjang narasi TOTAL agar pas dengan target durasi tersebut. Video pendek (≤60 detik) harus PADAT dan ringkas — kurang dari 150 kata; video panjang boleh lebih detail.`;
+  }
+  // Fallback ke platform (jika detik tidak ada)
+  if (platform) {
+    const pl = platform === "tiktok" || platform === "reels" ? "pendek dan sangat padat (TikTok/Reels)" :
+      platform === "youtube" ? "berdurasi lebih panjang dan detail (YouTube)" :
+      platform === "podcast" ? "berdurasi panjang, gaya podcast, detail" : "";
+    if (pl) return `Platform: ${platform} → kebutuhannya ${pl}. Sesuaikan panjang narasi (TikTok/Reels padat, YouTube/podcast lebih panjang).\n`;
+  }
+  return "";
+}
+
 function buildSegmentPrompt(
   categoryId: CategoryId,
   topic: string,
@@ -133,12 +225,18 @@ function buildSegmentPrompt(
   globalOutline: string,
   previousSummary: string,
   affiliateInput?: AffiliateInput,
-  explicitConfig?: CategoryConfig
+  explicitConfig?: CategoryConfig,
+  targetDuration?: number,
+  platform?: Platform
 ): string {
   const config = resolveConfig(categoryId, explicitConfig);
   const skeleton = getScriptSkeleton(config);
   const durConfig = getDurationConfigForCategory(categoryId, duration);
-  const scenesPerSegment = Math.ceil(durConfig.targetScenes / totalSegments);
+  // Jumlah scene efektif mengikuti durasi target bila tersedia (video pendek → lebih sedikit scene).
+  const targetSceneTotal = targetDuration && targetDuration > 0
+    ? Math.min(durConfig.targetScenes, scenesForDuration(targetDuration))
+    : durConfig.targetScenes;
+  const scenesPerSegment = Math.ceil(targetSceneTotal / totalSegments);
 
   // Affiliate product block
   let affiliateProductBlock = "";
@@ -169,8 +267,9 @@ Jika deskripsi input terbatas/singkat, buat script yang singkat dan jujur sesuai
 OUTLINE GLOBAL:
 ${globalOutline}
 
-Target: ${scenesPerSegment} scene pertama (total ${durConfig.targetScenes} scene untuk seluruh video).
+Target: ${scenesPerSegment} scene pertama (total ${targetSceneTotal} scene untuk seluruh video).
 Durasi: ${durConfig.label}.
+${buildDurationGuidance(targetDuration, platform)}
 
 ${affiliateProductBlock}
 Buat scene-scene pertama sesuai outline di atas. Scene pertama (is_hook: true) harus hook yang kuat.`;
@@ -178,7 +277,7 @@ Buat scene-scene pertama sesuai outline di atas. Scene pertama (is_hook: true) h
 
   // Subsequent segments
   const startScene = segmentIndex * scenesPerSegment + 1;
-  const endScene = Math.min((segmentIndex + 1) * scenesPerSegment, durConfig.targetScenes);
+  const endScene = Math.min((segmentIndex + 1) * scenesPerSegment, targetSceneTotal);
 
   if (skeleton === "informational_arc") {
     return `Lanjutkan script dengan topik: "${topic}"
@@ -408,7 +507,9 @@ async function generateSegment(
   dynamicHookEntries: HookEntry[] = [],
   usedPatternValues: Set<string> = new Set(),
   explicitConfig?: CategoryConfig,
-  usedClosingIds: string[] = []
+  usedClosingIds: string[] = [],
+  targetDuration?: number,
+  platform?: Platform
 ): Promise<{ scenes: ValidatableScene[]; summary: string; selectedPatternValue?: string | null; selectedClosingStrategy?: ClosingStrategy | null }> {
   const { prompt: systemPrompt, selectedPatternValue, selectedClosingStrategy } = buildSystemPrompt(
     categoryId, staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds
@@ -416,7 +517,7 @@ async function generateSegment(
 
   const userPrompt = buildSegmentPrompt(
     categoryId, topic, duration, segmentIndex, totalSegments,
-    globalOutline, previousSummary, affiliateInput, explicitConfig
+    globalOutline, previousSummary, affiliateInput, explicitConfig, targetDuration, platform
   );
 
   try {
@@ -465,7 +566,7 @@ async function generateSegment(
         return generateSegment(
           categoryId, topic, duration, segmentIndex, totalSegments,
           globalOutline, previousSummary, affiliateInput, retryCount + 1, signal,
-          staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds
+          staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds, targetDuration, platform
         );
       }
 
@@ -490,7 +591,7 @@ async function generateSegment(
       return generateSegment(
         categoryId, topic, duration, segmentIndex, totalSegments,
         globalOutline, previousSummary, affiliateInput, retryCount + 1, signal,
-        staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds
+        staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds, targetDuration, platform
       );
     }
     throw error;
@@ -575,7 +676,7 @@ export async function generateScriptWithAI(
   onProgress?: (progress: GenerateScriptProgress) => void,
   signal?: AbortSignal
 ): Promise<GenerateScriptResult> {
-  const { topic, categoryId, customGenre, duration, affiliateInput, affiliateMode, identityKey } = input;
+  const { topic, categoryId, customGenre, duration, affiliateInput, affiliateMode, identityKey, targetDuration, platform } = input;
 
   try {
     // Resolve config
@@ -594,7 +695,16 @@ export async function generateScriptWithAI(
     const effectiveDuration: DurationTier = isComparison ? "long" : duration;
 
     const durConfig = getDurationConfigForCategory(categoryId, effectiveDuration);
-    const totalSegments = durConfig.segments;
+
+    // Jumlah scene & segmen disesuaikan dengan durasi target (detik) jika ada.
+    // Ini mencegah video pendek (mis. 30s) memaksa 15+ scene → narasi panjang.
+    const effectiveScenes = targetDuration && targetDuration > 0
+      ? Math.min(durConfig.targetScenes, scenesForDuration(targetDuration))
+      : durConfig.targetScenes;
+    const effectiveSegments = targetDuration && targetDuration > 0
+      ? Math.max(1, Math.min(durConfig.segments, Math.ceil(effectiveScenes / 3)))
+      : durConfig.segments;
+    const totalSegments = effectiveSegments;
 
     // Fetch data trending dari TrendTracker (untuk single mode — konteks, bukan hard-sell)
     let trendingProducts: Product[] = [];
@@ -655,7 +765,8 @@ export async function generateScriptWithAI(
       segment1 = await generateSegment(
         categoryId, topic, effectiveDuration, 0, totalSegments,
         globalOutline, "", affiliateInput, 0, signal,
-        staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds
+        staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds,
+        targetDuration, platform
       );
       allScenes.push(...segment1.scenes);
       hookPatternUsed = segment1.selectedPatternValue || undefined;
@@ -698,7 +809,8 @@ export async function generateScriptWithAI(
           const result = await generateSegment(
             categoryId, topic, effectiveDuration, i, totalSegments,
             globalOutline, segment1.summary, affiliateInput, 0, signal,
-            staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds
+            staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds,
+            targetDuration, platform
           );
           allScenes.push(...result.scenes);
         } catch (error) {
@@ -783,7 +895,18 @@ export async function generateScriptWithAI(
     }
 
     // Map to ACS Scene structure
-    const durationPerScene = Math.max(10, Math.floor((input.targetDuration || 60) / Math.max(1, finalScenes.length)));
+    // Durasi per scene dibagi rata dari targetDuration. JANGAN kunci minimum
+    // 10s — untuk video pendek (<60s), scene harus singkat agar total sesuai.
+    const durationPerScene = finalScenes.length > 0
+      ? Math.max(1, Math.round((input.targetDuration || 60) / finalScenes.length))
+      : (input.targetDuration || 60);
+
+    // ===== PENEGAKAN BUDGET KATA — pastikan hasil benar-benar sesuai setup =====
+    // Jika targetDuration tersedia, potong narasi agar total kata sesuai target
+    // (30s → ~72 kata, 60s → ~144 kata). Ini memastikan audio TTS mendekati durasi setup.
+    const budgetWords = input.targetDuration && input.targetDuration > 0
+      ? estimateWordsForDuration(input.targetDuration)
+      : undefined;
 
     const mappedScenes: GeneratedScene[] = finalScenes.map((scene, i) => ({
       id: generateId(),
@@ -804,7 +927,12 @@ export async function generateScriptWithAI(
       flagged: Boolean((scene as { flagged?: boolean }).flagged),
     }));
 
-    const fullScript = mappedScenes
+    // Terapkan pemotongan budget kata jika ada target durasi
+    const finalMappedScenes = budgetWords
+      ? enforceWordBudget(mappedScenes, budgetWords)
+      : mappedScenes;
+
+    const fullScript = finalMappedScenes
       .map((s) => `${s.heading}\n${s.content}`)
       .join("\n\n");
 
@@ -815,9 +943,11 @@ export async function generateScriptWithAI(
     return {
       id: generateId(),
       title: `${topic} — Faza Studio`,
-      scenes: mappedScenes,
+      scenes: finalMappedScenes,
       fullScript,
-      estimatedDuration: input.targetDuration || 60,
+      // Estimasi jujur dari wordcount riil (~2.4 kata/detik), bukan menyalin target.
+      // Dengan penegakan budget, ini akan mendekati durasi setup.
+      estimatedDuration: Math.max(5, Math.round(wordCount / 2.4)),
       wordCount,
       hookPatternUsed,
     };

@@ -29,6 +29,8 @@ import {
   AlertCircle,
   Save,
   SlidersHorizontal,
+  Volume2,
+  Repeat,
 } from "lucide-react";
 import {
   PipelineStep,
@@ -39,7 +41,7 @@ import {
   VisualStyle,
   Platform,
 } from "@/lib/types";
-import { VISUAL_STYLES, VOICES, VOICE_EMOTIONS } from "@/lib/constants";
+import { VISUAL_STYLES, VOICES, VOICE_EMOTIONS, providerLabel } from "@/lib/constants";
 import { generateId } from "@/lib/utils";
 import { TimelineEditor } from "@/components/video/timeline-editor";
 import { SetupPanel } from "@/components/setup/setup-panel";
@@ -74,9 +76,9 @@ type EditorTab = "setup" | "script" | "audio" | "video";
 
 // Konfigurasi platform tujuan + durasi (di-set di step render/Video).
 const PLATFORM_CONFIG = {
-  tiktok: { label: "TikTok", description: "Video vertikal 9:16", durations: ["15 detik", "30 detik", "60 detik"], defaultDuration: "30 detik" },
+  tiktok: { label: "TikTok", description: "Video vertikal 9:16", durations: ["30 detik", "60 detik"], defaultDuration: "30 detik" },
   youtube: { label: "YouTube", description: "Video horizontal 16:9", durations: ["1 menit", "3 menit", "5 menit", "10 menit"], defaultDuration: "3 menit" },
-  reels: { label: "Instagram Reels", description: "Video vertikal 9:16", durations: ["15 detik", "30 detik", "60 detik", "90 detik"], defaultDuration: "30 detik" },
+  reels: { label: "Instagram Reels", description: "Video vertikal 9:16", durations: ["30 detik", "60 detik", "90 detik"], defaultDuration: "30 detik" },
   podcast: { label: "Podcast", description: "Audio saja", durations: ["5 menit", "10 menit", "30 menit"], defaultDuration: "10 menit" },
 } as const;
 
@@ -756,12 +758,18 @@ function AudioPanel({
   const setSpeakerBoost = (use_speaker_boost: boolean) => setOptions({ ...options, use_speaker_boost });
   const previewAudioRef = useRef<HTMLAudioElement>(null);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const [previewProgress, setPreviewProgress] = useState(0);
+  const [previewDuration, setPreviewDuration] = useState(0);
+  const [previewLoop, setPreviewLoop] = useState(false);
+  const [previewLabel, setPreviewLabel] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [editVoice, setEditVoice] = useState("");
   const [editEmotion, setEditEmotion] = useState<VoiceEmotion>("netral");
   const [editSpeed, setEditSpeed] = useState(1.0);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [audioProgress, setAudioProgress] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
   // Audio preview via proxy (server-side fetch + range support)
   const audioProxyUrl = useAudioProxyUrl(audio?.url);
 
@@ -778,6 +786,30 @@ function AudioPanel({
     setIsPlaying(!isPlaying);
   };
 
+  const handleAudioSeek = (value: number) => {
+    const el = audioRef.current;
+    if (!el || !isFinite(el.duration) || el.duration === 0) return;
+    el.currentTime = value;
+    setAudioProgress(value);
+  };
+
+  const handleAudioLoaded = () => {
+    const el = audioRef.current;
+    if (el) setAudioDuration(el.duration || 0);
+  };
+
+  const handleAudioTimeUpdate = () => {
+    const el = audioRef.current;
+    if (el) setAudioProgress(el.currentTime || 0);
+  };
+
+  const handleAudioEnded = () => {
+    setIsPlaying(false);
+    const el = audioRef.current;
+    if (el) el.currentTime = 0;
+    setAudioProgress(0);
+  };
+
   // Reset saat audio selesai
   useEffect(() => {
     const el = audioRef.current;
@@ -786,6 +818,54 @@ function AudioPanel({
     el.addEventListener("ended", onEnded);
     return () => el.removeEventListener("ended", onEnded);
   }, []);
+// ===== Preview player handlers =====
+  const handleCobaPreview = () => {
+    setPreviewProgress(0);
+    const provLabel =
+      options.provider === "cartesia" ? "Profesional" :
+      options.provider === "elevenlabs" ? "Premium" :
+      "Standar (Gratis)";
+    const voiceLabel = options.voice_id || "Default";
+    setPreviewLabel(`${provLabel} • ${voiceLabel}`);
+    onPreview();
+  };
+
+  const handlePreviewToggle = () => {
+    const el = previewAudioRef.current;
+    if (!el) return;
+    if (isPreviewPlaying) {
+      el.pause();
+    } else {
+      el.play();
+    }
+    setIsPreviewPlaying(!isPreviewPlaying);
+  };
+
+  const handlePreviewSeek = (value: number) => {
+    const el = previewAudioRef.current;
+    if (!el || !isFinite(el.duration) || el.duration === 0) return;
+    el.currentTime = value;
+    setPreviewProgress(value);
+  };
+
+  const handlePreviewLoaded = () => {
+    const el = previewAudioRef.current;
+    if (el) {
+      setPreviewDuration(el.duration || 0);
+    }
+  };
+
+  const handlePreviewTimeUpdate = () => {
+    const el = previewAudioRef.current;
+    if (el) setPreviewProgress(el.currentTime || 0);
+  };
+
+  const handlePreviewEnded = () => {
+    setIsPreviewPlaying(false);
+    const el = previewAudioRef.current;
+    if (el) el.currentTime = 0;
+    setPreviewProgress(0);
+  };
 
   useEffect(() => {
     if (audio && !isEditing) {
@@ -896,11 +976,7 @@ function AudioPanel({
                   <div className="min-w-0">
                     <p className="font-medium truncate">{audio.voiceName}</p>
                     <p className="text-xs text-muted-foreground">
-                      {audio.provider === "elevenlabs"
-                        ? "ElevenLabs"
-                        : audio.provider === "cartesia"
-                        ? "Cartesia"
-                        : "Google TTS"}
+                      {providerLabel(audio.provider)}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {audio.language} • {audio.speed}x • {audio.emotion}
@@ -915,20 +991,38 @@ function AudioPanel({
                     src={audioProxyUrl || audio.url}
                     className="hidden"
                     onError={() => console.error("[AudioPanel] Gagal decode/load audio:", audioProxyUrl || audio.url)}
-                    onLoadedMetadata={() => console.log("[AudioPanel] Audio loaded metadata, duration:", audioRef.current?.duration)}
+                    onLoadedMetadata={handleAudioLoaded}
+                    onTimeUpdate={handleAudioTimeUpdate}
+                    onEnded={handleAudioEnded}
                   />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-8 w-8 rounded-full"
-                    onClick={togglePlay}
-                    disabled={!audio.url}
-                    title="Play / Pause"
-                  >
-                    {isPlaying
-                      ? <Pause className="h-4 w-4" />
-                      : <Play className="h-4 w-4" />}
-                  </Button>
+
+                  <div className="flex items-center gap-2 rounded-lg border p-1.5 pl-2 pr-3">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-full shrink-0"
+                      onClick={togglePlay}
+                      disabled={!audio.url}
+                      title="Play / Pause"
+                    >
+                      {isPlaying
+                        ? <Pause className="h-4 w-4" />
+                        : <Play className="h-4 w-4" />}
+                    </Button>
+                    <input
+                      type="range"
+                      min={0}
+                      max={audioDuration || 1}
+                      step={0.01}
+                      value={Math.min(audioProgress, audioDuration || 1)}
+                      onChange={(e) => handleAudioSeek(parseFloat(e.target.value))}
+                      className="w-28"
+                      aria-label="Seek audio"
+                    />
+                    <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                      {formatTime(audioProgress)} / {formatTime(audioDuration)}
+                    </span>
+                  </div>
                   <a
                     href={audio.url}
                     download="faza-studio-audio.mp3"
@@ -1157,7 +1251,7 @@ function AudioPanel({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={onPreview}
+                  onClick={handleCobaPreview}
                   disabled={isPreviewLoading}
                   className="gap-1"
                 >
@@ -1167,29 +1261,80 @@ function AudioPanel({
                   Coba Dengarkan
                 </Button>
                 {previewUrl && (
-                  <audio ref={previewAudioRef} src={previewUrl} className="hidden" controls />
-                )}
-                {previewUrl && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 rounded-full"
-                    onClick={() => {
-                      if (!previewAudioRef.current) return;
-                      if (isPreviewPlaying) {
-                        previewAudioRef.current.pause();
-                      } else {
-                        previewAudioRef.current.play();
-                      }
-                      setIsPreviewPlaying(!isPreviewPlaying);
-                    }}
-                  >
-                    {isPreviewPlaying
-                      ? <Pause className="h-4 w-4" />
-                      : <Play className="h-4 w-4" />}
-                  </Button>
+                  <audio
+                    ref={previewAudioRef}
+                    src={previewUrl}
+                    className="hidden"
+                    loop={previewLoop}
+                    onLoadedMetadata={handlePreviewLoaded}
+                    onTimeUpdate={handlePreviewTimeUpdate}
+                    onEnded={handlePreviewEnded}
+                  />
                 )}
               </div>
+
+              {/* Indikator suara yang sedang di-preview + player */}
+              {previewUrl && (
+                <div className="rounded-lg border p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Volume2 className="h-4 w-4 text-primary shrink-0" />
+                    <span className="font-medium truncate">
+                      Sedang mencoba: {previewLabel || "Suara"}
+                    </span>
+                    {previewLoop && (
+                      <Badge variant="secondary" className="text-[10px]">🔁 Ulang</Badge>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 rounded-full shrink-0"
+                      onClick={handlePreviewToggle}
+                      title={isPreviewPlaying ? "Pause" : "Play"}
+                    >
+                      {isPreviewPlaying
+                        ? <Pause className="h-4 w-4" />
+                        : <Play className="h-4 w-4" />}
+                    </Button>
+
+                    <input
+                      type="range"
+                      min={0}
+                      max={previewDuration || 1}
+                      step={0.01}
+                      value={Math.min(previewProgress, previewDuration || 1)}
+                      onChange={(e) => handlePreviewSeek(parseFloat(e.target.value))}
+                      className="flex-1"
+                      aria-label="Seek preview"
+                    />
+
+                    <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                      {formatTime(previewProgress)} / {formatTime(previewDuration)}
+                    </span>
+                  </div>
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      const next = !previewLoop;
+                      setPreviewLoop(next);
+                      if (next && previewAudioRef.current) {
+                        previewAudioRef.current.play().catch(() => {});
+                        setIsPreviewPlaying(true);
+                      }
+                    }}
+                    className={`gap-1.5 text-xs ${previewLoop ? "text-primary" : "text-muted-foreground"}`}
+                    title="Putar berulang-ulang"
+                  >
+                    <Repeat className="h-3.5 w-3.5" />
+                    {previewLoop ? "Ulang: ON" : "Ulang: OFF"}
+                  </Button>
+                </div>
+              )}
+
               {/* FIX 2 — feedback preview yang gagal */}
               {previewError && (
                 <p className="text-xs text-destructive" role="alert">{previewError}</p>
@@ -1755,25 +1900,10 @@ function SubtitlePreview({
   const idx = Math.min(activeIdx, Math.max(0, safeSegments.length - 1));
   const active = safeSegments[idx];
   const text = active?.text || "";
-  const topPos = style.position === "top";
 
-  // Gaya teks
-  const strokeOn = !style.backgroundColor; // mode stroke (default)
-  const strokeW = Math.max(0, style.strokeWidth ?? 2);
-  const textShadow = strokeOn
-    ? `${strokeW}px 0 0 ${style.strokeColor || "#000000"},
-       -${strokeW}px 0 0 ${style.strokeColor || "#000000"},
-       0 ${strokeW}px 0 ${style.strokeColor || "#000000"},
-       0 -${strokeW}px 0 ${style.strokeColor || "#000000"},
-       ${strokeW}px ${strokeW}px 0 ${style.strokeColor || "#000000"},
-       -${strokeW}px ${strokeW}px 0 ${style.strokeColor || "#000000"},
-       ${strokeW}px -${strokeW}px 0 ${style.strokeColor || "#000000"},
-       -${strokeW}px -${strokeW}px 0 ${style.strokeColor || "#000000"}`
-    : "none";
-
-  const boxBg = style.backgroundColor
-    ? hexWithAlpha(style.backgroundColor, style.backgroundAlpha ?? 160, "rgba(0,0,0,0.6)")
-    : "transparent";
+  // Style konsisten dengan output video: teks putih bold, shadow hitam,
+  // posisi bawah 12%, tanpa background box.
+  const fontSize = Math.max(14, Math.min(28, style.fontSize));
 
   return (
     <div className="space-y-1.5">
@@ -1789,16 +1919,18 @@ function SubtitlePreview({
       {/* Kotak preview (rasio ~16:9, background gelap agar teks terlihat) */}
       <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-gradient-to-br from-slate-800 to-slate-900 border border-border">
         <div
-          className="absolute inset-x-4 text-center font-bold leading-snug break-words"
+          className="absolute inset-x-0 text-center font-bold leading-snug break-words"
           style={{
-            top: topPos ? "8%" : undefined,
-            bottom: topPos ? undefined : "10%",
-            color: style.color || "#FFFFFF",
-            fontSize: `${style.fontSize}px`,
-            textShadow,
-            backgroundColor: boxBg,
-            padding: boxBg !== "transparent" ? "6px 12px" : undefined,
-            borderRadius: boxBg !== "transparent" ? "4px" : undefined,
+            bottom: "12%",
+            left: 0,
+            right: 0,
+            padding: "0 12px",
+            color: "#FFFFFF",
+            fontSize: `${fontSize}px`,
+            fontFamily: "Montserrat, ui-sans-serif, system-ui, -apple-system, sans-serif",
+            textShadow:
+              "2px 0 0 #000, -2px 0 0 #000, 0 2px 0 #000, 0 -2px 0 #000, 2px 2px 4px #000",
+            backgroundColor: "transparent",
           }}
         >
           {text || "…"}
