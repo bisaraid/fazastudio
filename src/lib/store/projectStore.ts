@@ -125,6 +125,8 @@ function mapDbRowToProject(row: any): Project {
         }
       : undefined,
     video: row.video_url ? { id: row.id, url: row.video_url, duration: 0, format: "mp4" } : undefined,
+    videoStoragePlan: (row.video_storage_plan as "free" | "premium") ?? undefined,
+    videoExpiresAt: row.video_expires_at ?? null,
   };
 }
 

@@ -217,6 +217,13 @@ function ProjectCard({
   const completedSteps = (["script", "audio", "video"] as const)
     .filter((s) => project.steps[s] === "done").length;
 
+  // FIX 3 — badge video free 24 jam / kedaluwarsa di kartu.
+  const isFreeVideoExpiring =
+    project.videoStoragePlan === "free" && !!project.videoExpiresAt;
+  const isVideoExpired =
+    isFreeVideoExpiring &&
+    new Date(project.videoExpiresAt as string).getTime() <= Date.now();
+
   return (
     <Card className="group hover:shadow-md transition-shadow cursor-pointer" onClick={onOpen}>
       <CardHeader className="pb-3">
@@ -231,7 +238,20 @@ function ProjectCard({
               <span>{formatDuration(project.targetDuration)}</span>
             </div>
           </div>
-          <Badge variant={status.variant}>{status.label}</Badge>
+          <div className="flex flex-col items-end gap-1">
+            <Badge variant={status.variant}>{status.label}</Badge>
+            {isFreeVideoExpiring && (
+              isVideoExpired ? (
+                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-500/15 dark:text-red-400">
+                  Video kedaluwarsa
+                </span>
+              ) : (
+                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-400">
+                  ⏳ Video 24 jam
+                </span>
+              )
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent>

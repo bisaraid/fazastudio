@@ -7,15 +7,16 @@ import { join, dirname } from "path";
 import { validateApiKey } from "@/lib/api-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getServerIdentity, buildDeviceCookieHeader } from "@/lib/identity";
-import { checkCredits } from "@/lib/usage";
+import { checkCredits, getUsage } from "@/lib/usage";
+import { uploadToR2 } from "@/lib/r2";
 
 /**
  * POST /api/generate-video
  *
- * Real video render via FFmpeg NATIVE (ffmpeg-static) + Pexels background + Supabase Storage.
+ * Real video render via FFmpeg NATIVE (ffmpeg-static) + Pexels background + Cloudflare R2.
  * - Input: audioUrl, subtitleUrl, projectId, genre
  * - Proses: fetch audio + subtitle + background visual → FFmpeg native compose → mp4
- * - Output: upload ke Supabase Storage, return public URL
+ * - Output: upload ke Cloudflare R2 (free/" atau "premium/"), return public URL
  *
  * Response: Server-Sent Events (SSE) stream:
  *   data: {"percent": 0..100}
@@ -475,33 +476,41 @@ export async function POST(request: NextRequest) {
 
         const outputBuffer = await readFile(outputFile);
 
-        // 4. Upload ke Supabase Storage
-        const supabase = createServiceRoleClient();
-        const filePath = `${projectId}/video.mp4`;
+        // 4. Upload ke Cloudflare R2 (bukan Supabase Storage).
+        //    Cek plan user → tentukan prefix folder:
+        //    - free    → "free/"    (lifecycle R2 hapus setelah 24 jam)
+        //    - pro/team → "premium/" (permanen, tanpa lifecycle rule)
+        const usage = await getUsage(identity.identityKey);
+        const plan = usage.plan;
+        const isFree = plan === "free";
+        const prefix = isFree ? "free/" : "premium/";
+        const key = `${prefix}${identity.identityKey}/${Date.now()}.mp4`;
 
-        const { error: uploadError } = await supabase.storage
-          .from("acs-videos")
-          .upload(filePath, outputBuffer, {
-            contentType: "video/mp4",
-            upsert: true,
-          });
-
-        if (uploadError) {
-          console.error("[video] Storage upload error:", uploadError);
+        let videoUrl: string;
+        try {
+          videoUrl = await uploadToR2(outputBuffer, key, "video/mp4");
+        } catch (uploadError) {
+          console.error("[video] R2 upload error:", uploadError);
           send({ status: "error", message: "Gagal upload video ke storage" });
           controller.close();
           return;
         }
 
-        const { data: publicUrlData } = supabase.storage
-          .from("acs-videos")
-          .getPublicUrl(filePath);
-        const videoUrl = publicUrlData.publicUrl;
+        const videoStoragePlan: "free" | "premium" = isFree ? "free" : "premium";
+        const videoExpiresAt: Date | null = isFree
+          ? new Date(Date.now() + 24 * 60 * 60 * 1000)
+          : null;
 
-        // 5. Update kolom video_url di tabel projects
+        // 5. Update kolom video di tabel projects
+        const supabase = createServiceRoleClient();
         const { error: updateError } = await supabase
           .from("projects")
-          .update({ video_url: videoUrl, updated_at: new Date().toISOString() })
+          .update({
+            video_url: videoUrl,
+            video_storage_plan: videoStoragePlan,
+            video_expires_at: videoExpiresAt,
+            updated_at: new Date().toISOString(),
+          })
           .eq("id", projectId);
 
         if (updateError) {

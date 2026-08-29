@@ -1316,6 +1316,37 @@ function VideoPanel({
   const audioProxyUrl = useAudioProxyUrl(project?.audio?.url);
   // Video preview via proxy — fix CORS/range di <video>
   const videoProxyUrl = useVideoProxyUrl(video?.url);
+
+  // ===== KEDALUWARSA VIDEO (free) — countdown ke video_expires_at =====
+  const expiresAtMs = project?.videoExpiresAt
+    ? new Date(project.videoExpiresAt).getTime()
+    : null;
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (expiresAtMs === null) return;
+    setNowMs(Date.now());
+    const t = setInterval(() => setNowMs(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, [expiresAtMs]);
+  const remainingMs = expiresAtMs === null ? null : expiresAtMs - nowMs;
+  const isFreeVideo = project?.videoStoragePlan === "free" && expiresAtMs !== null;
+  const isVideoExpired = remainingMs !== null && remainingMs <= 0;
+
+  const countdownText =
+    remainingMs === null || remainingMs <= 0
+      ? ""
+      : Math.floor(remainingMs / 60000) < 60
+      ? "Kurang dari 1 jam lagi"
+      : `${Math.floor(remainingMs / 3600000)} jam ${Math.floor((remainingMs % 3600000) / 60000)} menit lagi`;
+
+  const formattedExpiry = project?.videoExpiresAt
+    ? new Date(project.videoExpiresAt).toLocaleString("id-ID", {
+        day: "numeric",
+        month: "long",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
   // Subtitle caption/style editing (localhost — tidak trigger TTS/transcription)
   const segments = project?.subtitle?.segments || [];
   const style = project?.subtitle?.style || {
@@ -1464,10 +1495,45 @@ function VideoPanel({
             <Progress value={progress} className="h-2 w-full" />
           </>
         ) : video ? (
-          <>
-            <div className="w-full h-14 flex items-center justify-center gap-2 rounded-xl bg-emerald-500/10 text-emerald-600 text-sm font-semibold">
-              ✅ Video Selesai
-            </div>
+          isVideoExpired ? (
+            <>
+              <div className="rounded-lg border-2 border-destructive bg-destructive/5 p-6 text-center space-y-3">
+                <p className="text-sm font-medium text-destructive">Video ini sudah tidak tersedia.</p>
+                <p className="text-xs text-muted-foreground">
+                  Render ulang untuk membuat video baru, atau upgrade ke Pro untuk menyimpan video permanen.
+                </p>
+                <div className="flex items-center justify-center gap-3 pt-1">
+                  <Button onClick={onGenerate} className="gap-2">
+                    <RefreshCw className="h-4 w-4" />
+                    Render Ulang
+                  </Button>
+                  <a href="/settings" className="text-sm font-medium text-primary underline underline-offset-2 hover:text-primary/80">
+                    Upgrade ke Pro →
+                  </a>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {isFreeVideo && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-500/40 dark:bg-amber-500/10">
+                  <div className="text-sm text-amber-800 dark:text-amber-300">
+                    ⏳ Video tersedia hingga {formattedExpiry}. Upgrade untuk menyimpan permanen.
+                    <span className="mt-0.5 block text-xs text-amber-700 dark:text-amber-400/80">
+                      {countdownText}
+                    </span>
+                  </div>
+                  <a
+                    href="/settings"
+                    className="whitespace-nowrap text-sm underline text-amber-800 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
+                  >
+                    Upgrade Sekarang →
+                  </a>
+                </div>
+              )}
+              <div className="w-full h-14 flex items-center justify-center gap-2 rounded-xl bg-emerald-500/10 text-emerald-600 text-sm font-semibold">
+                ✅ Video Selesai
+              </div>
             <div className="rounded-lg overflow-hidden border border-border bg-black">
               <video
                 src={videoProxyUrl || video.url}
@@ -1503,7 +1569,8 @@ function VideoPanel({
                 Unduh Video
               </a>
             </div>
-          </>
+            </>
+          )
         ) : (
           <Button onClick={onGenerate} className="w-full h-14 gap-2">
             🎬 Render Video

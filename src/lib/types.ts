@@ -78,6 +78,10 @@ export interface Project {
   audio?: AudioResult;
   subtitle?: SubtitleResult;
   video?: VideoResult;
+  /** Plan penyimpanan video (dari kolom DB project): free → 24 jam, premium → permanen. */
+  videoStoragePlan?: "free" | "premium";
+  /** Kapan video free kedaluwarsa (ISO string) — null/undefined untuk premium/permanen. */
+  videoExpiresAt?: string | null;
   /**
    * Footage yang dipilih user untuk project ini.
    * Untuk MVP: satu footage per project (sceneId kosong).
