@@ -18,14 +18,29 @@ import { NextRequest, NextResponse } from "next/server";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 
-/** Validasi URL hanya dari Supabase storage domain */
+// Video kini disimpan di Cloudflare R2 (bukan Supabase Storage) — lihat lib/r2.ts.
+// Proxy preview harus meneruskan stream R2 juga, dengan Range support, agar
+// <video> bisa memuat dan durasi muncul. Whitelist dua domain: Supabase + R2.
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "";
+
+/** Ambil host dari URL, return null jika tidak valid */
+function hostOf(raw: string): string | null {
+  try {
+    return new URL(raw).host;
+  } catch {
+    return null;
+  }
+}
+
+/** Validasi URL hanya dari domain yang diizinkan (Supabase storage + Cloudflare R2 public) */
 function isValidSupabaseUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    if (!SUPABASE_URL) return false;
-
-    const supabaseHost = new URL(SUPABASE_URL).host;
-    return parsed.host === supabaseHost;
+    const allowedHosts = [hostOf(SUPABASE_URL), hostOf(R2_PUBLIC_URL)].filter(
+      (h): h is string => !!h
+    );
+    if (allowedHosts.length === 0) return false;
+    return allowedHosts.includes(parsed.host);
   } catch {
     return false;
   }

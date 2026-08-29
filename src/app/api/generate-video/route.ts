@@ -423,6 +423,9 @@ export async function POST(request: NextRequest) {
             // single-clip. `-shortest` dengan footage ter-loop bisa berhenti
             // di durasi footage yang lebih pendek; `-t` menjamin panjang audio.
             "-t", String(totalDuration),
+            // faststart menaruh metadata (moov) di awal file → browser bisa
+            // baca durasi & seek langsung tanpa men-download seluruh MP4.
+            "-movflags", "+faststart",
             "-y",
             outputFile,
           ];
@@ -444,6 +447,9 @@ export async function POST(request: NextRequest) {
             // (-stream_loop -1) — tanpa ini render bisa mengamuk jadi
             // puluhan menit / ratusan MB.
             "-t", String(totalDuration),
+            // faststart menaruh metadata (moov) di awal file → browser bisa
+            // baca durasi & seek langsung tanpa men-download seluruh MP4.
+            "-movflags", "+faststart",
             "-y",
             outputFile,
           ];

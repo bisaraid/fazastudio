@@ -180,7 +180,7 @@ export default function DashboardPage() {
                   Mulai buat konten pertamamu — pilih topik, dan Faza Studio akan
                   mengubahnya menjadi script, suara, subtitle, dan video dalam satu alur.
                 </p>
-                <Button size="lg" onClick={handleCreateNew} className="gap-2">
+                <Button size="lg" onClick={handleCreateClick} className="gap-2">
                   <Plus className="h-5 w-5" />
                   Buat Project Pertama
                 </Button>
