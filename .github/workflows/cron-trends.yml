@@ -1,0 +1,17 @@
+name: cron-trends
+
+on:
+  schedule:
+    # 00:00, 06:00, 12:00, 18:00 UTC — 4x/hari (gratis, lebih sering drpd Vercel Hobby)
+    - cron: "0 */6 * * *"
+  workflow_dispatch: # trigger manual dari tab Actions
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/cron/trends
+        run: |
+          curl -fsS \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://fazastudio.my.id/api/cron/trends"
