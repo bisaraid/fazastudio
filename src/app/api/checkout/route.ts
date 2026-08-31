@@ -11,8 +11,8 @@ import Midtrans from "midtrans-client";
  * dengan `window.snap.pay(token)`.
  *
  * Harga (IDR):
- * - pro  → 99.000
- * - team → 299.000
+ * - starter → 49.000
+ * - pro    → 149.000
  *
  * order_id format: `${plan}_${timestamp}_${base64url(identityKey)}`
  * - Prefix plan dibaca di webhook (MIDTRANS_SERVER_KEY signature)
@@ -26,8 +26,8 @@ import Midtrans from "midtrans-client";
  */
 
 const PLAN_PRICES: Record<string, number> = {
-  pro: 99000,
-  team: 299000,
+  starter: 49000,
+  pro: 149000,
 };
 
 const VALID_PLANS = Object.keys(PLAN_PRICES);
@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
   const plan = request.nextUrl.searchParams.get("plan") || "";
   if (!VALID_PLANS.includes(plan)) {
     return NextResponse.json(
-      { success: false, error: "Plan tidak valid. Pilihan: pro, team" },
+      { success: false, error: "Plan tidak valid. Pilihan: starter, pro" },
       { status: 400 }
     );
   }

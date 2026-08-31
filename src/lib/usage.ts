@@ -14,7 +14,7 @@
 
 import { createServiceRoleClient } from "@/lib/supabase/service";
 
-export type PlanTier = "free" | "pro" | "team";
+export type PlanTier = "free" | "starter" | "pro";
 
 export interface UsageResult {
   plan: PlanTier;
@@ -23,15 +23,15 @@ export interface UsageResult {
   creditsRemaining: number;
 }
 
-// Free plan default = 5 kredit (matching PLANS in constants).
-export const FREE_CREDITS = 5;
-export const PRO_CREDITS = 50;
-export const TEAM_CREDITS = 200;
+// Free plan default = 10 kredit (matching PLANS in constants).
+export const FREE_CREDITS = 10;
+export const STARTER_CREDITS = 30;
+export const PRO_CREDITS = 100;
 
 const PLAN_CREDITS: Record<PlanTier, number> = {
   free: FREE_CREDITS,
+  starter: STARTER_CREDITS,
   pro: PRO_CREDITS,
-  team: TEAM_CREDITS,
 };
 
 /** Periode bulan aktuell: YYYY-MM */

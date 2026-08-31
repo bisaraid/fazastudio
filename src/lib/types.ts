@@ -276,17 +276,62 @@ export interface GenerateVideoResponse {
 // Pricing
 // ============================================================
 
-export type PlanTier = "free" | "pro" | "team";
+export type PlanTier = "free" | "starter" | "pro";
+
+export interface PlanMatrix {
+  audio: {
+    quality: string; // "Standar" | "Natural AI Voice" — brandless, tanpa nama provider
+    voices: string; // "1 suara" | "10+ suara" | ...
+    speed: boolean; // kecepatan narasi bisa diatur
+    emotion: boolean; // emosi suara (serius/santai/dramatis)
+  };
+  script: {
+    generate: boolean; // generate script tersedia
+    scenes: string; // jumlah scene maks
+    categories: string; // jangkauan kategori
+    hooks: string; // jumlah pilihan hook pattern
+    regen: string; // kuota regenerasi
+  };
+  subtitle: {
+    auto: boolean; // auto subtitle
+    styles: string; // jumlah gaya subtitle
+    position: string; // posisi subtitle
+    exportSrt: boolean; // export SRT/VTT
+  };
+  video: {
+    quality: string; // kualitas render
+    footage: string; // background footage
+    templates: string; // jumlah template
+    ratio: string; // rasio video
+  };
+  trending: {
+    ideas: string; // akses ide trending
+    filter: boolean; // filter niche
+    alert: boolean; // notifikasi trending baru
+  };
+  other: {
+    history: string; // lama histori project
+  };
+}
 
 export interface Plan {
   id: PlanTier;
   name: string;
   price: number; // harga dalam IDR (Rupiah)
   price_idr: number; // harga dalam IDR, eksplisit
-  label_id: string; // label Bahasa Indonesia (Gratis / Pro / Tim)
+  label_id: string; // label Bahasa Indonesia (Free / Starter / Pro)
   creditsPerMonth: number;
+  tagline?: string;
   features: string[];
+  quality?: string;
+  watermark?: boolean;
+  template?: string;
+  videoExpiry?: string;
+  srt?: boolean;
+  support?: string;
+  cta?: string;
   highlighted?: boolean;
+  matrix: PlanMatrix;
 }
 
 export interface UsageLimit {

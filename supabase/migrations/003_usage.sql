@@ -2,7 +2,7 @@
 -- Tabel user_usage untuk menyimpan credit/plan per identity per periode (bulan).
 -- 
 -- Pola: satu baris per (identity_key, period). period = bulan (YYYY-MM).
--- Plan default 'free' dengan credits_total = 5 (sesuai plihak audit / Free plan).
+-- Plan default 'free' dengan credits_total = 10 (sesuai pilihan audit / Free plan).
 -- 
 -- identity_key = 'anon:<ip>' untuk MVP (belum integrasi cookie/auth penuh).
  
@@ -10,8 +10,8 @@ create table if not exists user_usage (
   id uuid primary key default gen_random_uuid(),
   identity_key text not null,
   period text not null,          -- e.g. '2026-08'
-  plan text default 'free',      -- 'free' | 'pro' | 'team'
-  credits_total int default 5,   -- free = 5 kredit per bulan
+  plan text default 'free',      -- 'free' | 'starter' | 'pro'
+  credits_total int default 10,  -- free = 10 kredit per bulan
   credits_used int default 0,
   created_at timestamptz default now(),
   updated_at timestamptz default now()

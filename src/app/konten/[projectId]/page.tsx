@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { useProjectStore } from "@/lib/store/projectStore";
 import { usePipeline } from "@/hooks/usePipeline";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { recordBehavior } from "@/lib/behavior";
 import { Genre, Platform } from "@/lib/types";
+import { providerLabel, VOICE_EMOTIONS } from "@/lib/constants";
 import {
   Sparkles,
   Loader2,
@@ -19,6 +20,11 @@ import {
   Download,
   Pencil,
   ChevronDown,
+  Play,
+  Pause,
+  Headphones,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 
 // ============================================================
@@ -91,11 +97,60 @@ function defaultDurationFor(mode: string, platform: Platform): number {
   return 30;
 }
 
+/** Format detik → mm:ss untuk preview subtitle. */
+function formatSubTime(t?: number | string): string {
+  const s = Math.max(0, Math.floor(Number(t) || 0));
+  const m = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${m}:${ss.toString().padStart(2, "0")}`;
+}
+
 export default function ProjectEditorPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const { currentProject, loadProjects, setCurrentProject, updateProjectSetup } = useProjectStore();
-  const { progress, generateStep } = usePipeline();
+  const { progress, generateStep, previewAudio } = usePipeline();
+
+  // ===== Pilihan audio (provider/kecepatan/emosi) + preview =====
+  const [audioProvider, setAudioProvider] = useState<"google" | "cartesia" | "elevenlabs">("cartesia");
+  const [audioSpeed, setAudioSpeed] = useState(1.0);
+  const [audioEmotion, setAudioEmotion] = useState<string>("netral");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handlePreviewAudio = useCallback(async () => {
+    const hasScript = !!useProjectStore.getState().currentProject?.script;
+    if (previewLoading || !hasScript) return;
+
+    // Jika preview sudah ada di cache (blob in-memory) → replay langsung,
+    // TIDAK fetch/generate ulang (hemat kuota).
+    const el = previewAudioRef.current;
+    if (previewUrl && el) {
+      el.currentTime = 0;
+      el.play().catch(() => {});
+      return;
+    }
+
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewUrl(null);
+    try {
+      const url = await previewAudio(projectId, {
+        provider: audioProvider,
+        speed: audioSpeed,
+        emotion: audioProvider === "cartesia" ? audioEmotion : undefined,
+      });
+      if (url) setPreviewUrl(url);
+      else setPreviewError("Preview tidak tersedia. Coba pilih kualitas Standar, atau daftar untuk jatah premium.");
+    } catch (e: any) {
+      setPreviewError(e?.message || "Preview gagal.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [previewLoading, previewAudio, projectId, audioProvider, audioSpeed, audioEmotion, previewUrl]);
 
   const [profile, setProfile] = useState<{ mode: string; niche: string; gaya?: string; cerita?: string } | null>(null);
   const [topic, setTopic] = useState("");
@@ -166,6 +221,7 @@ const isRunning = progress.isRunning;
 
   const projectScript = currentProject?.script;
   const projectAudio = currentProject?.audio;
+  const projectSubtitle = currentProject?.subtitle;
   const projectVideo = currentProject?.video;
 
   const handleGenerate = useCallback(async () => {
@@ -192,14 +248,22 @@ const isRunning = progress.isRunning;
   const handleContinueAudio = useCallback(async () => {
     if (isRunning) return;
     recordBehavior("lanjut_script_langsung", projectId); // sinyal positif: straight ke audio tanpa edit
-    await generateStep("audio", projectId);
-  }, [isRunning, projectId, generateStep]);
+    await generateStep("audio", projectId, {
+      provider: audioProvider,
+      speed: audioSpeed,
+      emotion: audioProvider === "cartesia" ? audioEmotion : undefined,
+    });
+  }, [isRunning, projectId, generateStep, audioProvider, audioSpeed, audioEmotion]);
 
   const handleRegenAudio = useCallback(async () => {
     if (isRunning) return;
     recordBehavior("regen_audio", projectId);
-    await generateStep("audio", projectId);
-  }, [isRunning, projectId, generateStep]);
+    await generateStep("audio", projectId, {
+      provider: audioProvider,
+      speed: audioSpeed,
+      emotion: audioProvider === "cartesia" ? audioEmotion : undefined,
+    });
+  }, [isRunning, projectId, generateStep, audioProvider, audioSpeed, audioEmotion]);
 
   const handleContinueVideo = useCallback(async () => {
     if (isRunning) return;
@@ -336,6 +400,13 @@ const isRunning = progress.isRunning;
           </div>
         )}
 
+        {/* ERROR (setelah request selesai tanpa hasil) — jangan biarkan diam tanpa jejak */}
+        {progress.error && !isRunning && (
+          <div className="mt-3 space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+            <p>{progress.error}</p>
+          </div>
+        )}
+
         {/* HASIL — flow vertikal chat-like */}
         <div className="mt-6 space-y-5">
           {/* SCRIPT */}
@@ -349,6 +420,92 @@ const isRunning = progress.isRunning;
                 </div>
                 <div className="max-h-72 overflow-y-auto rounded-lg bg-muted/40 p-4 text-sm leading-relaxed whitespace-pre-wrap">
                   {projectScript.fullScript}
+                </div>
+
+                {/* Pilihan suara + preview */}
+                <div className="space-y-3 rounded-lg border bg-muted/40 p-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="text-xs font-medium text-muted-foreground">Suara</label>
+                    <div className="flex flex-wrap gap-2">
+                      {(["cartesia", "elevenlabs", "google"] as const).map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setAudioProvider(p)}
+                          className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                            audioProvider === p
+                              ? "border-primary bg-primary/10 text-foreground"
+                              : "border-border bg-card text-muted-foreground hover:bg-accent"
+                          }`}
+                        >
+                          {audioProvider === p && <Play className="h-3 w-3" />}
+                          {providerLabel(p)}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="ml-auto flex items-center gap-2">
+                      <label className="text-xs text-muted-foreground">Kecepatan</label>
+                      <select
+                        value={audioSpeed}
+                        onChange={(e) => setAudioSpeed(Number(e.target.value))}
+                        className="rounded-lg border bg-card px-2 py-1.5 text-xs outline-none focus:border-primary"
+                      >
+                        <option value={0.8}>0.8×</option>
+                        <option value={1.0}>1.0×</option>
+                        <option value={1.2}>1.2×</option>
+                        <option value={1.5}>1.5×</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {audioProvider === "cartesia" && (
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-muted-foreground">Emosi</label>
+                      <select
+                        value={audioEmotion}
+                        onChange={(e) => setAudioEmotion(e.target.value)}
+                        className="w-full rounded-lg border bg-card px-2 py-1.5 text-xs outline-none focus:border-primary"
+                      >
+                        {VOICE_EMOTIONS.map((v) => (
+                          <option key={v.value} value={v.value}>
+                            {v.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Preview */}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handlePreviewAudio}
+                      disabled={previewLoading || isRunning}
+                      className="gap-1.5"
+                    >
+                      <Headphones className="h-4 w-4" />
+                      {previewLoading ? "Membuat preview..." : "Dengar Preview"}
+                    </Button>
+                    {previewPlaying && (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-primary">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Memutar preview…
+                      </span>
+                    )}
+                    {previewError && <span className="text-xs text-destructive">{previewError}</span>}
+                  </div>
+                  {previewUrl && (
+                    <audio
+                      ref={previewAudioRef}
+                      src={previewUrl}
+                      autoPlay
+                      onPlay={() => setPreviewPlaying(true)}
+                      onPause={() => setPreviewPlaying(false)}
+                      onEnded={() => setPreviewPlaying(false)}
+                      className="hidden"
+                    />
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" onClick={handleContinueAudio} disabled={isRunning} className="gap-1.5">
@@ -371,7 +528,7 @@ const isRunning = progress.isRunning;
                     <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Audio siap
                   </Badge>
                 </div>
-                <audio controls src={projectAudio.url} className="w-full" />
+                <AudioPlayer src={projectAudio.url} />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={handleContinueVideo} disabled={isRunning} className="gap-1.5">
                     <ArrowDown className="h-4 w-4" /> Lanjut ke Video
@@ -379,6 +536,37 @@ const isRunning = progress.isRunning;
                   <Button size="sm" variant="outline" onClick={handleRegenAudio} disabled={isRunning} className="gap-1.5">
                     <RefreshCw className="h-4 w-4" /> Ulangi Audio
                   </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* SUBTITLE PREVIEW */}
+          {projectSubtitle?.segments && projectSubtitle.segments.length > 0 && (
+            <Card>
+              <CardContent className="p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <Badge variant="secondary" className="gap-1">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Subtitle siap
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    posisi: {projectSubtitle.style?.position === "top" ? "atas" : "bawah"}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {projectSubtitle.segments.slice(0, 12).map((seg: any, i: number) => (
+                    <div key={seg.id ?? i} className="flex items-start gap-3 rounded-lg border bg-muted/40 p-2.5">
+                      <span className="mt-0.5 shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                        {formatSubTime(seg.startTime)}–{formatSubTime(seg.endTime)}
+                      </span>
+                      <span className="text-sm">{seg.text}</span>
+                    </div>
+                  ))}
+                  {projectSubtitle.segments.length > 12 && (
+                    <p className="text-xs text-muted-foreground">
+                      +{projectSubtitle.segments.length - 12} segmen lainnya
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -393,7 +581,7 @@ const isRunning = progress.isRunning;
                     <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Video siap
                   </Badge>
                 </div>
-                <video controls src={projectVideo.url} className="w-full rounded-xl" />
+                <VideoPlayer src={projectVideo.url} />
                 <div className="flex gap-2">
                   {projectAudio?.url && (
                     <a href={projectAudio.url} download className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-4 py-2 text-sm hover:bg-accent">
@@ -409,6 +597,188 @@ const isRunning = progress.isRunning;
           )}
         </div>
       </main>
+    </div>
+  );
+}
+/** Bangun URL proxy (audio/video) untuk pemutaran di browser. */
+function proxyUrl(route: string, target: string): string {
+  return `/${route}?url=${encodeURIComponent(target)}`;
+}
+
+/** Format detik → m:ss */
+function fmtTime(s: number): string {
+  if (!Number.isFinite(s) || s < 0) return "0:00";
+  const m = Math.floor(s / 60);
+  const ss = Math.floor(s % 60);
+  return `${m}:${ss.toString().padStart(2, "0")}`;
+}
+
+/** Progress bar dengan thumb — reusable untuk audio & video. */
+function ProgressBar({
+  value,
+  duration,
+  onSeek,
+}: {
+  value: number;
+  duration: number;
+  onSeek: (t: number) => void;
+}) {
+  const pct = duration > 0 ? Math.min(100, (value / duration) * 100) : 0;
+  return (
+    <div
+      className="group/progress relative h-1.5 w-full cursor-pointer rounded-full bg-muted-foreground/20"
+      onClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const ratio = (e.clientX - rect.left) / rect.width;
+        onSeek(ratio * duration);
+      }}
+    >
+      <div
+        className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary to-fuchsia-500"
+        style={{ width: `${pct}%` }}
+      />
+      <div
+        className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white opacity-0 shadow ring-1 ring-black/10 transition-opacity group-hover/progress:opacity-100"
+        style={{ left: `${pct}%` }}
+      />
+    </div>
+  );
+}
+/** Custom elegant audio player (via proxy untuk bypas CORS). */
+function AudioPlayer({ src }: { src: string }) {
+  const ref = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [muted, setMuted] = useState(false);
+
+  const toggle = () => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.paused) el.play().catch(() => {});
+    else el.pause();
+  };
+
+  return (
+    <div className="space-y-2">
+      <audio
+        ref={ref}
+        src={proxyUrl("api/audio-proxy", src)}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setCurrent(0);
+        }}
+        onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+      />
+      <div className="flex items-center gap-3 rounded-xl border bg-muted/40 p-3">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={playing ? "Pause" : "Play"}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-fuchsia-600 text-primary-foreground shadow-lg shadow-primary/20 transition-transform hover:scale-105 active:scale-95"
+        >
+          {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 translate-x-[1px]" />}
+        </button>
+        <div className="flex-1">
+          <ProgressBar
+            value={current}
+            duration={duration}
+            onSeek={(t) => {
+              const el = ref.current;
+              if (el) el.currentTime = t;
+            }}
+          />
+          <div className="mt-1 flex justify-between text-[11px] tabular-nums text-muted-foreground">
+            <span>{fmtTime(current)}</span>
+            <span>{duration > 0 ? fmtTime(duration) : "--:--"}</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const el = ref.current;
+            if (el) {
+              el.muted = !el.muted;
+              setMuted(el.muted);
+            }
+          }}
+          aria-label={muted ? "Unmute" : "Mute"}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+/** Custom elegant video player (via proxy). */
+function VideoPlayer({ src }: { src: string }) {
+  const ref = useRef<HTMLVideoElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  const toggle = () => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.paused) el.play().catch(() => {});
+    else el.pause();
+  };
+
+  return (
+    <div className="group relative overflow-hidden rounded-xl border bg-black">
+      <video
+        ref={ref}
+        src={proxyUrl("api/video-proxy", src)}
+        preload="metadata"
+        className="w-full aspect-video"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setCurrent(duration);
+        }}
+        onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+      />
+      {!playing && (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label="Play video"
+          className="absolute inset-0 flex items-center justify-center"
+        >
+          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur transition-transform hover:scale-110">
+            <Play className="ml-1 h-8 w-8" />
+          </span>
+        </button>
+      )}
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
+        <ProgressBar
+          value={current}
+          duration={duration}
+          onSeek={(t) => {
+            const el = ref.current;
+            if (el) el.currentTime = t;
+          }}
+        />
+        <div className="mt-1.5 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggle}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white transition-transform hover:scale-105"
+          >
+            {playing ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
+          </button>
+          <span className="text-xs tabular-nums text-white/90">
+            {fmtTime(current)} / {duration > 0 ? fmtTime(duration) : "--:--"}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

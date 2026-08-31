@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
-import { mkdtemp, writeFile, readFile, rm } from "fs/promises";
+import { mkdtemp, writeFile, readFile, rm, mkdir, copyFile } from "fs/promises";
 import { existsSync } from "fs";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
@@ -155,6 +155,69 @@ function buildSrtFromSegments(
     })
     .map((cue, i) => `${i + 1}\n${formatSrtTime(cue.start)} --> ${formatSrtTime(cue.end)}\n${cue.text}`)
     .join("\n\n");
+}
+
+/** Konversi warna hex "#RRGGBB" → ASS "&H00BBGGRR" (alpha 0 = opak, urutan BGR). */
+function hexToAssColor(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || "").trim());
+  if (!m) return "&H00FFFFFF"; // fallback putih
+  const r = m[1].slice(0, 2);
+  const g = m[1].slice(2, 4);
+  const b = m[1].slice(4, 6);
+  return `&H00${b}${g}${r}`;
+}
+
+/** Family font (internal) untuk libass. */
+const SUBTITLE_FONT_NAME = "Quicksand";
+const SUBTITLE_FONT_FALLBACK = "Poppins";
+
+/**
+ * Salin font subtitle dari public/fonts ke workDir/fonts agar bisa dibaca
+ * libass/FFmpeg via filesystem. Mengembalikan { fontsdir, ok }.
+ * Jika Quicksand tidak ada → jatuh ke Poppins; jika keduanya tak ada, ok=false.
+ */
+async function prepareSubtitleFonts(workDir: string): Promise<{ fontsdir: string; ok: boolean; fontName: string }> {
+  const fontsDir = join(workDir, "fonts");
+  try {
+    await mkdir(fontsDir, { recursive: true });
+
+    // Cari font Quicksand di public/fonts
+    const quicksandCandidates = [
+      "Quicksand_Book.otf",
+      "Quicksand_Bold.otf",
+      "Quicksand-Regular.ttf",
+      "Quicksand.otf",
+    ];
+    const poppinsCandidates = [
+      "Poppins-Regular.ttf",
+      "Poppins-SemiBold.ttf",
+      "Poppins-Medium.ttf",
+      "Poppins-Bold.ttf",
+    ];
+    const baseDir = join(process.cwd(), "public", "fonts");
+
+    const pick = async (cands: string[]): Promise<string | null> => {
+      for (const c of cands) {
+        const src = join(baseDir, c);
+        if (existsSync(src)) {
+          await copyFile(src, join(fontsDir, c));
+          return c;
+        }
+      }
+      return null;
+    };
+
+    const quicksand = await pick(quicksandCandidates);
+    if (quicksand) return { fontsdir: fontsDir, ok: true, fontName: SUBTITLE_FONT_NAME };
+
+    const poppins = await pick(poppinsCandidates);
+    if (poppins) return { fontsdir: fontsDir, ok: true, fontName: SUBTITLE_FONT_FALLBACK };
+
+    return { fontsdir: fontsDir, ok: false, fontName: SUBTITLE_FONT_NAME };
+  } catch (e) {
+    console.warn("[Video] prepareSubtitleFonts gagal:", (e as Error)?.message);
+    return { fontsdir: fontsDir, ok: false, fontName: SUBTITLE_FONT_NAME };
+  }
 }
 
 async function fetchPexelsBackground(query: string): Promise<string> {
@@ -368,6 +431,11 @@ export async function POST(request: NextRequest) {
         const subtitleFile = join(workDir, "subtitle.srt");
         const outputFile = join(workDir, "output.mp4");
 
+        // Salin font subtitle (Quicksand, fallback Poppins) → workDir/fonts
+        const subtitleFont = await prepareSubtitleFonts(workDir);
+        const subtitleFontDir = subtitleFont.ok ? subtitleFont.fontsdir : "";
+        const fontName = subtitleFont.fontName;
+
         await writeFile(inputVideo, bgData);
         await writeFile(inputAudio, audioData);
         await writeFile(subtitleFile, subtitleData);
@@ -382,39 +450,52 @@ export async function POST(request: NextRequest) {
         const outH = isHorizontal ? 1080 : 1920;
         const outRes = `${outW}x${outH}`;
 
-        // ===== SUBTITLE STYLE MODERN (Montserrat Bold, tanpa background box) =====
-        // fontSize proporsional terhadap tinggi resolusi:
-        //   - Portrait 9:16  (1080x1920) → height * 0.045 (~48-86 px)
-        //   - Landscape 16:9 (1920x1080) → height * 0.055 (~59 px)
-        //   - Square   1:1              → height * 0.048
-        // dikunci ke rentang 32..96.
-        const ratio =
-          outW === outH ? 0.048 : outW > outH ? 0.055 : 0.045;
-        const fontSize = Math.min(96, Math.max(32, Math.round(outH * ratio)));
+        // ===== SUBTITLE STYLE — ukuran proporsional per format (ala TikTok/Reels/YouTube).
+        // Font lebih kecil agar caption tidak menutupi layar & tidak terpotong:
+        // portrait 9:16 (TikTok/Reels) ≈ 2.5% tinggi, landscape 16:9 ≈ 3.7%, square ≈ 3.2%.
+        const ratio = outW === outH ? 0.032 : outW > outH ? 0.037 : 0.025;
+        const fontSize = Math.min(56, Math.max(24, Math.round(outH * ratio)));
 
-        // Posisi: 2 = bottom-center (ASS).
-        const alignment = 2;
-        // Teks putih bersih.
-        const PrimaryColour = `&H00FFFFFF`;
-        // Outline hitam tipis (3) + shadow hitam tebal (distance 2, opacity 0.6).
-        const strokeWidth = 3;
+        // Posisi: 2 = bottom-center, 8 = top-center (ASS).
+        const alignment = subtitleStyle?.position === "top" ? 8 : 2;
+        // Warna teks: dari style bila ada (fallback putih).
+        const PrimaryColour = subtitleStyle?.color
+          ? hexToAssColor(subtitleStyle.color)
+          : "&H00FFFFFF";
+        // Outline hitam tipis (style-strokeWidth fallback 3) + shadow hitam tebal.
+        const outlineW = typeof subtitleStyle?.strokeWidth === "number" ? subtitleStyle.strokeWidth : 3;
+        const strokeWidth = Math.min(6, Math.max(0, Math.round(outlineW)));
         const strokeColorHex = "000000";
 
-        // Gabungkan style — font Montserrat bila tersedia (fallback Arial),
-        // warna putih, outline tipis + shadow tebal, tanpa background box.
+        // Margin kiri/kanan persisten (8% lebar) → teks tidak pernah menyentuh tepi.
+        const sideMargin = Math.round(outW * 0.08);
+
+        // Gabungkan style — font Quicksand (fallback Poppins),
+        // warna (dari preferensi/putih), outline tipis + shadow tebal, tanpa box.
         const forceStyle = [
-          "FontName=Montserrat",
+          `FontName=${fontName}`,
           `FontSize=${fontSize}`,
           `PrimaryColour=${PrimaryColour}`,
           `Outline=${strokeWidth},OutlineColour=&H00${strokeColorHex}`,
           "Shadow=2,ShadowColour=&H99000000",
           "BorderStyle=1",
           `Alignment=${alignment}`,
-          "MarginV=" + Math.round(outH * 0.12),
+          `MarginL=${sideMargin},MarginR=${sideMargin}`,
+          "MarginV=" + Math.round(outH * 0.06),
         ].join(",");
 
         // Escape path SRT untuk filtergraph FFmpeg (Windows: `C:\` dan `\` harus di-escape).
         const escapedSubtitlePath = escapeFilterPath(subtitleFile);
+
+        // Filter subtitles + optional fontsdir (biar libass tahu path font Quicksand/Poppins).
+        // Tanpa kutip tunggal: kita pakai spawn (bukan shell), jadi quote malah jadi literal
+        // yang bisa memecah parser filter FFmpeg.
+        const fontsDirOpt = subtitleFontDir
+          ? ":fontsdir=" + escapeFilterPath(subtitleFontDir)
+          : "";
+        const subtitleFilter = `[base]subtitles=${escapedSubtitlePath}${fontsDirOpt}:force_style='${forceStyle}'[vout]`;
+        // Versi untuk -vf (single clip, tanpa [base]).
+        const singleSubtitleFilter = `subtitles=${escapedSubtitlePath}${fontsDirOpt}:force_style='${forceStyle}'`;
 
         // ===== TIMELINE: jika ada sceneFootage, render per-scene (concat) =====
         const hasSceneFootage = Array.isArray(sceneFootage) && sceneFootage.length > 0;
@@ -455,7 +536,7 @@ export async function POST(request: NextRequest) {
           const filterComplex =
             parts.join(";") +
             `;${concatInputs.join("")}concat=n=${sceneInputs.length}:v=1:a=0[base];` +
-            `[base]subtitles=${escapedSubtitlePath}:force_style='${forceStyle}'[vout]`;
+            subtitleFilter;
 
           args = [
             ...sceneInputs.map((s) => ["-stream_loop", "-1", "-i", s.path]).flat(),
@@ -502,7 +583,7 @@ export async function POST(request: NextRequest) {
           const filterComplex =
             parts.join(";") +
             `;${concatInputs.join("")}concat=n=${sceneInputs.length}:v=1:a=0[base];` +
-            `[base]subtitles=${escapedSubtitlePath}:force_style='${forceStyle}'[vout]`;
+            subtitleFilter;
 
           // Input: stream_loop -1 per scene + audio
           args = [
@@ -533,7 +614,7 @@ export async function POST(request: NextRequest) {
             "-stream_loop", "-1",
             "-i", inputVideo,
             "-i", inputAudio,
-            "-vf", `${scalePad},subtitles=${escapedSubtitlePath}:force_style='${forceStyle}'`,
+            "-vf", `${scalePad},${singleSubtitleFilter}`,
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-c:a", "aac",
@@ -555,8 +636,10 @@ export async function POST(request: NextRequest) {
         await new Promise<void>((resolve, reject) => {
           const proc = spawn(ffmpegPath, args, { windowsHide: true });
 
+          let fullErr = "";
           proc.stderr.on("data", (chunk: Buffer) => {
             const text = chunk.toString();
+            fullErr += text;
             // ===== TRACING SEMENTARA — tail stderr FFmpeg =====
             console.log("[Video stderr]", text.slice(-100));
             const time = parseFfmpegTime(text);
@@ -577,7 +660,9 @@ export async function POST(request: NextRequest) {
             if (code === 0) {
               resolve();
             } else {
+              // ===== TRACING — cetak FULL stderr saat gagal =====
               console.error(`[Video] FFmpeg gagal (exit ${code})`);
+              console.error("[Video stderr full]:\n" + fullErr);
               reject(new Error(`FFmpeg render gagal (exit ${code})`));
             }
           });

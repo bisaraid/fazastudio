@@ -22,6 +22,16 @@ import {
   Play,
   Sparkles,
   Loader2,
+  Ghost,
+  Heart,
+  GraduationCap,
+  Wallet,
+  Landmark,
+  ShoppingBag,
+  Flame,
+  Brain,
+  Search,
+  type LucideIcon,
 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import { Genre, Platform, Project } from "@/lib/types";
@@ -55,6 +65,33 @@ const STATUS_MAP: Record<string, { label: string; variant: "secondary" | "succes
   processing: { label: "Sedang diproses", variant: "warning" },
   completed: { label: "Selesai", variant: "success" },
 };
+
+// Thumbnail in-progress: gradient + ikon per genre (pola visual ala Netflix).
+const NICHE_VISUALS: Record<string, { gradient: string; icon: LucideIcon }> = {
+  horor: { gradient: "from-zinc-900 via-purple-950 to-zinc-900", icon: Ghost },
+  horror: { gradient: "from-zinc-900 via-purple-950 to-zinc-900", icon: Ghost },
+  misteri: { gradient: "from-slate-900 via-indigo-950 to-slate-900", icon: Search },
+  psikologi: { gradient: "from-sky-950 via-indigo-950 to-slate-900", icon: Brain },
+  romance: { gradient: "from-rose-950 via-pink-900 to-rose-950", icon: Heart },
+  motivasi: { gradient: "from-amber-950 via-orange-900 to-amber-950", icon: Flame },
+  edukasi: { gradient: "from-emerald-950 via-teal-900 to-emerald-950", icon: GraduationCap },
+  keuangan: { gradient: "from-emerald-950 via-green-900 to-emerald-950", icon: Wallet },
+  affiliate: { gradient: "from-fuchsia-950 via-purple-900 to-fuchsia-950", icon: ShoppingBag },
+  sejarah: { gradient: "from-stone-900 via-amber-950 to-stone-900", icon: Landmark },
+};
+
+function nicheVisual(genre?: string): { gradient: string; icon: LucideIcon } {
+  return (
+    (genre && NICHE_VISUALS[genre]) || {
+      gradient: "from-slate-800 via-slate-900 to-slate-800",
+      icon: Sparkles,
+    }
+  );
+}
+
+function projectTitle(p: Project): string {
+  return p.title?.trim() || p.topic?.trim() || "Proyek tanpa judul";
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -139,6 +176,10 @@ export default function DashboardPage() {
     drafts: projects.filter((p) => p.status === "draft").length,
   };
 
+  // Pola "continue watching" ala Netflix — project terbaru yang belum selesai.
+  const resumeProject =
+    projects.find((p) => p.status !== "completed") ?? null;
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
@@ -178,6 +219,27 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+
+        {/* Lanjutkan — pola "continue watching": satu kartu, friction rendah */}
+        {resumeProject && (
+          <Card
+            className="mb-8 cursor-pointer border-primary/40 bg-primary/5 transition-colors hover:border-primary/60"
+            onClick={() => router.push(`/konten/${resumeProject.id}`)}
+          >
+            <CardContent className="flex items-center gap-4 py-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                <Play className="h-5 w-5 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-primary">
+                  Lanjutkan
+                </p>
+                <p className="truncate font-semibold">{projectTitle(resumeProject)}</p>
+              </div>
+              <ArrowRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+            </CardContent>
+          </Card>
+        )}
 
         {/* Stats Cards */}
         <div className="grid gap-4 md:grid-cols-4 mb-8">
@@ -293,8 +355,8 @@ function ProjectCard({
 
   return (
     <Card className={`group hover:shadow-md transition-shadow cursor-pointer overflow-hidden`} onClick={onOpen}>
-      {/* Thumbnail video — Tampil jika project sudah punya video */}
-      {project.video?.url && (
+      {/* Thumbnail: video utk project selesai, gradient+ikon per niche utk in-progress */}
+      {project.video?.url ? (
         <div className="relative aspect-video w-full overflow-hidden bg-muted">
           <video
             src={project.video.url}
@@ -306,17 +368,38 @@ function ProjectCard({
             <Play className="h-8 w-8 text-white" />
           </div>
         </div>
+      ) : (
+        (() => {
+          const vis = nicheVisual(project.genre);
+          const Icon = vis.icon;
+          return (
+            <div
+              className={`relative flex aspect-video w-full items-center justify-center overflow-hidden bg-gradient-to-br ${vis.gradient}`}
+            >
+              <Icon className="h-10 w-10 text-white/40" />
+            </div>
+          );
+        })()
       )}
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="space-y-1">
             <CardTitle className="text-base line-clamp-1">{cardTitle}</CardTitle>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{project.genre}</span>
-              <span>•</span>
-              <span>{project.platform}</span>
-              <span>•</span>
-              <span>{formatDuration(project.targetDuration)}</span>
+            {/* Metadata → badge kecil, bukan baris teks */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {project.genre && (
+                <Badge variant="outline" className="px-2 py-0 text-[11px] font-normal">
+                  {project.genre}
+                </Badge>
+              )}
+              {project.platform && (
+                <Badge variant="outline" className="px-2 py-0 text-[11px] font-normal">
+                  {project.platform}
+                </Badge>
+              )}
+              <Badge variant="outline" className="px-2 py-0 text-[11px] font-normal">
+                {formatDuration(project.targetDuration)}
+              </Badge>
             </div>
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -336,30 +419,17 @@ function ProjectCard({
         </div>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <span>Progress:</span>
-            <span className="font-medium text-foreground">
-              {completedSteps}/3
-            </span>
+        {/* Thin progress bar ala YouTube — 0/3..3/3 langkah */}
+        <div className="flex items-center gap-3">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted-foreground/20">
+            <div
+              className="h-full rounded-full bg-primary transition-all"
+              style={{ width: `${Math.round((completedSteps / 3) * 100)}%` }}
+            />
           </div>
-          <div className="flex items-center gap-1">
-            {(["script", "audio", "video"] as const).map((step) => {
-              const stepStatus = project.steps[step];
-              return (
-                <div
-                  key={step}
-                  className={`h-2 w-2 rounded-full ${
-                    stepStatus === "done"
-                      ? "bg-primary"
-                      : stepStatus === "generating"
-                      ? "bg-amber-500 animate-pulse"
-                      : "bg-muted-foreground/20"
-                  }`}
-                />
-              );
-            })}
-          </div>
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {completedSteps}/3
+          </span>
         </div>
         <div className="flex items-center justify-between mt-3 pt-3 border-t">
           <span className="text-xs text-muted-foreground">

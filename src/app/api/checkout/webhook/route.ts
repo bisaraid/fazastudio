@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     }
 
     const plan = planPart as PlanTier;
-    if (identityKey && (plan === "pro" || plan === "team")) {
+    if (identityKey && (plan === "starter" || plan === "pro")) {
       const ok = await setPlan(identityKey, plan);
       if (!ok) {
         console.error(`[webhook] setPlan gagal for identity:${identityKey} plan:${plan}`);
