@@ -18,6 +18,7 @@ export const PLATFORMS: { value: Platform; label: string; description: string }[
   { value: "youtube", label: "YouTube", description: "Video horizontal 16:9, durasi 1-15 menit" },
   { value: "reels", label: "Instagram Reels", description: "Video vertikal 9:16, durasi 15-90 detik" },
   { value: "podcast", label: "Podcast", description: "Audio saja, durasi 5-60 menit" },
+  { value: "shopee", label: "Shopee Video", description: "Video vertikal 9:16, durasi 15-90 detik" },
 ];
 
 export const TONES: { value: Tone; label: string; description: string }[] = [

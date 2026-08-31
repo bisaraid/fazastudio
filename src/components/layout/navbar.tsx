@@ -3,6 +3,7 @@
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   Sun,
   Moon,
@@ -15,9 +16,7 @@ import {
   CreditCard,
   X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useState } from "react";
-import { clearClientIdentity } from "@/lib/identity";
 
 interface NavbarProps {
   onMenuToggle?: () => void;
@@ -28,6 +27,21 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
   const { theme, setTheme } = useTheme();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      const supabase = createSupabaseBrowserClient();
+      await supabase.auth.signOut();
+    } catch {
+      // abaikan — tetap arahkan ke /masuk
+    }
+    setShowUserMenu(false);
+    setShowMobileDrawer(false);
+    router.push("/masuk");
+  };
 
   const handleMenuToggle = () => {
     setShowMobileDrawer(!showMobileDrawer);
@@ -35,8 +49,9 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
   };
 
   const mobileNavLinks = [
-    { label: "Dashboard", icon: LayoutDashboard, href: "/" },
-    { label: "Pengaturan", icon: CreditCard, href: "/settings" },
+    { label: "Dashboard", icon: LayoutDashboard, href: "/beranda" },
+    { label: "Harga", icon: CreditCard, href: "/harga" },
+    { label: "Pengaturan", icon: Settings, href: "/pengaturan" },
   ];
 
   return (
@@ -62,7 +77,7 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => router.push("/")}
+              onClick={() => router.push("/beranda")}
               className="text-muted-foreground hover:text-foreground"
             >
               Dashboard
@@ -70,7 +85,7 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => router.push("/settings")}
+              onClick={() => router.push("/pengaturan")}
               className="text-muted-foreground hover:text-foreground"
             >
               Pengaturan
@@ -108,25 +123,19 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
                   />
                   <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg border bg-popover p-1 shadow-md">
                     <button
-                      onClick={() => { router.push("/settings"); setShowUserMenu(false); }}
+                      onClick={() => { router.push("/pengaturan"); setShowUserMenu(false); }}
                       className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
                     >
                       <Settings className="h-4 w-4" />
                       Pengaturan
                     </button>
                     <button
-                      onClick={() => {
-                        if (confirm("Ini akan menghapus semua data lokal dan riwayat proyek di perangkat ini. Lanjutkan?")) {
-                          clearClientIdentity();
-                          localStorage.clear();
-                          sessionStorage.clear();
-                          router.push("/");
-                        }
-                      }}
+                      onClick={handleLogout}
+                      disabled={loggingOut}
                       className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
                     >
                       <LogOut className="h-4 w-4" />
-                      Reset Identitas
+                      {loggingOut ? "Keluar..." : "Keluar"}
                     </button>
                   </div>
                 </>
@@ -169,18 +178,12 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
               ))}
               <div className="border-t my-3" />
               <button
-                onClick={() => {
-                  if (confirm("Ini akan menghapus semua data lokal dan riwayat proyek di perangkat ini. Lanjutkan?")) {
-                    clearClientIdentity();
-                    localStorage.clear();
-                    sessionStorage.clear();
-                    router.push("/");
-                  }
-                }}
+                onClick={handleLogout}
+                disabled={loggingOut}
                 className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-destructive hover:bg-destructive/10 transition-colors"
               >
                 <LogOut className="h-5 w-5" />
-                Reset Identitas
+                {loggingOut ? "Keluar..." : "Keluar"}
               </button>
             </nav>
           </div>

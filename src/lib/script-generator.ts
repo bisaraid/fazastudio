@@ -31,16 +31,10 @@ import {
   AffiliateMode,
 } from "@/lib/script-validator";
 import { detectHookType } from "@/lib/pattern";
-import { getTopHooks } from "@/lib/dynamicHooks";
 import { getClosingStrategy, ClosingStrategy } from "@/lib/categories/closing-strategies";
 import { generateSeed } from "@/lib/seed";
 import { fetchTrendingProducts, Product } from "@/lib/trendtracker-client";
 import { buildComparisonPrompt, buildTrendingContext } from "@/lib/affiliate-mode";
-import {
-  getUsedHookPatternValues,
-  selectHookWithAntiRepeat,
-  recordUsage,
-} from "@/lib/usage-history";
 
 // ============================================================
 // TYPES
@@ -58,6 +52,8 @@ export interface GenerateScriptInput {
   affiliateInput?: AffiliateInput;
   affiliateMode?: AffiliateMode;
   identityKey?: string;
+  /** Persona user (Layer 1-4) — di-inject sebagai blok pertama system prompt. */
+  personaPrompt?: string;
 }
 
 export interface GeneratedScene {
@@ -332,10 +328,9 @@ ${affiliateProductBlock}`;
 function buildSystemPrompt(
   categoryId: CategoryId,
   staticHookEntries: HookEntry[],
-  dynamicHookEntries: HookEntry[],
-  usedPatternValues: Set<string>,
   explicitConfig?: CategoryConfig,
-  usedClosingIds: string[] = []
+  usedClosingIds: string[] = [],
+  personaPrompt?: string
 ): { prompt: string; selectedText: string | null; selectedPatternValue: HookPatternType | null; selectedClosingStrategy: ClosingStrategy | null } {
   const config = resolveConfig(categoryId, explicitConfig);
   const skeleton = getScriptSkeleton(config);
@@ -343,7 +338,11 @@ function buildSystemPrompt(
   const autoConfig = getAutoCategoryConfig(categoryId);
   let selectedClosingStrategy: ClosingStrategy | null = null;
 
-  let prompt = `Kamu adalah penulis script video pendek bahasa Indonesia.
+  let personaBlock = "";
+  if (personaPrompt && personaPrompt.trim()) {
+    personaBlock = `[PROFIL USER]\n${personaPrompt.trim()}\n\n[PROMPT SISTEM]\n`;
+  }
+  let prompt = personaBlock + `Kamu adalah penulis script video pendek bahasa Indonesia.
 
 PERSONA NARATOR:
 Nama persona: ${persona.name}
@@ -454,25 +453,16 @@ Hindari pengulangan pola pembuka yang sama setiap generate.`;
   prompt += `\n\nATURAN VARIASI DIKSI:
 Variasikan diksi dan struktur kalimat. Session seed: ${sessionSeed} — gunakan sebagai inspirasi tone, bukan ditulis literal.`;
 
-  // Hook selection
-  const hookPool: HookEntry[] = [...staticHookEntries, ...dynamicHookEntries];
+  // Hook selection — simple random dari static hooks
+  const hookPool: HookEntry[] = [...staticHookEntries];
   let selectedText: string | null = null;
   let selectedPatternValue: HookPatternType | null = null;
 
   if (hookPool.length > 0) {
-    const selected = selectHookWithAntiRepeat(hookPool, usedPatternValues);
+    const selected = hookPool[Math.floor(Math.random() * hookPool.length)];
     selectedText = selected.text;
     selectedPatternValue = selected.patternValue;
     prompt += `\n\nHOOK ANGLE UNTUK GENERATE INI: ${selectedText}`;
-
-    if (dynamicHookEntries.length > 0) {
-      const dynamicTexts = dynamicHookEntries.map(h => h.text);
-      prompt += `\n\nDATA POLA HOOK TERBUKTI (dari analisis ribuan video ${categoryId}):
-${dynamicTexts.join("\n")}
-
-Gunakan insight di atas sebagai referensi gaya hook yang TERBUKTI performa. 
-Namun tetap variasikan bahasa dan pendekatan agar tidak terdengar repetitif.`;
-    }
   }
 
   return { prompt, selectedText, selectedPatternValue, selectedClosingStrategy };
@@ -504,15 +494,14 @@ async function generateSegment(
   retryCount: number = 0,
   signal?: AbortSignal,
   staticHookEntries: HookEntry[] = [],
-  dynamicHookEntries: HookEntry[] = [],
-  usedPatternValues: Set<string> = new Set(),
   explicitConfig?: CategoryConfig,
   usedClosingIds: string[] = [],
   targetDuration?: number,
-  platform?: Platform
+  platform?: Platform,
+  personaPrompt?: string
 ): Promise<{ scenes: ValidatableScene[]; summary: string; selectedPatternValue?: string | null; selectedClosingStrategy?: ClosingStrategy | null }> {
   const { prompt: systemPrompt, selectedPatternValue, selectedClosingStrategy } = buildSystemPrompt(
-    categoryId, staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds
+    categoryId, staticHookEntries, explicitConfig, usedClosingIds, personaPrompt
   );
 
   const userPrompt = buildSegmentPrompt(
@@ -566,7 +555,7 @@ async function generateSegment(
         return generateSegment(
           categoryId, topic, duration, segmentIndex, totalSegments,
           globalOutline, previousSummary, affiliateInput, retryCount + 1, signal,
-          staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds, targetDuration, platform
+          staticHookEntries, explicitConfig, usedClosingIds, targetDuration, platform, personaPrompt
         );
       }
 
@@ -591,7 +580,7 @@ async function generateSegment(
       return generateSegment(
         categoryId, topic, duration, segmentIndex, totalSegments,
         globalOutline, previousSummary, affiliateInput, retryCount + 1, signal,
-        staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds, targetDuration, platform
+        staticHookEntries, explicitConfig, usedClosingIds, targetDuration, platform, personaPrompt
       );
     }
     throw error;
@@ -676,7 +665,7 @@ export async function generateScriptWithAI(
   onProgress?: (progress: GenerateScriptProgress) => void,
   signal?: AbortSignal
 ): Promise<GenerateScriptResult> {
-  const { topic, categoryId, customGenre, duration, affiliateInput, affiliateMode, identityKey, targetDuration, platform } = input;
+  const { topic, categoryId, customGenre, duration, affiliateInput, affiliateMode, identityKey, targetDuration, platform, personaPrompt } = input;
 
   try {
     // Resolve config
@@ -719,23 +708,10 @@ export async function generateScriptWithAI(
     }
     const trendingContext = buildTrendingContext(trendingProducts);
 
-    // Dynamic hooks
-    const dynamicHooks = await getTopHooks(categoryId);
-
     const staticHookEntries: HookEntry[] = (config.hookAngles ?? []).map(text => ({
       text,
       patternValue: detectHookType(text),
     }));
-
-    const dynamicHookEntries: HookEntry[] = dynamicHooks.map(h => ({
-      text: h.angle,
-      patternValue: h.patternValue as HookPatternType,
-    }));
-
-    // Anti-repeat
-    const usedPatternValues: Set<string> = identityKey
-      ? await getUsedHookPatternValues(identityKey, categoryId)
-      : new Set<string>();
 
     // Anti-repeat untuk closing strategy misteri (scope terpisah dari hook)
     const usedClosingIds: string[] = [];
@@ -765,8 +741,8 @@ export async function generateScriptWithAI(
       segment1 = await generateSegment(
         categoryId, topic, effectiveDuration, 0, totalSegments,
         globalOutline, "", affiliateInput, 0, signal,
-        staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds,
-        targetDuration, platform
+        staticHookEntries, explicitConfig, usedClosingIds,
+        targetDuration, platform, personaPrompt
       );
       allScenes.push(...segment1.scenes);
       hookPatternUsed = segment1.selectedPatternValue || undefined;
@@ -809,8 +785,8 @@ export async function generateScriptWithAI(
           const result = await generateSegment(
             categoryId, topic, effectiveDuration, i, totalSegments,
             globalOutline, segment1.summary, affiliateInput, 0, signal,
-            staticHookEntries, dynamicHookEntries, usedPatternValues, explicitConfig, usedClosingIds,
-            targetDuration, platform
+            staticHookEntries, explicitConfig, usedClosingIds,
+            targetDuration, platform, personaPrompt
           );
           allScenes.push(...result.scenes);
         } catch (error) {
@@ -885,13 +861,6 @@ export async function generateScriptWithAI(
           comparisonResult.errors.forEach(e => console.warn(`  - ${e}`));
         }
       }
-    }
-
-    // Record usage
-    if (identityKey) {
-      recordUsage(identityKey, categoryId, hookPatternUsed ?? null, topic).catch(err => {
-        console.warn("[usage-history] Gagal menyimpan record (non-blocking):", err);
-      });
     }
 
     // Map to ACS Scene structure

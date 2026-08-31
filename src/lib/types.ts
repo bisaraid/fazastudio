@@ -20,7 +20,7 @@ export type Genre =
   | "keuangan"
   | "custom";
 
-export type Platform = "tiktok" | "youtube" | "reels" | "podcast";
+export type Platform = "tiktok" | "youtube" | "reels" | "podcast" | "shopee";
 
 export type Tone = "formal" | "kasual" | "semangat" | "serius" | "humor" | "misterius";
 

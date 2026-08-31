@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service";
+import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 
 export async function GET(request: NextRequest) {
@@ -14,12 +15,18 @@ export async function GET(request: NextRequest) {
     const identity = getServerIdentity(request);
     const identityKey = identity.identityKey;
 
+    // Cek apakah user login (kalau ya, tampilkan proyek milik user_id-nya).
+    const session = createSupabaseServerClient();
+    const {
+      data: { user },
+    } = await session.auth.getUser();
+    const userId = user?.id ?? null;
+
     const supabase = createServiceRoleClient();
-    const { data, error } = await supabase
-      .from("projects")
-      .select("*")
-      .eq("identity_key", identityKey)
-      .order("created_at", { ascending: false });
+    let query = supabase.from("projects").select("*").order("created_at", { ascending: false });
+    query = userId ? query.eq("user_id", userId) : query.eq("identity_key", identityKey);
+
+    const { data, error } = await query;
 
     if (error) {
       console.error("[projects] GET error:", error);
@@ -49,6 +56,13 @@ export async function POST(request: NextRequest) {
     const identity = getServerIdentity(request);
     const identityKey = identity.identityKey;
 
+    // Jika user login, tautkan project ke akun (user_id).
+    const session = createSupabaseServerClient();
+    const {
+      data: { user },
+    } = await session.auth.getUser();
+    const userId = user?.id ?? null;
+
     const supabase = createServiceRoleClient();
 
     // Resolve category_id dari slug genre
@@ -66,6 +80,7 @@ export async function POST(request: NextRequest) {
       .from("projects")
       .insert({
         identity_key: identityKey,
+        user_id: userId,
         title: body.title || body.topic || null,
         category_id: categoryId,
         status: body.status || "draft",

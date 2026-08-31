@@ -13,6 +13,7 @@ import { validateApiKey } from "@/lib/api-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 import { checkCredits } from "@/lib/usage";
+import { isPreviewUsed, markPreviewUsed } from "@/lib/preview-guard";
 
 /**
  * POST /api/generate-tts
@@ -65,6 +66,27 @@ export async function POST(request: NextRequest) {
         { success: false, error: `Provider TTS tidak valid. Pilihan: ${validProviders.join(", ")}` },
         { status: 400 }
       );
+    }
+
+    // Generate identity (device) SEJAK awal — dipakai preview-guard & preview response
+    const identity = getServerIdentity(request);
+    const identityKey = identity.identityKey;
+
+    // ===== PREVIEW PREMIUM GUARD (Fase 2) — hanya untuk provider berbayar =====
+    const isPremiumProvider =
+      provider === "cartesia" || provider === "elevenlabs";
+    if (preview === true && isPremiumProvider) {
+      const used = await isPreviewUsed(identityKey);
+      if (used) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Suka suaranya? Daftar gratis untuk lanjut.",
+            code: "PREVIEW_USED",
+          },
+          { status: 429 }
+        );
+      }
     }
 
     // Jika preview: true, potong narasi scene pertama ke 7 kata
@@ -148,7 +170,12 @@ export async function POST(request: NextRequest) {
 
     // ===== PREVIEW: return binary audio langsung (hanya untuk browser) =====
     if (preview === true) {
-      return new NextResponse(buffer, {
+      // Hanya tandai 1× jika provider berbayar & preview sukses dihasilkan.
+      if (isPremiumProvider) {
+        await markPreviewUsed(identityKey);
+      }
+      // Set cookie device bila baru (identitas stabil untuk guard 1×/device).
+      const res = new NextResponse(buffer, {
         status: 200,
         headers: {
           "Content-Type": "audio/mpeg",
@@ -156,12 +183,15 @@ export async function POST(request: NextRequest) {
           "X-TTS-Provider": usedProvider || "",
         },
       });
+      if (identity.isNew) {
+        res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
+      }
+      return res;
     }
 
     // ===== NON-PREVIEW: upload ke Supabase Storage bucket `acs-audio` =====
     // ===== CREDIT CHECK (guard only — credit already decremented at generate-script) =====
-    const identity = getServerIdentity(request);
-    const identityKey = identity.identityKey;
+    // identity/identityKey sudah diambil di awal (baris atas) — dipakai juga di sini.
     const hasCredit = await checkCredits(identityKey);
     if (!hasCredit) {
       return NextResponse.json(

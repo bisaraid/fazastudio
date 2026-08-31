@@ -653,10 +653,20 @@ export function usePipeline() {
         });
 
         if (!res.ok) {
+          // Khusus 429 PREVIEW_USED → lempar error ber-`code` agar UI bisa
+          // menampilkan gate daftar, bukan sekadar error generik.
+          const json = res.status === 429 ? await res.json().catch(() => null) : null;
+          if (json?.code === "PREVIEW_USED") {
+            const e = new Error(json.error || "Suka suaranya? Daftar gratis untuk lanjut.");
+            (e as any).code = "PREVIEW_USED";
+            throw e;
+          }
           let errorMsg = `Preview TTS gagal (${res.status})`;
           try {
-            const json = await res.json();
-            if (json.error) errorMsg = json.error;
+            if (!json && res.status !== 429) {
+              const j = await res.json();
+              if (j.error) errorMsg = j.error;
+            }
           } catch {
             // ignore
           }

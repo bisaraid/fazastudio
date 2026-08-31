@@ -1,329 +1,235 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useProjectStore } from "@/lib/store/projectStore";
-import { Navbar } from "@/components/layout/navbar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import {
-  Plus,
-  FileText,
-  Music,
-  Subtitles,
-  Video,
-  Clock,
-  TrendingUp,
-  BarChart3,
-  ArrowRight,
-  Trash2,
-  Sparkles,
-  Loader2,
-} from "lucide-react";
-import { formatDuration } from "@/lib/utils";
-import { Project } from "@/lib/types";
+import { PricingPlans } from "@/components/pricing-plans";
+import { Sparkles, ArrowRight, TrendingUp, Wand2, Upload, Loader2, Quote } from "lucide-react";
 
-const STATUS_MAP: Record<string, { label: string; variant: "secondary" | "success" | "warning" }> = {
-  draft: { label: "Draft", variant: "secondary" },
-  processing: { label: "Diproses", variant: "warning" },
-  completed: { label: "Selesai", variant: "success" },
-};
-
-export default function DashboardPage() {
+export default function LandingPage() {
   const router = useRouter();
-  const { projects, loadProjects, deleteProject, createProject } = useProjectStore();
+  const { createProject } = useProjectStore();
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
-
-  const handleCreateNew = async () => {
-    const project = await createProject({
-      genre: "",
-      customGenre: undefined,
-      topic: "",
-      tone: "kasual",
-      targetDuration: 0,
-      platform: "",
-      mode: "step-by-step",
-      voiceName: "Sari",
-      voiceLanguage: "id-ID",
-      voiceSpeed: 1.0,
-      voiceEmotion: "netral",
-      visualStyle: "stock",
-    });
-    if (project?.id) {
-      router.push(`/project/${project.id}`);
-    }
-  };
-
-  // FIX 2 — bungkus handleCreateNew dengan loading + error state.
-  const [isCreating, setIsCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-
-  const handleCreateClick = async () => {
-    if (isCreating) return;
-    setIsCreating(true);
-    setCreateError(null);
+  // "Coba Gratis" → buat project anonim → langsung buka editor (alur conversion).
+  const handleCobaGratis = async () => {
+    if (creating) return;
+    setCreating(true);
+    setError(null);
     try {
-      await handleCreateNew();
+      const project = await createProject({
+        genre: "",
+        customGenre: undefined,
+        topic: "",
+        tone: "kasual",
+        targetDuration: 0,
+        platform: "",
+        mode: "step-by-step",
+        voiceName: "Sari",
+        voiceLanguage: "id-ID",
+        voiceSpeed: 1.0,
+        voiceEmotion: "netral",
+        visualStyle: "stock",
+      });
+      if (project?.id) router.push(`/konten/${project.id}`);
     } catch {
-      setCreateError("Gagal membuat konten. Coba lagi.");
-    } finally {
-      setIsCreating(false);
+      setError("Gagal membuat sesi. Coba lagi.");
+      setCreating(false);
     }
   };
 
-  // FIX 1 — hapus dengan konfirmasi + feedback error.
-  const handleDeleteProject = async (projectId: string) => {
-    const confirmed = confirm("Hapus project ini? Tindakan tidak bisa dibatalkan.");
-    if (!confirmed) return;
-    try {
-      await deleteProject(projectId);
-    } catch {
-      alert("Gagal menghapus project. Coba lagi.");
-    }
-  };
-
-  const stats = {
-    total: projects.length,
-    completed: projects.filter((p) => p.status === "completed").length,
-    processing: projects.filter((p) => p.status === "processing").length,
-    drafts: projects.filter((p) => p.status === "draft").length,
-  };
+  const steps = [
+    {
+      icon: TrendingUp,
+      title: "Pilih trend",
+      desc: "Ambil ide dari tren terbaru atau pilih topik/kategori favoritmu (horor, misteri, keuangan, dan lainnya).",
+    },
+    {
+      icon: Wand2,
+      title: "AI buat",
+      desc: "Faza Studio menyusun script, suara, subtitle, dan video secara otomatis dalam satu alur.",
+    },
+    {
+      icon: Upload,
+      title: "Upload",
+      desc: "Hasil siap dipakai — unduh dan langsung publikasikan ke platform tujuan.",
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
-      <main className="container mx-auto px-4 py-8 lg:px-8">
-        {/* Header */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-6xl items-center px-4 lg:px-8">
+          <div className="flex items-center gap-2 font-semibold">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <span>Faza Studio</span>
+          </div>
+          <div className="flex-1" />
+          <nav className="hidden items-center gap-1 md:flex">
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/harga">Harga</Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/masuk">Masuk</Link>
+            </Button>
+          </nav>
+          <Button size="sm" className="ml-2" asChild>
+            <Link href="/daftar">Daftar</Link>
+          </Button>
+        </div>
+      </header>
+
+      {/* Hero */}
+      <section className="mx-auto max-w-6xl px-4 pb-16 pt-20 text-center lg:px-8 lg:pt-28">
+        <Badge variant="secondary" className="mb-5">
+          Buat konten viral dengan AI
+        </Badge>
+        <h1 className="mx-auto max-w-3xl text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+          Ide jadi konten siap upload, dalam hitungan menit.
+        </h1>
+        <p className="mx-auto mt-5 max-w-xl text-lg text-muted-foreground">
+          Script, suara, subtitle, dan video — disusun otomatis dari satu topik.
+          Coba gratis, tanpa kartu kredit.
+        </p>
+        <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <Button size="lg" onClick={handleCobaGratis} disabled={creating} className="gap-2">
+            {creating ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
+            {creating ? "Menyiapkan…" : "Coba Gratis"}
+            {!creating && <ArrowRight className="h-5 w-5" />}
+          </Button>
+          <Button size="lg" variant="outline" onClick={() => router.push("/harga")}>
+            Lihat Harga
+          </Button>
+        </div>
+        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+      </section>
+{/* Masalah */}
+      <section className="border-y bg-muted/30">
+        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-16 lg:grid-cols-2 lg:px-8">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-            <p className="text-muted-foreground mt-1">
-              Kelola dan buat konten baru dengan Faza Studio
+            <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+              Capek bikin script tiap hari? Konten terus habis ide?
+            </h2>
+            <p className="mt-4 text-muted-foreground">
+              Membuat konten secara konsisten butuh waktu, ide, dan energi. Faza Studio
+              mengambil alih bagian yang paling berat — riset topik, menulis skrip, hingga
+              menyatukan audio dan video.
             </p>
           </div>
-          <div className="flex flex-col items-stretch sm:items-end gap-2">
-            {projects.length > 0 && (
-              <>
-                <Button
-                  size="lg"
-                  className="gap-2"
-                  onClick={handleCreateClick}
-                  disabled={isCreating}
-                >
-                  {isCreating ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    <Plus className="h-5 w-5" />
-                  )}
-                  {isCreating ? "Membuat..." : "Buat Konten Baru"}
-                </Button>
-                {createError && (
-                  <p className="text-sm text-destructive text-right">{createError}</p>
-                )}
-              </>
-            )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            {[
+              "Script siap pakai di setiap kategori",
+              "Suara premium bisa dipilih",
+              "Subtitle otomatis presisi",
+              "Render video langsung jadi",
+            ].map((f) => (
+              <div key={f} className="flex items-start gap-2 rounded-lg border bg-card p-4 text-sm">
+                <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <span>{f}</span>
+              </div>
+            ))}
           </div>
         </div>
+      </section>
 
-        {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-4 mb-8">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Total Project</CardTitle>
-              <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.total}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Selesai</CardTitle>
-              <TrendingUp className="h-4 w-4 text-emerald-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-emerald-500">{stats.completed}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Diproses</CardTitle>
-              <Clock className="h-4 w-4 text-amber-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-amber-500">{stats.processing}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Draft</CardTitle>
-              <FileText className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.drafts}</div>
-            </CardContent>
-          </Card>
+      {/* Cara kerja */}
+      <section className="mx-auto max-w-6xl px-4 py-16 lg:px-8">
+        <div className="mb-10 text-center">
+          <h2 className="text-3xl font-bold tracking-tight">Cara kerjanya</h2>
+          <p className="mt-3 text-muted-foreground">Tiga langkah dari ide menjadi tayang.</p>
         </div>
-
-        {/* Project List */}
-        <div className="space-y-4">
-          <h2 className="text-xl font-semibold">Project Terbaru</h2>
-          {projects.length === 0 ? (
-            <Card className="border-dashed">
-              <CardContent className="flex flex-col items-center justify-center py-14 px-6 text-center">
-                <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-5">
-                  <Sparkles className="h-8 w-8 text-primary" />
+        <div className="grid gap-6 md:grid-cols-3">
+          {steps.map((s, i) => (
+            <div key={s.title} className="rounded-xl border bg-card p-6">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                  <s.icon className="h-5 w-5 text-primary" />
                 </div>
-                <h3 className="text-lg font-semibold mb-1">Belum ada project</h3>
-                <p className="text-muted-foreground text-sm max-w-md mb-6">
-                  Mulai buat konten pertamamu — pilih topik, dan Faza Studio akan
-                  mengubahnya menjadi script, suara, subtitle, dan video dalam satu alur.
-                </p>
-                <Button size="lg" onClick={handleCreateClick} disabled={isCreating} className="gap-2">
-                  {isCreating ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Plus className="h-4 w-4" />
-                  )}
-                  {isCreating ? "Membuat..." : "Buat Project Pertama"}
-                </Button>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {projects.map((project) => (
-                <ProjectCard
-                  key={project.id}
-                  project={project}
-                  onOpen={() => router.push(`/project/${project.id}`)}
-                  onDelete={() => handleDeleteProject(project.id)}
-                />
-              ))}
+                <span className="text-sm font-semibold text-muted-foreground">Langkah {i + 1}</span>
+              </div>
+              <h3 className="text-lg font-semibold">{s.title}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">{s.desc}</p>
             </div>
-          )}
+          ))}
         </div>
-      </main>
+      </section>
+{/* Bukti hasil */}
+      <section className="border-y bg-muted/30">
+        <div className="mx-auto max-w-4xl px-4 py-16 lg:px-8">
+          <div className="text-center">
+            <h2 className="text-3xl font-bold tracking-tight">Contoh script yang dihasilkan</h2>
+            <p className="mt-3 text-muted-foreground">
+              Ini contoh nyata format output dari alur Script Faza Studio.
+            </p>
+          </div>
+          <div className="mt-8 rounded-xl border bg-card p-6 shadow-sm">
+            <Quote className="h-6 w-6 text-primary" />
+            <div className="mt-4 space-y-4 text-sm leading-relaxed">
+              <p>
+                <span className="font-semibold text-primary">[HOOK]</span> Pernah nggak kamu
+                merasa sudah mencoba segalanya tapi hasilnya tetap biasa saja?
+              </p>
+              <p>
+                <span className="font-semibold text-primary">[ISI]</span> Hari ini kita akan
+                lihat satu pola sederhana yang dipakai konten viral — kenapa beberapa video
+                langsung ramai sementara yang lain sepi.
+              </p>
+              <p>
+                <span className="font-semibold text-primary">[PENUTUP]</span> Terapkan satu
+                langkah ini di konten berikutnya, dan bandingkan hasilnya.
+              </p>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <Button variant="outline" size="sm" onClick={handleCobaGratis} disabled={creating}>
+                Buat yang serupa
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing */}
+      <section className="mx-auto max-w-5xl px-4 py-16 lg:px-8">
+        <div className="mb-10 text-center">
+          <h2 className="text-3xl font-bold tracking-tight">Investasi kecil, hasil maksimal</h2>
+          <p className="mt-3 text-muted-foreground">
+            Mulai gratis, naikkan sesuai kebutuhan produksimu.
+          </p>
+        </div>
+        <PricingPlans />
+      </section>
+
+      {/* CTA akhir */}
+      <section className="border-t">
+        <div className="mx-auto max-w-4xl px-4 py-20 text-center lg:px-8">
+          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
+            Siap membuat konten yang viral?
+          </h2>
+          <p className="mx-auto mt-4 max-w-lg text-muted-foreground">
+            Daftar gratis, dan mulai ubah ide menjadi konten siap upload hari ini.
+          </p>
+          <Button size="lg" className="mt-8 gap-2" asChild>
+            <Link href="/daftar">
+              Daftar Gratis
+              <ArrowRight className="h-5 w-5" />
+            </Link>
+          </Button>
+        </div>
+      </section>
+
+      <footer className="border-t bg-muted/30">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 py-8 text-sm text-muted-foreground sm:flex-row sm:justify-between lg:px-8">
+          <span>© {new Date().getFullYear()} Faza Studio</span>
+          <div className="flex gap-4">
+            <Link href="/harga" className="hover:text-foreground">Harga</Link>
+            <Link href="/masuk" className="hover:text-foreground">Masuk</Link>
+          </div>
+        </div>
+      </footer>
     </div>
-  );
-}
-
-function ProjectCard({
-  project,
-  onOpen,
-  onDelete,
-}: {
-  project: Project;
-  onOpen: () => void;
-  onDelete: () => void;
-}) {
-  const status = STATUS_MAP[project.status] || STATUS_MAP.draft;
-  const completedSteps = (["script", "audio", "video"] as const)
-    .filter((s) => project.steps[s] === "done").length;
-
-  // Fallback judul agar kartu tidak kosong (mis. project baru tanpa topic).
-  const cardTitle =
-    project.title?.trim() ||
-    project.topic?.trim() ||
-    (project.genre ? `${project.genre} project` : "Proyek Baru");
-
-  // FIX 3 — badge video free 24 jam / kedaluwarsa di kartu.
-  // Hanya tampil bila project benar-benar punya video (bukan "Draft" kosong).
-  const hasVideo = Boolean(project.video?.url);
-  const isFreeVideoExpiring =
-    hasVideo &&
-    project.videoStoragePlan === "free" &&
-    !!project.videoExpiresAt;
-  const isVideoExpired =
-    isFreeVideoExpiring &&
-    new Date(project.videoExpiresAt as string).getTime() <= Date.now();
-
-  return (
-    <Card className="group hover:shadow-md transition-shadow cursor-pointer" onClick={onOpen}>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <div className="space-y-1">
-            <CardTitle className="text-base line-clamp-1">{cardTitle}</CardTitle>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{project.genre}</span>
-              <span>•</span>
-              <span>{project.platform}</span>
-              <span>•</span>
-              <span>{formatDuration(project.targetDuration)}</span>
-            </div>
-          </div>
-          <div className="flex flex-col items-end gap-1">
-            <Badge variant={status.variant}>{status.label}</Badge>
-            {isFreeVideoExpiring && (
-              isVideoExpired ? (
-                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-500/15 dark:text-red-400">
-                  Video kedaluwarsa
-                </span>
-              ) : (
-                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-400">
-                  ⏳ Video 24 jam
-                </span>
-              )
-            )}
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <span>Progress:</span>
-            <span className="font-medium text-foreground">
-              {completedSteps}/3
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            {(["script", "audio", "video"] as const).map((step) => {
-              const stepStatus = project.steps[step];
-              return (
-                <div
-                  key={step}
-                  className={`h-2 w-2 rounded-full ${
-                    stepStatus === "done"
-                      ? "bg-primary"
-                      : stepStatus === "generating"
-                      ? "bg-amber-500 animate-pulse"
-                      : "bg-muted-foreground/20"
-                  }`}
-                />
-              );
-            })}
-          </div>
-        </div>
-        <div className="flex items-center justify-between mt-3 pt-3 border-t">
-          <span className="text-xs text-muted-foreground">
-            {new Date(project.updatedAt).toLocaleDateString("id-ID", {
-              day: "numeric",
-              month: "short",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              aria-label="Hapus project"
-              className="inline-flex h-11 w-11 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-            <span className="inline-flex h-11 w-11 items-center justify-center rounded-full text-primary">
-              <ArrowRight className="h-4 w-4" />
-            </span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
