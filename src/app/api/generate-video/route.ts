@@ -435,6 +435,8 @@ export async function POST(request: NextRequest) {
         const subtitleFont = await prepareSubtitleFonts(workDir);
         const subtitleFontDir = subtitleFont.ok ? subtitleFont.fontsdir : "";
         const fontName = subtitleFont.fontName;
+        console.log("[Video] Subtitle font: ", fontName, "ok: ", subtitleFont.ok)
+        console.log("[Video] Subtitle font: ", fontName, "ok: ", subtitleFont.ok);
 
         await writeFile(inputVideo, bgData);
         await writeFile(inputAudio, audioData);
@@ -451,10 +453,14 @@ export async function POST(request: NextRequest) {
         const outRes = `${outW}x${outH}`;
 
         // ===== SUBTITLE STYLE — ukuran proporsional per format (ala TikTok/Reels/YouTube).
-        // Font lebih kecil agar caption tidak menutupi layar & tidak terpotong:
-        // portrait 9:16 (TikTok/Reels) ≈ 2.5% tinggi, landscape 16:9 ≈ 3.7%, square ≈ 3.2%.
-        const ratio = outW === outH ? 0.032 : outW > outH ? 0.037 : 0.025;
-        const fontSize = Math.min(56, Math.max(24, Math.round(outH * ratio)));
+        // PENTING: filter `subtitles` dengan SRT membuat ASS virtual PlayRes 384x288,
+        // jadi SEMUA nilai (font/margin) harus dalam ruang itu — bukan piksel video.
+        // Konversi: nilai_video * (288/outH) untuk vertikal, * (384/outW) untuk horizontal.
+        const scaleY = 288 / outH;
+        const scaleX = 384 / outW;
+        // Rasio tinggi video yang diinginkan: portrait 9:16 ≈ 2.5%, landscape ≈ 3.7%, square ≈ 3.2%.
+        const ratio = outW === outH ? 0.04 : outW > outH ? 0.046 : 0.04;
+        const fontSize = Math.max(4, Math.round(outH * ratio * scaleY));
 
         // Posisi: 2 = bottom-center, 8 = top-center (ASS).
         const alignment = subtitleStyle?.position === "top" ? 8 : 2;
@@ -464,11 +470,13 @@ export async function POST(request: NextRequest) {
           : "&H00FFFFFF";
         // Outline hitam tipis (style-strokeWidth fallback 3) + shadow hitam tebal.
         const outlineW = typeof subtitleStyle?.strokeWidth === "number" ? subtitleStyle.strokeWidth : 3;
-        const strokeWidth = Math.min(6, Math.max(0, Math.round(outlineW)));
+        const strokeWidth = Math.min(6, Math.max(1, Math.round(outlineW*scaleY)));
         const strokeColorHex = "000000";
 
-        // Margin kiri/kanan persisten (8% lebar) → teks tidak pernah menyentuh tepi.
-        const sideMargin = Math.round(outW * 0.08);
+        // Margin kiri/kanan persisten (8% lebar video) — dalam ruang PlayRes.
+        const sideMargin = Math.max(2, Math.round(outW * 0.08 * scaleX));
+        // MarginV 6% tinggi video — subtitle duduk di bawah, bukan tengah.
+        const marginV = Math.max(2, Math.round(outH * 0.06 * scaleY));
 
         // Gabungkan style — font Quicksand (fallback Poppins),
         // warna (dari preferensi/putih), outline tipis + shadow tebal, tanpa box.
@@ -477,11 +485,11 @@ export async function POST(request: NextRequest) {
           `FontSize=${fontSize}`,
           `PrimaryColour=${PrimaryColour}`,
           `Outline=${strokeWidth},OutlineColour=&H00${strokeColorHex}`,
-          "Shadow=2,ShadowColour=&H99000000",
+          "Shadow=1,ShadowColour=&H99000000",
           "BorderStyle=1",
           `Alignment=${alignment}`,
           `MarginL=${sideMargin},MarginR=${sideMargin}`,
-          "MarginV=" + Math.round(outH * 0.06),
+          "MarginV=" + marginV,
         ].join(",");
 
         // Escape path SRT untuk filtergraph FFmpeg (Windows: `C:\` dan `\` harus di-escape).

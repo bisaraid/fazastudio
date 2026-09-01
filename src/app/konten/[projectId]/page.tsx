@@ -97,14 +97,6 @@ function defaultDurationFor(mode: string, platform: Platform): number {
   return 30;
 }
 
-/** Format detik → mm:ss untuk preview subtitle. */
-function formatSubTime(t?: number | string): string {
-  const s = Math.max(0, Math.floor(Number(t) || 0));
-  const m = Math.floor(s / 60);
-  const ss = s % 60;
-  return `${m}:${ss.toString().padStart(2, "0")}`;
-}
-
 export default function ProjectEditorPage() {
   const params = useParams();
   const projectId = params.projectId as string;
@@ -221,7 +213,6 @@ const isRunning = progress.isRunning;
 
   const projectScript = currentProject?.script;
   const projectAudio = currentProject?.audio;
-  const projectSubtitle = currentProject?.subtitle;
   const projectVideo = currentProject?.video;
 
   const handleGenerate = useCallback(async () => {
@@ -536,37 +527,6 @@ const isRunning = progress.isRunning;
                   <Button size="sm" variant="outline" onClick={handleRegenAudio} disabled={isRunning} className="gap-1.5">
                     <RefreshCw className="h-4 w-4" /> Ulangi Audio
                   </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* SUBTITLE PREVIEW */}
-          {projectSubtitle?.segments && projectSubtitle.segments.length > 0 && (
-            <Card>
-              <CardContent className="p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <Badge variant="secondary" className="gap-1">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Subtitle siap
-                  </Badge>
-                  <span className="text-xs text-muted-foreground">
-                    posisi: {projectSubtitle.style?.position === "top" ? "atas" : "bawah"}
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {projectSubtitle.segments.slice(0, 12).map((seg: any, i: number) => (
-                    <div key={seg.id ?? i} className="flex items-start gap-3 rounded-lg border bg-muted/40 p-2.5">
-                      <span className="mt-0.5 shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                        {formatSubTime(seg.startTime)}–{formatSubTime(seg.endTime)}
-                      </span>
-                      <span className="text-sm">{seg.text}</span>
-                    </div>
-                  ))}
-                  {projectSubtitle.segments.length > 12 && (
-                    <p className="text-xs text-muted-foreground">
-                      +{projectSubtitle.segments.length - 12} segmen lainnya
-                    </p>
-                  )}
                 </div>
               </CardContent>
             </Card>
