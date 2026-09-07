@@ -1,55 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hostOf, isValidProxyUrl } from "@/lib/proxy-url";
 
 /**
  * GET /api/audio-proxy?url=<encoded-audio-url>
  *
  * Server-side audio proxy untuk browser preview. Mendukung HTTP Range
- * (penting untuk seeking <audio>) + streaming pass-through.
+ * + streaming pass-through.
  *
- * FIX SESI A (kinerja/memory) — mirror fix video-proxy:
- * - SEBELUMNYA: `await upstreamRes.arrayBuffer()` → seluruh audio di-download
- *   penuh ke memory server pada setiap request (byte range / seek).
- * - SESUDAHNYA: stream `upstreamRes.body` diteruskan LANGSUNG (passthrough)
- *   tanpa buffer.
- *
- * Kontrak API TIDAK berubah (backward compatible):
- * - GET /api/audio-proxy?url=... → 206 bila upstream 206, else 200.
- * - Header diteruskan: Content-Type, Content-Length, Content-Range (206),
- *   Accept-Ranges, Cache-Control, CORS.
+ * FIX: helper validasi dipisah ke lib/proxy-url (Next.js route type-check
+ * menolak extra export dari file route — see lib/proxy-url.ts).
  */
 
 // Audio tersimpan di Supabase Storage (audio_url) — primary.
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 
-/** Ambil host dari URL; null jika tidak valid. DIPISAH agar bisa di-test. */
-export function hostOf(raw: string): string | null {
-  try {
-    return new URL(raw).host;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Validasi URL target hanya dari daftar host yang diizinkan.
- * Pure function agar dapat di-unit-test tanpa env.
- */
-export function isValidAudioUrl(
-  targetUrl: string,
-  allowedHosts: string[]
-): boolean {
-  if (!targetUrl || allowedHosts.length === 0) return false;
-  try {
-    const parsed = new URL(targetUrl);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    return allowedHosts.includes(parsed.host);
-  } catch {
-    return false;
-  }
-}
-
 /** Host diizinkan dari env (Supabase storage). */
-export function getAllowedAudioHosts(): string[] {
+function getAllowedAudioHosts(): string[] {
   return [hostOf(SUPABASE_URL)].filter((h): h is string => !!h);
 }
 
@@ -64,7 +30,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (!isValidAudioUrl(targetUrl, getAllowedAudioHosts())) {
+  if (!isValidProxyUrl(targetUrl, getAllowedAudioHosts())) {
     return NextResponse.json(
       { success: false, error: "URL tidak valid. Hanya URL storage yang diizinkan." },
       { status: 403 }
@@ -89,7 +55,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Bangun response headers (konsisten dengan versi lama).
     const responseHeaders = new Headers();
     responseHeaders.set(
       "Content-Type",
@@ -111,7 +76,6 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // STREAMING passthrough — body upstream diteruskan LANGSUNG tanpa buffer.
     return new Response(upstreamRes.body, {
       status: upstreamRes.status === 206 ? 206 : 200,
       headers: responseHeaders,
