@@ -9,6 +9,8 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { getServerIdentity, buildDeviceCookieHeader } from "@/lib/identity";
 import { checkCredits, getUsage } from "@/lib/usage";
 import { uploadToR2 } from "@/lib/r2";
+import { computeSubtitleStyle, buildForceStyle } from "@/lib/subtitle-style";
+import { isValidAudioBuffer } from "@/lib/audio-validation";
 
 /**
  * POST /api/generate-video
@@ -157,16 +159,6 @@ function buildSrtFromSegments(
     .join("\n\n");
 }
 
-/** Konversi warna hex "#RRGGBB" → ASS "&H00BBGGRR" (alpha 0 = opak, urutan BGR). */
-function hexToAssColor(hex: string): string {
-  const m = /^#?([0-9a-f]{6})$/i.exec((hex || "").trim());
-  if (!m) return "&H00FFFFFF"; // fallback putih
-  const r = m[1].slice(0, 2);
-  const g = m[1].slice(2, 4);
-  const b = m[1].slice(4, 6);
-  return `&H00${b}${g}${r}`;
-}
-
 /** Family font (internal) untuk libass. */
 const SUBTITLE_FONT_NAME = "Quicksand";
 const SUBTITLE_FONT_FALLBACK = "Poppins";
@@ -176,7 +168,7 @@ const SUBTITLE_FONT_FALLBACK = "Poppins";
  * libass/FFmpeg via filesystem. Mengembalikan { fontsdir, ok }.
  * Jika Quicksand tidak ada → jatuh ke Poppins; jika keduanya tak ada, ok=false.
  */
-async function prepareSubtitleFonts(workDir: string): Promise<{ fontsdir: string; ok: boolean; fontName: string }> {
+async function prepareSubtitleFonts(workDir: string): Promise<{ fontsdir: string; ok: boolean; fontName: string; fontFile: string }> {
   const fontsDir = join(workDir, "fonts");
   try {
     await mkdir(fontsDir, { recursive: true });
@@ -208,15 +200,15 @@ async function prepareSubtitleFonts(workDir: string): Promise<{ fontsdir: string
     };
 
     const quicksand = await pick(quicksandCandidates);
-    if (quicksand) return { fontsdir: fontsDir, ok: true, fontName: SUBTITLE_FONT_NAME };
+    if (quicksand) return { fontsdir: fontsDir, ok: true, fontName: SUBTITLE_FONT_NAME, fontFile: join(fontsDir, quicksand) };
 
     const poppins = await pick(poppinsCandidates);
-    if (poppins) return { fontsdir: fontsDir, ok: true, fontName: SUBTITLE_FONT_FALLBACK };
+    if (poppins) return { fontsdir: fontsDir, ok: true, fontName: SUBTITLE_FONT_FALLBACK, fontFile: join(fontsDir, poppins) };
 
-    return { fontsdir: fontsDir, ok: false, fontName: SUBTITLE_FONT_NAME };
+    return { fontsdir: fontsDir, ok: false, fontName: SUBTITLE_FONT_NAME, fontFile: "" };
   } catch (e) {
     console.warn("[Video] prepareSubtitleFonts gagal:", (e as Error)?.message);
-    return { fontsdir: fontsDir, ok: false, fontName: SUBTITLE_FONT_NAME };
+    return { fontsdir: fontsDir, ok: false, fontName: SUBTITLE_FONT_NAME, fontFile: "" };
   }
 }
 
@@ -353,15 +345,38 @@ export async function POST(request: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      let workDir: string | undefined;
+      // Referensi proses FFmpeg luar promise — so that client disconnect bisa kill.
+      let proc: ReturnType<typeof spawn> | null = null;
+      let clientGone = false;
+
       const send = (data: object) => {
+        if (clientGone) return;
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
         } catch {
-          // client disconnected — ignore
+          // client disconnected — tandai dan stop pekerjaan (FFmpeg di-kill di abort handler).
+          clientGone = true;
         }
       };
 
-      let workDir: string | undefined;
+      // ===== CLIENT DISCONNECT HANDLER =====
+      // Jika user close tab / cancel fetch, NextRequest.signal fires "abort".
+      // Sebelumnya: FFmpeg terus render (wasted CPU & storage) sampai selesai,
+      // kemudian cleanup. Kini: kill FFmpeg + flow berhenti (finally cleanup).
+      const onAbort = () => {
+        clientGone = true;
+        if (proc && proc.pid) {
+          try {
+            proc.kill();
+          } catch (e) {
+            console.warn("[video] Kill FFmpeg pada abort gagal:", e);
+          }
+        }
+      };
+      if (typeof request.signal?.addEventListener === "function") {
+        request.signal.addEventListener("abort", onAbort);
+      }
 
       try {
         const body = await request.json();
@@ -416,6 +431,12 @@ export async function POST(request: NextRequest) {
           fetchBuffer(backgroundUrl),
         ]);
 
+        // Validasi audio: magic bytes (MP3/WAV/OGG) — error jelas sebelum
+        // FFmpeg gagal cryptic "Invalid data found when processing input".
+        if (!isValidAudioBuffer(audioData)) {
+          throw new Error("Audio file tidak valid (bukan MP3/WAV/OGG). Regenerate audio atau coba lagi.");
+        }
+
         // 3. FFmpeg native compose via ffmpeg-static
         const ffmpegPath = resolveFfmpegPath();
         if (!ffmpegPath || typeof ffmpegPath !== "string" || !existsSync(ffmpegPath)) {
@@ -433,6 +454,12 @@ export async function POST(request: NextRequest) {
 
         // Salin font subtitle (Quicksand, fallback Poppins) → workDir/fonts
         const subtitleFont = await prepareSubtitleFonts(workDir);
+        // ===== PLAN CHECK (WATERMARK) — free plan burn-in "Faza Studio" =====
+        // Pricing janji "Watermark Faza Studio" (free) — ditekap supaya real.
+        // Premium (starter/pro) TIDAK punya watermark. getUsage didapat DULU
+        // (untuk watermark) dan diterutilisasi di upload section (no double call).
+        const planUsage = await getUsage(identity.identityKey);
+        const isFreeRender = planUsage.plan === "free";
         const subtitleFontDir = subtitleFont.ok ? subtitleFont.fontsdir : "";
         const fontName = subtitleFont.fontName;
         console.log("[Video] Subtitle font: ", fontName, "ok: ", subtitleFont.ok)
@@ -452,45 +479,18 @@ export async function POST(request: NextRequest) {
         const outH = isHorizontal ? 1080 : 1920;
         const outRes = `${outW}x${outH}`;
 
-        // ===== SUBTITLE STYLE — ukuran proporsional per format (ala TikTok/Reels/YouTube).
-        // PENTING: filter `subtitles` dengan SRT membuat ASS virtual PlayRes 384x288,
-        // jadi SEMUA nilai (font/margin) harus dalam ruang itu — bukan piksel video.
-        // Konversi: nilai_video * (288/outH) untuk vertikal, * (384/outW) untuk horizontal.
-        const scaleY = 288 / outH;
-        const scaleX = 384 / outW;
-        // Rasio tinggi video yang diinginkan: portrait 9:16 ≈ 2.5%, landscape ≈ 3.7%, square ≈ 3.2%.
-        const ratio = outW === outH ? 0.04 : outW > outH ? 0.046 : 0.04;
-        const fontSize = Math.max(4, Math.round(outH * ratio * scaleY));
-
-        // Posisi: 2 = bottom-center, 8 = top-center (ASS).
-        const alignment = subtitleStyle?.position === "top" ? 8 : 2;
-        // Warna teks: dari style bila ada (fallback putih).
-        const PrimaryColour = subtitleStyle?.color
-          ? hexToAssColor(subtitleStyle.color)
-          : "&H00FFFFFF";
-        // Outline hitam tipis (style-strokeWidth fallback 3) + shadow hitam tebal.
-        const outlineW = typeof subtitleStyle?.strokeWidth === "number" ? subtitleStyle.strokeWidth : 3;
-        const strokeWidth = Math.min(6, Math.max(1, Math.round(outlineW*scaleY)));
-        const strokeColorHex = "000000";
-
-        // Margin kiri/kanan persisten (8% lebar video) — dalam ruang PlayRes.
-        const sideMargin = Math.max(2, Math.round(outW * 0.08 * scaleX));
-        // MarginV 6% tinggi video — subtitle duduk di bawah, bukan tengah.
-        const marginV = Math.max(2, Math.round(outH * 0.06 * scaleY));
-
-        // Gabungkan style — font Quicksand (fallback Poppins),
-        // warna (dari preferensi/putih), outline tipis + shadow tebal, tanpa box.
-        const forceStyle = [
-          `FontName=${fontName}`,
-          `FontSize=${fontSize}`,
-          `PrimaryColour=${PrimaryColour}`,
-          `Outline=${strokeWidth},OutlineColour=&H00${strokeColorHex}`,
-          "Shadow=1,ShadowColour=&H99000000",
-          "BorderStyle=1",
-          `Alignment=${alignment}`,
-          `MarginL=${sideMargin},MarginR=${sideMargin}`,
-          "MarginV=" + marginV,
-        ].join(",");
+        // ===== SUBTITLE STYLE (Sesi B) — engine terpusat di lib/subtitle-style.ts
+        // Hormati fontSize pengguna (clamp 12–96 PlayRes) atau default platform-aware;
+        // dukung box (backgroundColor/backgroundAlpha), position, outline, warna.
+        // Semua nilai dalam ruang ASS PlayRes 384x288 (kompatibel force_style).
+        const assStyle = computeSubtitleStyle({
+          style: subtitleStyle,
+          outW,
+          outH,
+          platform,
+          resolvedFont: fontName,
+        });
+        const forceStyle = buildForceStyle(assStyle);
 
         // Escape path SRT untuk filtergraph FFmpeg (Windows: `C:\` dan `\` harus di-escape).
         const escapedSubtitlePath = escapeFilterPath(subtitleFile);
@@ -504,6 +504,21 @@ export async function POST(request: NextRequest) {
         const subtitleFilter = `[base]subtitles=${escapedSubtitlePath}${fontsDirOpt}:force_style='${forceStyle}'[vout]`;
         // Versi untuk -vf (single clip, tanpa [base]).
         const singleSubtitleFilter = `subtitles=${escapedSubtitlePath}${fontsDirOpt}:force_style='${forceStyle}'`;
+
+        // ===== WATERMARK (free plan) — burn-in "Faza Studio" bottom-right =====
+        // Pricing janji: free plan punya "Watermark Faza Studio" (constants.ts).
+        // Premium (starter/pro) TIDAK punya watermark. Di-skip jika fontfile
+        // tidak tersedia (gilas: reveret release berstratan di cache).
+        const watermarkDraw =
+          isFreeRender && subtitleFont.fontFile
+            ? ",drawtext=fontfile=" +
+              escapeFilterPath(subtitleFont.fontFile) +
+              ":text='Faza Studio':x=w-tw-20:y=h-th-16:fontsize=16:" +
+              "fontcolor=white@0.7:borderw=1:bordercolor=black@0.6"
+            : "";
+        // Concatenate watermark SESUDAMA subtitle dalam filter chain (di atas subtitles).
+        const subtitleFilterWm = subtitleFilter.replace(/\[vout\]$/, watermarkDraw + "[vout]");
+        const singleSubtitleFilterWm = singleSubtitleFilter + watermarkDraw;
 
         // ===== TIMELINE: jika ada sceneFootage, render per-scene (concat) =====
         const hasSceneFootage = Array.isArray(sceneFootage) && sceneFootage.length > 0;
@@ -544,7 +559,7 @@ export async function POST(request: NextRequest) {
           const filterComplex =
             parts.join(";") +
             `;${concatInputs.join("")}concat=n=${sceneInputs.length}:v=1:a=0[base];` +
-            subtitleFilter;
+            subtitleFilterWm;
 
           args = [
             ...sceneInputs.map((s) => ["-stream_loop", "-1", "-i", s.path]).flat(),
@@ -591,7 +606,7 @@ export async function POST(request: NextRequest) {
           const filterComplex =
             parts.join(";") +
             `;${concatInputs.join("")}concat=n=${sceneInputs.length}:v=1:a=0[base];` +
-            subtitleFilter;
+            subtitleFilterWm;
 
           // Input: stream_loop -1 per scene + audio
           args = [
@@ -622,7 +637,7 @@ export async function POST(request: NextRequest) {
             "-stream_loop", "-1",
             "-i", inputVideo,
             "-i", inputAudio,
-            "-vf", `${scalePad},${singleSubtitleFilter}`,
+            "-vf", `${scalePad},${singleSubtitleFilterWm}`,
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-c:a", "aac",
@@ -641,11 +656,16 @@ export async function POST(request: NextRequest) {
         }
 
         // 3b. Jalankan FFmpeg via spawn, stream progress via SSE
+        if (clientGone) {
+          // Abort terjadi DURING fetch/validation fase — belum spawn; skip render.
+          controller.close();
+          return;
+        }
         await new Promise<void>((resolve, reject) => {
-          const proc = spawn(ffmpegPath, args, { windowsHide: true });
+          proc = spawn(ffmpegPath, args, { windowsHide: true });
 
           let fullErr = "";
-          proc.stderr.on("data", (chunk: Buffer) => {
+          proc?.stderr?.on("data", (chunk: Buffer) => {
             const text = chunk.toString();
             fullErr += text;
             // ===== TRACING SEMENTARA — tail stderr FFmpeg =====
@@ -663,6 +683,13 @@ export async function POST(request: NextRequest) {
           });
 
           proc.on("close", (code) => {
+            // Client disconnect — FFmpeg di-kill oleh abort handler; skip error,
+            // flow berhenti (bail dopo promise) dan finally cleanup workDir.
+            if (clientGone) {
+              console.warn(`[Video] FFmpeg close (exit ${code}) setelah client disconnect — skip`);
+              resolve();
+              return;
+            }
             // ===== TRACING SEMENTARA — verifikasi exit code FFmpeg =====
             console.log("[Video] FFmpeg exit code:", code);
             if (code === 0) {
@@ -675,6 +702,12 @@ export async function POST(request: NextRequest) {
             }
           });
         });
+
+        if (clientGone) {
+          // Client disconnect — tidak perlu baca output/upload; finally cleanup workDir.
+          controller.close();
+          return;
+        }
 
         send({ percent: 100 });
 
@@ -739,6 +772,10 @@ export async function POST(request: NextRequest) {
         send({ status: "error", message: error instanceof Error ? error.message : "Internal server error" });
         controller.close();
       } finally {
+        // Remove abort listener agar tidak leak handler.
+        if (typeof request.signal?.removeEventListener === "function") {
+          request.signal.removeEventListener("abort", onAbort);
+        }
         // Bersihkan direktori kerja sementara
         if (workDir) {
           try {

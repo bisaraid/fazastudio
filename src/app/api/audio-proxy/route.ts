@@ -1,34 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * GET /api/audio-proxy?url=<encoded-supabase-url>
+ * GET /api/audio-proxy?url=<encoded-audio-url>
  *
- * Server-side audio proxy untuk browser preview.
- * Browser <audio> gagal memutar Supabase URL langsung karena COEP/CORS.
- * Proxy ini fetch dari Supabase dan meneruskan dengan header yang benar.
+ * Server-side audio proxy untuk browser preview. Mendukung HTTP Range
+ * (penting untuk seeking <audio>) + streaming pass-through.
  *
- * Mendukung HTTP Range request:
- * - Meneruskan header `Range` dari browser ke Supabase
- * - Return 206 jika upstream 206
- * - Meneruskan Content-Range, Accept-Ranges, Content-Length
+ * FIX SESI A (kinerja/memory) — mirror fix video-proxy:
+ * - SEBELUMNYA: `await upstreamRes.arrayBuffer()` → seluruh audio di-download
+ *   penuh ke memory server pada setiap request (byte range / seek).
+ * - SESUDAHNYA: stream `upstreamRes.body` diteruskan LANGSUNG (passthrough)
+ *   tanpa buffer.
  *
- * Validasi URL: hanya izinkan URL dari Supabase storage domain.
- * Jangan log API key atau isi audio.
+ * Kontrak API TIDAK berubah (backward compatible):
+ * - GET /api/audio-proxy?url=... → 206 bila upstream 206, else 200.
+ * - Header diteruskan: Content-Type, Content-Length, Content-Range (206),
+ *   Accept-Ranges, Cache-Control, CORS.
  */
 
+// Audio tersimpan di Supabase Storage (audio_url) — primary.
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 
-/** Validasi URL hanya dari Supabase storage domain */
-function isValidSupabaseUrl(url: string): boolean {
+/** Ambil host dari URL; null jika tidak valid. DIPISAH agar bisa di-test. */
+export function hostOf(raw: string): string | null {
   try {
-    const parsed = new URL(url);
-    if (!SUPABASE_URL) return false;
+    return new URL(raw).host;
+  } catch {
+    return null;
+  }
+}
 
-    const supabaseHost = new URL(SUPABASE_URL).host;
-    return parsed.host === supabaseHost;
+/**
+ * Validasi URL target hanya dari daftar host yang diizinkan.
+ * Pure function agar dapat di-unit-test tanpa env.
+ */
+export function isValidAudioUrl(
+  targetUrl: string,
+  allowedHosts: string[]
+): boolean {
+  if (!targetUrl || allowedHosts.length === 0) return false;
+  try {
+    const parsed = new URL(targetUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    return allowedHosts.includes(parsed.host);
   } catch {
     return false;
   }
+}
+
+/** Host diizinkan dari env (Supabase storage). */
+export function getAllowedAudioHosts(): string[] {
+  return [hostOf(SUPABASE_URL)].filter((h): h is string => !!h);
 }
 
 export async function GET(request: NextRequest) {
@@ -42,16 +64,15 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Validasi URL — cegah open proxy ke arbitrary host
-  if (!isValidSupabaseUrl(targetUrl)) {
+  if (!isValidAudioUrl(targetUrl, getAllowedAudioHosts())) {
     return NextResponse.json(
-      { success: false, error: "URL tidak valid. Hanya URL Supabase storage yang diizinkan." },
+      { success: false, error: "URL tidak valid. Hanya URL storage yang diizinkan." },
       { status: 403 }
     );
   }
 
   try {
-    // Teruskan Range header dari browser (jika ada)
+    // Forward Range header dari browser (penting untuk seeking <audio>).
     const rangeHeader = request.headers.get("range");
     const headers: Record<string, string> = {};
     if (rangeHeader) {
@@ -68,34 +89,30 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const arrayBuffer = await upstreamRes.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    // Bangun response headers (konsisten dengan versi lama).
+    const responseHeaders = new Headers();
+    responseHeaders.set(
+      "Content-Type",
+      upstreamRes.headers.get("content-type") || "audio/mpeg"
+    );
+    responseHeaders.set("Accept-Ranges", "bytes");
+    responseHeaders.set("Cache-Control", "public, max-age=3600");
+    responseHeaders.set("Access-Control-Allow-Origin", "*");
 
-    // Bangun response headers
-    const responseHeaders: Record<string, string> = {
-      "Content-Type": upstreamRes.headers.get("content-type") || "audio/mpeg",
-      "Accept-Ranges": "bytes",
-      "Cache-Control": "public, max-age=3600",
-      "Access-Control-Allow-Origin": "*",
-    };
-
-    // Content-Length dari upstream (jika tersedia)
     const contentLength = upstreamRes.headers.get("content-length");
-    if (contentLength) {
-      responseHeaders["Content-Length"] = contentLength;
-    } else {
-      responseHeaders["Content-Length"] = buffer.length.toString();
+    if (contentLength && upstreamRes.status !== 206) {
+      responseHeaders.set("Content-Length", contentLength);
     }
 
-    // Content-Range jika upstream 206 (partial content)
     if (upstreamRes.status === 206) {
       const contentRange = upstreamRes.headers.get("content-range");
       if (contentRange) {
-        responseHeaders["Content-Range"] = contentRange;
+        responseHeaders.set("Content-Range", contentRange);
       }
     }
 
-    return new NextResponse(buffer, {
+    // STREAMING passthrough — body upstream diteruskan LANGSUNG tanpa buffer.
+    return new Response(upstreamRes.body, {
       status: upstreamRes.status === 206 ? 206 : 200,
       headers: responseHeaders,
     });

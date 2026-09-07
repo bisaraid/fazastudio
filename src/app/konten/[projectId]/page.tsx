@@ -213,6 +213,7 @@ const isRunning = progress.isRunning;
 
   const projectScript = currentProject?.script;
   const projectAudio = currentProject?.audio;
+  const projectSubtitle = currentProject?.subtitle;
   const projectVideo = currentProject?.video;
 
   const handleGenerate = useCallback(async () => {
@@ -552,6 +553,27 @@ const isRunning = progress.isRunning;
                     <Download className="h-4 w-4" /> Download Video
                   </a>
                 </div>
+                {/* Export SRT/VTT (Pro perk — data sudah ada, kini user bisa access) */}
+                {projectSubtitle?.srtContent && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex gap-2">
+                      <a
+                        href={makeDataUrl(projectSubtitle.srtContent, "text/plain")}
+                        download="kapten.srt"
+                        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-4 py-2 text-sm hover:bg-accent"
+                      >
+                        <Download className="h-4 w-4" /> Download SRT
+                      </a>
+                      <a
+                        href={makeDataUrl(projectSubtitle.vttContent || projectSubtitle.srtContent, "text/plain")}
+                        download="kapten.vtt"
+                        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-4 py-2 text-sm hover:bg-accent"
+                      >
+                        <Download className="h-4 w-4" /> Download VTT
+                      </a>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
@@ -741,4 +763,12 @@ function VideoPlayer({ src }: { src: string }) {
       </div>
     </div>
   );
+}
+/** Bangun Data URI untuk download file teks (SRT/VTT) sin server. */
+function makeDataUrl(content: string, mime: string): string {
+  try {
+    return `data:${mime};charset=utf-8,` + encodeURIComponent(content);
+  } catch {
+    return `data:${mime};charset=utf-8,`;
+  }
 }

@@ -71,25 +71,78 @@ const createInitialSteps = () => ({
   export: "pending" as StepStatus,
 });
 
-// Map DB row → Project (ACS format)
-function mapDbRowToProject(row: any): Project {
-  let script: ScriptResult | undefined;
-  if (row.script) {
-    try {
-      script = typeof row.script === "string" ? JSON.parse(row.script) : row.script;
-    } catch {
-      script = undefined;
-    }
+// ============================================================
+// Safe parsing & normalisasi (Sesi 3 fix — anti-crash dashboard)
+// ============================================================
+
+/** Daftar Genre valid (sinkron dengen lib/types.ts) */
+const VALID_GENRES = new Set<string>([
+  "horor", "misteri", "psikologi", "romance", "motivasi",
+  "edukasi", "affiliate", "sejarah", "keuangan", "custom",
+]);
+
+/** Daftar Platform valid (sinkron dengen lib/types.ts) */
+const VALID_PLATFORMS = new Set<string>([
+  "tiktok", "youtube", "reels", "podcast", "shopee",
+]);
+
+/** Parse + validasi shape script JSON. Return undefined jika tidak valid. */
+function safeParseScript(raw: unknown): ScriptResult | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object") return undefined;
+    const obj = parsed as Record<string, unknown>;
+    if (!Array.isArray(obj.scenes)) return undefined;
+    return parsed as ScriptResult;
+
+  } catch {
+    return undefined;
   }
+}
+
+/** Normalisasi genre DB → Genre valid; "" jika invalid. */
+function normalizeGenre(raw: unknown): Genre | "" {
+  const v = typeof raw === "string" ? raw.toLowerCase().trim() : "";
+  return (VALID_GENRES.has(v) ? (v as Genre) : "");
+}
+
+/** Normalisasi platform DB → Platform valid; "" jika invalid. */
+function normalizePlatform(raw: unknown): Platform | "" {
+  const v = typeof raw === "string" ? raw.toLowerCase().trim() : "";
+  return (VALID_PLATFORMS.has(v) ? (v as Platform) : "");
+}
+
+/** Ambil angka aman dari nilai DB (fallback 0). */
+function toFiniteNumber(raw: unknown): number {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Map satu DB row → Project; return NULL untuk row malformed (id hilang /
+ * shape rusak) — pemanggil wajib filter. Tidak pernah throw.	
+ */
+function mapDbRowToProjectSafe(row: any): Project | null {
+  // id wajib — tanpa id, project tidak bisa diidentifikasi/dioperasikan.
+
+  if (!row || typeof row !== "object" || typeof row.id !== "string" || row.id.trim() === "") {
+    console.warn("[projectStore] Row tanpa id valid di-skip dari dashboard");
+    return null;
+  }
+
+  const script = safeParseScript(row.script);
+  const nowIso = new Date().toISOString();
+  const title = typeof row.title === "string" ? row.title : "";
 
   return {
     id: row.id,
-    title: row.title || "",
-    genre: (row.genre_slug || "") as any,
-    topic: row.title || "",
+    title,
+    genre: (normalizeGenre(row.genre_slug) as Genre),
+    topic: title,
     tone: "kasual",
-    targetDuration: row.target_duration ?? 0,
-    platform: (row.platform || "") as any,
+    targetDuration: toFiniteNumber(row.target_duration),
+    platform: (normalizePlatform(row.platform) as Platform),
     mode: "step-by-step",
     // Status dihitung (derive) dari data konten yang nyata — bukan dari kolom
     // "status" yang mudah basi/lupa di-update. Ini membuat dashboard selalu
@@ -102,7 +155,7 @@ function mapDbRowToProject(row: any): Project {
     status: (() => {
       const derived =
         row.video_url ? "completed"
-        : row.script || row.audio_url ? "processing"
+        : script || row.audio_url ? "processing"
         : "draft";
       if (row.status === "completed" && derived !== "draft") return "completed";
       return derived as Project["status"];
@@ -111,14 +164,14 @@ function mapDbRowToProject(row: any): Project {
     // Derive step status dari data DB — jangan reset semua ke "pending".
     // Jika data sudah ada di DB, step dianggap "done".
     steps: {
-      script: row.script ? "done" : "pending",
+      script: script ? "done" : "pending",
       audio: row.audio_url ? "done" : "pending",
       subtitle: row.subtitle_url ? "done" : "pending",
       video: row.video_url ? "done" : "pending",
       export: "pending",
     },
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: typeof row.created_at === "string" ? row.created_at : nowIso,
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : nowIso,
     script,
     audio: row.audio_url
       ? {
@@ -128,7 +181,7 @@ function mapDbRowToProject(row: any): Project {
           voiceName: providerLabel(row.audio_provider),
           provider: (row.audio_provider || "google") as AudioResult["provider"],
           language: "id-ID",
-          speed: row.audio_speed ?? 1.0,
+          speed: toFiniteNumber(row.audio_speed) || 1.0,
           emotion: row.audio_emotion || "netral",
         }
       : undefined,
@@ -171,7 +224,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
-        const projects = json.data.map(mapDbRowToProject);
+        const projects = json.data
+          .map(mapDbRowToProjectSafe)
+          .filter((p: Project | null): p is Project => p !== null);
         set({ projects });
       }
     } catch (error) {

@@ -1,30 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * GET /api/video-proxy?url=<encoded-supabase-url>
+ * GET /api/video-proxy?url=<encoded-video-url>
  *
- * Server-side video proxy untuk browser PREVIEW, pola sama seperti audio-proxy.
- * Browser <video> terkadang gagal memutar URL Supabase Storage langsung
- * karena COEP / CORS / range header yang tidak pas.
+ * Server-side video proxy untuk browser PREVIEW. Mendukung HTTP Range
+ * (penting untuk seeking <video>) + streaming pass-through.
  *
- * Mendukung HTTP Range request (penting untuk seeking <video>):
- * - Meneruskan header `Range` dari browser ke Supabase
- * - Return 206 jika upstream 206
- * - Meneruskan Content-Range, Accept-Ranges, Content-Length
+ * FIX SESI 6 (kinerja/memory):
+ * - SEBELUMNYA: `await upstreamRes.arrayBuffer()` → seluruh file video
+ *   di-download penuh ke memory server PADA SETIAP request. Untuk seek,
+ *   browser minta `Range: bytes=0-1` hanya untuk baca durasi, tapi proxy
+ *   tetap menarik file LENGKAP → memory bomb & latency tinggi.
+ * - SESUDAHNYA: stream `upstreamRes.body` diteruskan LANGSUNG (passthrough)
+ *   tanpa buffer. Range di-forward ke upstream (yang mengembalikan 206 +
+ *   partial stream), lalu di-relay apa adanya.
  *
- * Validasi URL: hanya izinkan URL dari Supabase storage domain.
- * Jangan log API key atau isi video.
+ * Kontrak API TIDAK berubah:
+ * - GET /api/video-proxy?url=... → 206 (partial) jika upstream 206, else 200.
+ * - Header diteruskan: Content-Type, Content-Length, Content-Range (206),
+ *   Accept-Ranges, Cache-Control, CORS.
  */
 
+// Video tersimpan di Cloudflare R2 (primary) — lihat lib/r2.ts.
+// Backward-compat juga mendukung Supabase Storage.
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-
-// Video kini disimpan di Cloudflare R2 (bukan Supabase Storage) — lihat lib/r2.ts.
-// Proxy preview harus meneruskan stream R2 juga, dengan Range support, agar
-// <video> bisa memuat dan durasi muncul. Whitelist dua domain: Supabase + R2.
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "";
 
-/** Ambil host dari URL, return null jika tidak valid */
-function hostOf(raw: string): string | null {
+/** Ambil host dari URL; null jika tidak valid. DIPISAH agar bisa di-test. */
+export function hostOf(raw: string): string | null {
   try {
     return new URL(raw).host;
   } catch {
@@ -32,18 +35,29 @@ function hostOf(raw: string): string | null {
   }
 }
 
-/** Validasi URL hanya dari domain yang diizinkan (Supabase storage + Cloudflare R2 public) */
-function isValidSupabaseUrl(url: string): boolean {
+/**
+ * Validasi URL target hanya dari daftar host yang diizinkan.
+ * Pure function agar dapat di-unit-test tanpa env.
+ */
+export function isValidVideoUrl(
+  targetUrl: string,
+  allowedHosts: string[]
+): boolean {
+  if (!targetUrl || allowedHosts.length === 0) return false;
   try {
-    const parsed = new URL(url);
-    const allowedHosts = [hostOf(SUPABASE_URL), hostOf(R2_PUBLIC_URL)].filter(
-      (h): h is string => !!h
-    );
-    if (allowedHosts.length === 0) return false;
+    const parsed = new URL(targetUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
     return allowedHosts.includes(parsed.host);
   } catch {
     return false;
   }
+}
+
+/** Host yang diizinkan dari env (Supabase + R2 public). */
+export function getAllowedVideoHosts(): string[] {
+  return [hostOf(SUPABASE_URL), hostOf(R2_PUBLIC_URL)].filter(
+    (h): h is string => !!h
+  );
 }
 
 export async function GET(request: NextRequest) {
@@ -57,16 +71,15 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Validasi URL — cegah open proxy ke arbitrary host
-  if (!isValidSupabaseUrl(targetUrl)) {
+  if (!isValidVideoUrl(targetUrl, getAllowedVideoHosts())) {
     return NextResponse.json(
-      { success: false, error: "URL tidak valid. Hanya URL Supabase storage yang diizinkan." },
+      { success: false, error: "URL tidak valid. Hanya URL storage yang diizinkan." },
       { status: 403 }
     );
   }
 
   try {
-    // Teruskan Range header dari browser (jika ada) — penting untuk seeking video
+    // Forward Range header dari browser (penting untuk seeking <video>).
     const rangeHeader = request.headers.get("range");
     const headers: Record<string, string> = {};
     if (rangeHeader) {
@@ -83,34 +96,33 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const arrayBuffer = await upstreamRes.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    // Bangun response headers (konsisten dengan versi lama).
+    const responseHeaders = new Headers();
+    responseHeaders.set(
+      "Content-Type",
+      upstreamRes.headers.get("content-type") || "video/mp4"
+    );
+    responseHeaders.set("Accept-Ranges", "bytes");
+    responseHeaders.set("Cache-Control", "public, max-age=3600");
+    responseHeaders.set("Access-Control-Allow-Origin", "*");
 
-    // Bangun response headers
-    const responseHeaders: Record<string, string> = {
-      "Content-Type": upstreamRes.headers.get("content-type") || "video/mp4",
-      "Accept-Ranges": "bytes",
-      "Cache-Control": "public, max-age=3600",
-      "Access-Control-Allow-Origin": "*",
-    };
-
-    // Content-Length dari upstream (jika tersedia)
+    // Content-Length dari upstream (jika tersedia).
     const contentLength = upstreamRes.headers.get("content-length");
-    if (contentLength) {
-      responseHeaders["Content-Length"] = contentLength;
-    } else {
-      responseHeaders["Content-Length"] = buffer.length.toString();
+    if (contentLength && upstreamRes.status !== 206) {
+      responseHeaders.set("Content-Length", contentLength);
     }
 
-    // Content-Range jika upstream 206 (partial content)
+    // Content-Range jika upstream 206 (partial content).
     if (upstreamRes.status === 206) {
       const contentRange = upstreamRes.headers.get("content-range");
       if (contentRange) {
-        responseHeaders["Content-Range"] = contentRange;
+        responseHeaders.set("Content-Range", contentRange);
       }
     }
 
-    return new NextResponse(buffer, {
+    // STREAMING passthrough — body upstream diteruskan LANGSUNG tanpa buffer.
+    // Perbaikan utama sesi ini: tidak men-download seluruh video ke memory.
+    return new Response(upstreamRes.body, {
       status: upstreamRes.status === 206 ? 206 : 200,
       headers: responseHeaders,
     });

@@ -47,37 +47,94 @@ export interface RateLimitResult {
   resetInSeconds: number;
 }
 
-/**
- * Fallback in-memory store jika Redis tidak tersedia
- */
-const fallbackStore = new Map<string, { timestamps: number[] }>();
+// ============================================================
+// Fallback in-memory store — DIPAKAI HANYA saat Redis tidak tersedia
+// ============================================================
 
-// Cleanup expired fallback entries setiap 60 detik
-setInterval(() => {
+// FIX SESI 2:
+// - `setInterval` module-level DIHAPUS — sebelumnya berjalan selamanya
+//   (di serverless: mencegah tidur/leak; di Redis available: sia-sia)
+// - Cleanup inline per-entry memakai `entry.windowMs` (bukan konstanta
+//   60_000) — ini sekaligus memperbaiki bug: key window 24 jam
+//   (trial anonim) tidak lagi di-prune oleh cleanup global 60s → batas
+//   keamanan anon 3 script/hari tidak tembus lagi.
+// - Prune opportunistic saat ukuran map melewati ambang (jarang, murah).
+
+interface FallbackEntry {
+  timestamps: number[];
+  /** Jendela waktu (ms) milik key ini — dipakai untuk cleanup inline. */
+  windowMs: number;
+}
+
+const fallbackStore = new Map<string, FallbackEntry>();
+
+/** Ambang ukuran map — saat terlampaui, sapuan global dijalankan sekali (opportunistic. */
+const FALLBACK_PRUNE_THRESHOLD = 5_000;
+
+/**
+ * Sapuan global fallback store: hapus timestamp yang lewat jendela masing-masing
+ * key, lalu hapus key yang menjadi kosong.
+ * Return jumlah key tersisa (untuk observabilitas/test).
+ * Idempoten — aman dipanggil kapan saja.
+ */
+export function pruneFallbackStore(): number {
   const now = Date.now();
   fallbackStore.forEach((entry, key) => {
-    entry.timestamps = entry.timestamps.filter((ts: number) => now - ts < 60_000);
+    entry.timestamps = entry.timestamps.filter((ts: number) => now - ts < entry.windowMs);
     if (entry.timestamps.length === 0) {
       fallbackStore.delete(key);
     }
   });
-}, 60_000);
+  return fallbackStore.size;
+}
+
+/** @returns jumlah key tersimpan (untuk observabilitas & test — pastikan tidak membengkak). */
+export function getFallbackStoreSize(): number {
+  return fallbackStore.size;
+}
+
+/** Bersihkan seluruh fallback store (untuk test / observabilitas / reset manual. */
+export function clearFallbackStore(): void {
+  fallbackStore.clear();
+}
 
 function fallbackCheck(key: string, maxRequests: number, windowMs: number): RateLimitResult {
   const now = Date.now();
   let entry = fallbackStore.get(key);
 
   if (!entry) {
-    entry = { timestamps: [] };
+    entry = { timestamps: [], windowMs };
     fallbackStore.set(key, entry);
+  } else if (entry.windowMs !== windowMs) {
+
+
+    entry.timestamps = [];
+    entry.windowMs = windowMs;
+
   }
 
-  entry.timestamps = entry.timestamps.filter(ts => now - ts < windowMs);
+  entry.timestamps = entry.timestamps.filter((ts) => now - ts < entry.windowMs);
   const currentCount = entry.timestamps.length;
   const allowed = currentCount < maxRequests;
 
   if (allowed) {
     entry.timestamps.push(now);
+  } else if (entry.timestamps.length === 0) {
+
+
+
+    fallbackStore.delete(key);
+
+  }
+
+
+  if (fallbackStore.size >= FALLBACK_PRUNE_THRESHOLD) {
+
+
+
+    const prunedSize = pruneFallbackStore();
+    console.warn(`[RateLimit] Fallback store capai ambang — prune → ${prunedSize} keys`);
+
   }
 
   const oldestTimestamp = entry.timestamps.length > 0 ? entry.timestamps[0] : now;
