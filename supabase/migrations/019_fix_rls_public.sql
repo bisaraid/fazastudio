@@ -27,6 +27,7 @@
 -- ============================================================
 drop policy if exists "Service role full access" on trend_ideas;
 drop policy if exists "Service role full access script_generations" on script_generations;
+drop policy if exists "Public read script_generations" on script_generations;
 
 -- ============================================================
 -- 2. RECREATE dengan klausa `to service_role`
