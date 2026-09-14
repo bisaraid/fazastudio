@@ -13,6 +13,11 @@ export interface PipelineCardProps {
   running?: boolean;
   progress?: number;
   statusMessage?: string;
+  /** Tampilkan bar % persen (video via SSE). Default false. */
+  showPercent?: boolean;
+  /** Langkah "thinking" yang muncul satu per satu saat running. */
+  thinkSteps?: string[];
+  thinkActiveIndex?: number;
   children?: ReactNode;
 }
 
@@ -29,6 +34,9 @@ export function PipelineCard({
   running,
   progress,
   statusMessage,
+  showPercent,
+  thinkSteps,
+  thinkActiveIndex,
   children,
 }: PipelineCardProps) {
   const [open, setOpen] = useState(false);
@@ -45,7 +53,7 @@ export function PipelineCard({
 
   if (mode === "idle") {
     return (
-      <Card>
+      <Card key={mode} className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
         <CardContent className="p-4">
           {header(
             <Lock className="h-4 w-4 text-muted-foreground" />,
@@ -58,7 +66,7 @@ export function PipelineCard({
 
   if (mode === "active") {
     return (
-      <Card>
+      <Card key={mode} className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
         <CardContent className="p-5 space-y-3">
           {header(
             <CheckCircle2 className="h-4 w-4 text-emerald-500" />,
@@ -71,7 +79,31 @@ export function PipelineCard({
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
             )
           )}
-          {running && (
+          {/* Thinking steps — script/audio/subtitle (muncul satu per satu) */}
+          {running && thinkSteps && thinkSteps.length > 0 && (
+            <ul className="space-y-1.5">
+              {thinkSteps.map((s, i) => {
+                const shown = i <= (thinkActiveIndex ?? 0);
+                return (
+                  <li
+                    key={s}
+                    className={`flex items-center gap-2 text-xs transition-all duration-300 ${
+                      shown ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
+                    }`}
+                  >
+                    {shown ? (
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                    ) : (
+                      <span className="h-3.5 w-3.5 rounded-full border border-border" />
+                    )}
+                    <span className={shown ? "text-foreground" : "text-muted-foreground"}>{s}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {/* Progress % — hanya untuk video (data SSE riil) */}
+          {running && showPercent && (
             <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full rounded-full bg-primary transition-[width] duration-300"
@@ -87,7 +119,7 @@ export function PipelineCard({
 
   // done — collapsed by default, expandable
   return (
-    <Card>
+    <Card key={mode} className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
       <CardContent className="p-4 space-y-2">
         <button
           type="button"

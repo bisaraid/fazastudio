@@ -13,6 +13,9 @@ export interface VideoCardProps {
   running?: boolean;
   progress?: number;
   statusMessage?: string;
+  showPercent?: boolean;
+  thinkSteps?: string[];
+  thinkActiveIndex?: number;
 }
 
 export function VideoCard(p: VideoCardProps) {
@@ -25,6 +28,9 @@ export function VideoCard(p: VideoCardProps) {
       running={p.running}
       progress={p.progress}
       statusMessage={p.statusMessage}
+      showPercent={p.showPercent}
+      thinkSteps={p.thinkSteps}
+      thinkActiveIndex={p.thinkActiveIndex}
     >
       {p.video && <VideoPlayer src={p.video.url} />}
       {p.video && (

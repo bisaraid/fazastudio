@@ -46,10 +46,14 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
 
 export interface PipelineProgress {
   currentStep: PipelineStep;
-  progress: number; // 0-100
+  progress: number; // 0-100 — hanya bermakna untuk video (data SSE riil)
   statusMessage: string;
   isRunning: boolean;
   error: string | null;
+  /** Langkah "thinking" step aktif (script/audio/subtitle) — muncul satu per satu. */
+  thinkSteps?: string[];
+  /** Indeks langkah thinking yang sudah muncul (0-based). */
+  thinkActiveIndex?: number;
 }
 
 export interface AudioOptions {
@@ -78,69 +82,38 @@ const STEP_MESSAGES: Record<PipelineStep, string> = {
   export: "Menyiapkan hasil akhir...",
 };
 
-/**
- * Tahap pesan per progress (%) — agar user selalu tahu apa yang sistem kerjakan.
- * Pesan dipilih berdasarkan persentase terakhir yang dilewati (monotonik).
- */
-const STEP_STAGES: Record<PipelineStep, { at: number; msg: string }[]> = {
+/** Urutan langkah "thinking" per step (script/audio/subtitle) — muncul satu per satu.
+ *  Video memakai % riil via SSE, jadi kosong. */
+const STEP_THINK_STEPS: Record<PipelineStep, string[]> = {
   script: [
-    { at: 3, msg: "Mempersiapkan topik..." },
-    { at: 18, msg: "Menentukan hook & struktur naskah..." },
-    { at: 40, msg: "Menulis pembuka (hook)..." },
-    { at: 62, msg: "Mengembangkan narasi & scene..." },
-    { at: 85, msg: "Menyempurnakan penutup & CTA..." },
-    { at: 96, msg: "Menyimpan naskah..." },
+    "Menganalisis topik",
+    "Menyusun struktur naskah",
+    "Menulis pembuka (hook)",
+    "Mengembangkan narasi & scene",
+    "Menyempurnakan penutup & CTA",
+    "Menyimpan naskah",
   ],
   audio: [
-    { at: 5, msg: "Menyiapkan teks narasi..." },
-    { at: 25, msg: "Menghasilkan suara (TTS)..." },
-    { at: 55, msg: "Memproses & mengoptimalkan audio..." },
-    { at: 85, msg: "Mengunggah audio ke cloud..." },
-    { at: 96, msg: "Menyelesaikan audio..." },
+    "Menyiapkan suara",
+    "Menghasilkan narasi (TTS)",
+    "Memproses audio",
+    "Mengunggah audio ke cloud",
+    "Menyelesaikan audio",
   ],
   subtitle: [
-    { at: 5, msg: "Memuat audio untuk transkripsi..." },
-    { at: 20, msg: "Mengirim ke transkripsi (Whisper)..." },
-    { at: 60, msg: "Menyinkronkan timing subtitle..." },
-    { at: 85, msg: "Menyusun SRT/VTT..." },
-    { at: 96, msg: "Menyimpan subtitle..." },
+    "Memuat audio",
+    "Membuat subtitle",
+    "Menyinkronkan timing",
+    "Menyimpan subtitle",
   ],
-  video: [
-    { at: 5, msg: "Menyiapkan footage & audio..." },
-    { at: 20, msg: "Merender video (FFmpeg)..." },
-    { at: 60, msg: "Menyusun caption/subtitle..." },
-    { at: 85, msg: "Mengompresi & finalisasi..." },
-    { at: 96, msg: "Mengunggah video ke cloud..." },
-  ],
-  export: [{ at: 0, msg: "Menyiapkan hasil akhir..." }],
+  video: [],   // progress % riil via SSE — tanpa thinking steps
+  export: [],
 };
 
-/** Pilih pesan tahap berdasarkan progress terakhir yang dilewati. */
-function stageMessage(step: PipelineStep, progress: number): string {
-  const stages = STEP_STAGES[step] || [];
-  let msg = STEP_MESSAGES[step];
-  for (const s of stages) {
-    if (progress >= s.at) msg = s.msg;
-  }
-  return msg;
-}
+/** Interval tiap langkah thinking muncul (ms). */
+const THINK_TIMING_MS = 750;
 
-/**
- * Update progress secara MONOTONIK (hanya naik, tidak pernah turun).
- * Dipakai oleh interval & SSE agar angka tidak "maju-mundur".
- */
-function bumpProgress(
-  prev: PipelineProgress,
-  next: number,
-  step?: PipelineStep
-): PipelineProgress {
-  const target = Math.min(100, Math.max(prev.progress, next));
-  return {
-    ...prev,
-    progress: target,
-    statusMessage: step ? stageMessage(step, target) : prev.statusMessage,
-  };
-}
+// (Fake progress interval dihapus — persen hanya ditampilkan untuk video via SSE.)
 
 /**
  * Mapping Genre ACS → CategoryId engine (1:1 karena sudah disamakan)
@@ -191,20 +164,37 @@ export function usePipeline() {
         error: null,
       }));
 
+      const isVideoStep = step === "video";
+      const thinkList = STEP_THINK_STEPS[step] || [];
       let progressInterval: ReturnType<typeof setInterval> | undefined;
+      let thinkTimer: ReturnType<typeof setInterval> | undefined;
 
       try {
-        // Progress MONOTONIK dengan pesan tahap — hanya naik, tidak pernah turun.
-        // Untuk VIDEO, interval TIDAK memakai angka acak (sumber utamanya SSE);
-        // cukup nudge kecil agar tidak terlihat "beku" saat menunggu frame pertama.
-        // Untuk script/audio/subtitle: interval naik pelan sampai 92% (API tak kirim %).
-        const isVideoStep = step === "video";
-        const cap = isVideoStep ? 40 : 92;
-        progressInterval = setInterval(() => {
-          setProgress((prev) =>
-            bumpProgress(prev, Math.min(prev.progress + (isVideoStep ? 1 : 2.5), cap), step)
-          );
-        }, isVideoStep ? 450 : 260);
+        if (!isVideoStep) {
+          // TANPA angka % palsu — tampilkan langkah "thinking" satu per satu (CSS).
+          setProgress((prev) => ({
+            ...prev,
+            thinkSteps: thinkList,
+            thinkActiveIndex: 0,
+            statusMessage: thinkList[0] || prev.statusMessage,
+          }));
+          thinkTimer = setInterval(() => {
+            setProgress((prev) => {
+              const next = Math.min((prev.thinkActiveIndex ?? 0) + 1, thinkList.length - 1);
+              return {
+                ...prev,
+                thinkActiveIndex: next,
+                statusMessage: thinkList[next] || prev.statusMessage,
+              };
+            });
+          }, THINK_TIMING_MS);
+        } else {
+          // Video: hanya nudge kecil agar tidak terlihat "beku" sampai frame SSE pertama.
+          const cap = 15;
+          progressInterval = setInterval(() => {
+            setProgress((prev) => ({ ...prev, progress: Math.min(prev.progress + 1, cap) }));
+          }, 600);
+        }
 
         switch (step) {
           case "script": {
@@ -511,7 +501,10 @@ export function usePipeline() {
                 console.log("[SSE progress]", msg);
 
                 if (typeof msg.percent === "number") {
-                  setProgress((prev) => bumpProgress(prev, msg.percent, step));
+                  setProgress((prev) => {
+                    const next = Math.max(prev.progress, msg.percent);
+                    return { ...prev, progress: next, statusMessage: `Merender video... ${Math.round(next)}%` };
+                  });
                 } else if (msg.status === "processing") {
                   setProgress((prev) => ({
                     ...prev,
@@ -559,6 +552,8 @@ export function usePipeline() {
               format: "mp4",
               resolution: "1080x1920", // worker update projects table; resolution detail dari SSE done
             } as VideoResult);
+            // Tandai project completed saat video selesai — bukan hanya saat export.
+            store.updateProjectStatus("completed");
             break;
           }
           case "export": {
@@ -594,8 +589,9 @@ export function usePipeline() {
         }));
         return false;
       } finally {
-        // Selalu hentikan interval progress setelah API selesai (sukses/gagal).
+        // Hentikan semua timer setelah API selesai (sukses/gagal).
         if (progressInterval) clearInterval(progressInterval);
+        if (thinkTimer) clearInterval(thinkTimer);
       }
     },
     [store]
@@ -720,6 +716,8 @@ export function usePipeline() {
       statusMessage: "",
       isRunning: false,
       error: null,
+      thinkSteps: [],
+      thinkActiveIndex: 0,
     });
   }, []);
 

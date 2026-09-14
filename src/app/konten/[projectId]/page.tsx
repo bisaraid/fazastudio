@@ -331,9 +331,11 @@ export default function ProjectEditorPage() {
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
               <span>{progress.statusMessage || "Mengerjakan..."}</span>
             </div>
-            <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${progress.progress}%` }} />
-            </div>
+            {progress.currentStep === "video" && (
+              <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${progress.progress}%` }} />
+              </div>
+            )}
           </div>
         )}
 
@@ -366,6 +368,9 @@ export default function ProjectEditorPage() {
               running={progress.isRunning && progress.currentStep === "script"}
               progress={progress.progress}
               statusMessage={progress.statusMessage}
+              showPercent={false}
+              thinkSteps={progress.thinkSteps}
+              thinkActiveIndex={progress.thinkActiveIndex}
             />
           </div>
 
@@ -379,6 +384,9 @@ export default function ProjectEditorPage() {
               running={progress.isRunning && progress.currentStep === "audio"}
               progress={progress.progress}
               statusMessage={progress.statusMessage}
+              showPercent={false}
+              thinkSteps={progress.thinkSteps}
+              thinkActiveIndex={progress.thinkActiveIndex}
             />
           </div>
 
@@ -392,6 +400,9 @@ export default function ProjectEditorPage() {
               running={progress.isRunning && progress.currentStep === "video"}
               progress={progress.progress}
               statusMessage={progress.statusMessage}
+              showPercent
+              thinkSteps={progress.thinkSteps}
+              thinkActiveIndex={progress.thinkActiveIndex}
             />
           </div>
         </div>

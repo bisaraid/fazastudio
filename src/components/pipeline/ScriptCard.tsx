@@ -27,6 +27,9 @@ export interface ScriptCardProps {
   running?: boolean;
   progress?: number;
   statusMessage?: string;
+  showPercent?: boolean;
+  thinkSteps?: string[];
+  thinkActiveIndex?: number;
 }
 
 export function ScriptCard(p: ScriptCardProps) {
@@ -127,6 +130,9 @@ export function ScriptCard(p: ScriptCardProps) {
       running={p.running}
       progress={p.progress}
       statusMessage={p.statusMessage}
+      showPercent={p.showPercent}
+      thinkSteps={p.thinkSteps}
+      thinkActiveIndex={p.thinkActiveIndex}
     >
       {p.script && (
         <div className="max-h-72 overflow-y-auto rounded-lg bg-muted/40 p-4 text-sm leading-relaxed whitespace-pre-wrap">

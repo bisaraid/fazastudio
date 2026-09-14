@@ -14,6 +14,9 @@ export interface AudioCardProps {
   running?: boolean;
   progress?: number;
   statusMessage?: string;
+  showPercent?: boolean;
+  thinkSteps?: string[];
+  thinkActiveIndex?: number;
 }
 
 export function AudioCard(p: AudioCardProps) {
@@ -26,6 +29,9 @@ export function AudioCard(p: AudioCardProps) {
       running={p.running}
       progress={p.progress}
       statusMessage={p.statusMessage}
+      showPercent={p.showPercent}
+      thinkSteps={p.thinkSteps}
+      thinkActiveIndex={p.thinkActiveIndex}
     >
       {p.audio && <AudioPlayer src={p.audio.url} />}
       {p.audio && (
