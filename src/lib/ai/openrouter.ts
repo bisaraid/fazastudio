@@ -43,7 +43,7 @@ export async function openrouterCompletion(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
-      "X-Title": "AutoContent Studio",
+      "X-Title": "Faza Studio",
     },
     body: JSON.stringify({
       model: params.model,

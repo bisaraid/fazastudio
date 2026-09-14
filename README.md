@@ -1,4 +1,4 @@
-# AutoContent Studio (Faza Studio)
+# Faza Studio
 
 Sistem pembuatan konten video otomatis: script → audio → subtitle → video.
 

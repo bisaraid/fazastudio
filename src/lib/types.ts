@@ -1,5 +1,5 @@
 // ============================================================
-// AutoContent Studio — Type Definitions
+// Faza Studio — Type Definitions
 // ============================================================
 
 export type PipelineMode = "step-by-step" | "full-auto";
