@@ -243,20 +243,6 @@ export interface GenerateScriptResponse {
   error?: string;
 }
 
-export interface GenerateAudioRequest {
-  script: ScriptResult;
-  voiceName: string;
-  language: string;
-  speed: number;
-  emotion: VoiceEmotion;
-}
-
-export interface GenerateAudioResponse {
-  success: boolean;
-  data?: AudioResult;
-  error?: string;
-}
-
 export interface GenerateSubtitleRequest {
   audio: AudioResult;
   script: ScriptResult;
@@ -266,22 +252,6 @@ export interface GenerateSubtitleRequest {
 export interface GenerateSubtitleResponse {
   success: boolean;
   data?: SubtitleResult;
-  error?: string;
-}
-
-export interface GenerateVideoRequest {
-  audio: AudioResult;
-  subtitle: SubtitleResult;
-  scenes: Scene[];
-  visualStyle: VisualStyle;
-  genre: Genre;
-  /** URL footage yang dipilih (derived dari footage state). Opsional — fallback ke recommendation/random. */
-  backgroundUrl?: string;
-}
-
-export interface GenerateVideoResponse {
-  success: boolean;
-  data?: VideoResult;
   error?: string;
 }
 
