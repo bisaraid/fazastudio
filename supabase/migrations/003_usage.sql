@@ -1,4 +1,4 @@
--- ViraLoop Database Schema — Migration 003 (ACS)
+-- Faza Studio Database Schema — Migration 003 (ACS)
 -- Tabel user_usage untuk menyimpan credit/plan per identity per periode (bulan).
 -- 
 -- Pola: satu baris per (identity_key, period). period = bulan (YYYY-MM).

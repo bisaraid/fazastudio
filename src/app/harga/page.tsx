@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PricingPlans } from "@/components/pricing-plans";
+import { PricingPlansWithUsage } from "@/components/pricing-plans-with-usage";
 import { Button } from "@/components/ui/button";
 import { Sparkles } from "lucide-react";
 
@@ -32,7 +32,7 @@ export default function HargaPage() {
           </p>
         </div>
 
-        <PricingPlans />
+        <PricingPlansWithUsage />
 
         <p className="mt-10 text-center text-sm text-muted-foreground">
           Ada pertanyaan?{" "}

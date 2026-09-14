@@ -29,18 +29,43 @@ export async function claimDeviceDataToUser(userId: string, identityKey?: string
     console.warn("[claim] projects error:", pErr.message);
   }
 
-  // 2) Klaim user_usage (batasi ke bulan berjalan)
-  const { error: uErr } = await service
-    .from("user_usage")
-    .update({ user_id: userId, updated_at: new Date().toISOString() })
-    .eq("identity_key", prefixKey)
-    .is("user_id", null);
-
-  if (uErr) {
-    console.warn("[claim] usage error:", uErr.message);
+  // 2) Klaim user_usage — memindahkan PLAN + KREDIT TER-SISA ke akun secara
+  //    atomic via RPC `claim_usage_to_user` (migration 018):
+  //    - Belum ada baris akun per (user_id, period) → re-key (plan&kredit ikut).
+  //    - Baris akun sudah ada → merge: used = sum (cap total), total = max,
+  //      plan = prioritas tertua (pro > starter > free); baris anon dihapus.
+  //    Idempoten & aman para multi-device.
+  let usageOk = true;
+  try {
+    const { error: claimUsageErr } = await service.rpc("claim_usage_to_user", {
+      p_user_id: userId,
+      p_identity_key: prefixKey,
+    });
+    if (claimUsageErr) {
+      console.warn("[claim] claim_usage_to_user error:", claimUsageErr.message);
+      usageOk = false;
+    }
+  } catch (e) {
+    console.warn("[claim] claim_usage_to_user throw:", e instanceof Error ? e.message : e);
+    usageOk = false;
   }
 
-  return { claimedProjects: !pErr, claimedUsage: !uErr };
+  // Fallback (migration 018 belum deploy): re-key user_id saja — plan & baris
+  // tetap ikut baris (semua kredit ter-sisa di kolom baris sendiri).
+  if (!usageOk) {
+    const { error: uErr } = await service
+      .from("user_usage")
+      .update({ user_id: userId, updated_at: new Date().toISOString() })
+      .eq("identity_key", prefixKey)
+      .is("user_id", null);
+
+    if (uErr) {
+      console.warn("[claim] usage fallback error:", uErr.message);
+    }
+    usageOk = !uErr;
+  }
+
+  return { claimedProjects: !pErr, claimedUsage: usageOk };
 }
 
 /**

@@ -1,4 +1,4 @@
--- ViraLoop Database Schema — Migration 008 (ACS)
+-- Faza Studio Database Schema — Migration 008 (ACS)
 -- Kolom user_id pada projects & user_usage untuk mengklaim data anon -> akun.
 --
 -- Alur konversi: user generate anonim (identity_key = 'anon:<device_id>').

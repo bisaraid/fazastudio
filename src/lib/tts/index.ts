@@ -1,7 +1,7 @@
 /**
  * Text-to-Speech — ACS
  *
- * Adopsi penuh model viralop: provider functions menerima `scenes` + `settings`
+ * Model pipeline Faza Studio: provider functions menerima `scenes` + `settings`
  * dan mengembalikan `ArrayBuffer` audio (bukan URL/JSON). Route akan mengembalikan
  * binary audio/mpeg langsung ke client.
  *
@@ -16,7 +16,7 @@ import { loadKeys, executeWithRotation } from "./key-rotator";
 export type TTSProvider = "google" | "elevenlabs" | "cartesia";
 
 // ============================================================
-// TYPES (mirror viralop)
+// TYPES
 // ============================================================
 
 export interface CartesiaSettings {
@@ -97,7 +97,7 @@ export function previewText(text: string, wordLimit: number = 7): string {
 }
 
 // ============================================================
-// CARTESIA (multi-key rotation) — mirror viralop
+// CARTESIA (multi-key rotation)
 // ============================================================
 
 // Named voices yang bisa dipilih di UI — berlaku untuk semua API key
@@ -162,7 +162,7 @@ export async function generateCartesiaSpeech(scenes: TTSScene[], settings: Carte
 }
 
 // ============================================================
-// ELEVENLABS (multi-key rotation) — mirror viralop
+// ELEVENLABS (multi-key rotation)
 // ============================================================
 
 export async function generateElevenLabsSpeech(scenes: TTSScene[], settings: ElevenLabsSettings): Promise<ArrayBuffer> {
@@ -206,7 +206,7 @@ export async function generateElevenLabsSpeech(scenes: TTSScene[], settings: Ele
 }
 
 // ============================================================
-// GOOGLE TTS — mirror viralop (Google Cloud resmi + node-gtts fallback)
+// GOOGLE TTS (Google Cloud resmi + node-gtts fallback)
 // ============================================================
 
 const GOOGLE_TTS_API_BASE = "https://texttospeech.googleapis.com/v1";

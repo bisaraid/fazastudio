@@ -1,17 +1,19 @@
 /**
- * API Route: Generate Script — ACS ViraLoop-Style
+ * API Route: Generate Script — ACS-Style
  *
- * Menggunakan engine multi-segment parallel dari ViraLoop dengan:
+ * Menggunakan engine multi-segment parallel Faza Studio dengan:
  * - Auth (API key + same-origin)
  * - Rate limiting (2 layer)
  * - Supabase logging
  */
 import { NextRequest, NextResponse } from "next/server";
+import { requireProjectOwnership } from "@/lib/project-ownership";
 import { generateScriptWithAI } from "@/lib/script-generator";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { validateApiKey } from "@/lib/api-auth";
-import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { decrementCredit } from "@/lib/usage";
+import { checkRateLimit, getClientIp, buildBurstKey } from "@/lib/rate-limit";
+import { RATE_LIMIT_LIMITS, DAILY_WINDOW_MS } from "@/lib/rate-limit-config";
+import { decrementCredit, decrementCreditForUser } from "@/lib/usage";
 import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 
@@ -76,18 +78,42 @@ export async function POST(request: NextRequest) {
     const identity = getServerIdentity(request);
     const identityKey = identity.identityKey;
 
-    // ===== CREDIT / TRIAL CHECK (Fase 2) =====
-    // - User LOGIN  → decrement 1 kredit FREE (seperti sebelumnya).
-    // - User ANONIM → TIDAK decrement kredit free; cukup di-rate-limit per hari
-    //   (trial anonim gratis untuk konversi — 5 kredit menunggu sampai daftar).
+    // ===== CREDIT / TRIAL CHECK (REVISI: metering universal) =====
+    // - User LOGIN  → decrement 1 kredit, metering terikat ke AKUN (user_id).
+    // - User ANONIM → decrement 1 kredit keyed by identity_key (device) +
+    //                  rate-limit trial ketat (3 script/device/24h).
     const authSession = createSupabaseServerClient();
     const {
       data: { user },
     } = await authSession.auth.getUser();
     const isLoggedIn = !!user;
 
-    if (isLoggedIn) {
-      const hasCredit = await decrementCredit(identityKey);
+    // ===== RATE-LIMIT DAGLIEMIT (20 script/dag per account of device+IP) =====
+    const rlScopeKey = user?.id ? `u:${user.id}` : identityKey;
+    const dailyScript = await checkRateLimit(
+      buildBurstKey(rlScopeKey, ip, "script"),
+      RATE_LIMIT_LIMITS.scriptPerDay,
+      DAILY_WINDOW_MS
+    );
+    if (!dailyScript.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Kamu sudah mencapai batas harian script (20). Coba lagi besok.",
+          code: "DAILY_SCRIPT_LIMIT",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": dailyScript.resetInSeconds.toString(),
+            "X-RateLimit-Remaining": dailyScript.remaining.toString(),
+          },
+        }
+      );
+    }
+
+    if (isLoggedIn && user) {
+      const hasCredit = await decrementCreditForUser(user.id);
       if (!hasCredit) {
         return NextResponse.json(
           { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
@@ -95,6 +121,14 @@ export async function POST(request: NextRequest) {
         );
       }
     } else {
+      const hasCredit = await decrementCredit(identityKey);
+      if (!hasCredit) {
+        return NextResponse.json(
+          { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
+          { status: 402 }
+        );
+      }
+
       // Rate-limit ketat untuk trial anonim (mis. 3 script/hari per device).
       const trial = await checkRateLimit(`acs-trial-script:${identityKey}`, 3, 24 * 60 * 60_000);
       if (!trial.allowed) {
@@ -146,7 +180,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Generate script via ViraLoop engine
+    // Generate script via engine ACS
     const script = await generateScriptWithAI(
       {
         topic: body.topic,
@@ -188,6 +222,19 @@ export async function POST(request: NextRequest) {
     // Jika projectId tersedia, update projects.script + updated_at.
     // Kegagalan persistence dianggap GAGAL generate — jangan return success.
     if (body.projectId) {
+      // ===== OWNERSHIP GUARD (IDOR): project moet eigendom caller zijn =====
+      const owned = await requireProjectOwnership({
+        projectId: body.projectId,
+        identityKey,
+        userId: user?.id ?? null,
+      });
+      if (!owned) {
+        return NextResponse.json(
+          { success: false, error: "Project tidak ditemukan of geen toegang" },
+          { status: 404 }
+        );
+      }
+
       const supabase = createServiceRoleClient();
       const { error: persistError } = await supabase
         .from("projects")

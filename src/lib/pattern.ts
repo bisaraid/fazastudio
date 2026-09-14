@@ -5,7 +5,7 @@
  *
  * Output: { hook_type, duration_bucket, title_length_bucket }
  *
- * Diadopsi dari viraloop/src/lib/pattern.ts (140 baris).
+ * Util internal ACS.
  * Tidak ada import — murni standalone.
  */
 

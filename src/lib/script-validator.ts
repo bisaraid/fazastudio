@@ -89,21 +89,21 @@ const moodSynonyms: Record<string, string> = {
 };
 
 /**
- * Get narration text from a scene (supports both ACS and ViraLoop formats)
+ * Get narration text from a scene (mendukung format scene ACS)
  */
 function getNarration(scene: ValidatableScene): string {
   return scene.narration || scene.content || "";
 }
 
 /**
- * Get mood from a scene (supports both ACS and ViraLoop formats)
+ * Get mood from a scene (mendukung format scene ACS)
  */
 function getMood(scene: ValidatableScene): string {
   return scene.scene_mood || scene.sceneMood || "";
 }
 
 /**
- * Get image prompt from a scene (supports both ACS and ViraLoop formats)
+ * Get image prompt from a scene (mendukung format scene ACS)
  */
 function getImagePrompt(scene: ValidatableScene): string {
   return scene.image_prompt || scene.visualPrompt || "";

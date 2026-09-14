@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
+import { checkRateLimit, buildBurstKey, getClientIp } from "@/lib/rate-limit";
+import { RATE_LIMIT_LIMITS, MINUTE_WINDOW_MS } from "@/lib/rate-limit-config";
 import { createServiceRoleClient } from "@/lib/supabase/service";
+import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
-import { checkCredits } from "@/lib/usage";
+import { requireProjectOwnership } from "@/lib/project-ownership";
+import { resolveMediaUrl, getSignedStorageUrl } from "@/lib/signed-storage-url";
+import { checkCredits, checkCreditsForUser } from "@/lib/usage";
 
 /**
  * POST /api/generate-subtitle
@@ -161,12 +166,59 @@ export async function POST(request: NextRequest) {
     // ===== CREDIT CHECK (guard only — credit already decremented at generate-script) =====
     const identity = getServerIdentity(request);
     const identityKey = identity.identityKey;
-    const hasCredit = await checkCredits(identityKey);
+    // Metering: login → keyed by user_id; anon → keyed by identity_key.
+    const subSession = createSupabaseServerClient();
+    const {
+      data: { user: subUser },
+    } = await subSession.auth.getUser();
+    const hasCredit = subUser
+      ? await checkCreditsForUser(subUser.id)
+      : await checkCredits(identityKey);
     if (!hasCredit) {
       return NextResponse.json(
         { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
         { status: 402 }
       );
+    }
+
+    // ===== OWNERSHIP GUARD (IDOR): project moet eigendom caller zijn =====
+    const owned = await requireProjectOwnership({
+      projectId,
+      identityKey,
+      userId: subUser?.id ?? null,
+    });
+    if (!owned) {
+      return NextResponse.json(
+        { success: false, error: "Project tidak ditemukan of geen toegang" },
+        { status: 404 }
+      );
+    }
+
+    // ===== RATE-LIMIT SUBTITLE (10/minuut per account of device+IP) =====
+    {
+      const ip = getClientIp(request);
+      const rlScopeKey = subUser?.id ? `u:${subUser.id}` : identityKey;
+      const subRl = await checkRateLimit(
+        buildBurstKey(rlScopeKey, ip, "subtitle"),
+        RATE_LIMIT_LIMITS.subtitlePerMinute,
+        MINUTE_WINDOW_MS
+      );
+      if (!subRl.allowed) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Terlalu banyak request subtitle. Coba lagi dalam quelques detik.",
+            code: "SUBTITLE_RATE_LIMIT",
+          },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": subRl.resetInSeconds.toString(),
+              "X-RateLimit-Remaining": subRl.remaining.toString(),
+            },
+          }
+        );
+      }
     }
 
     const groqApiKey = process.env.GROQ_API_KEY;
@@ -180,8 +232,9 @@ export async function POST(request: NextRequest) {
     console.log("[Subtitle] provider: groq");
     console.log(`[Subtitle] model: ${GROQ_WHISPER_MODEL}`);
 
-    // 1. Fetch audio
-    const audioBuffer = await fetchAudioBuffer(audioUrl);
+    // 1. Fetch audio — bucket kini PRIVATE; resolve signed URL segar (path DB maupun URL dari body) agar Whisper bisa mengunduh audio.
+    const resolvedAudioUrl = (await resolveMediaUrl("acs-audio", audioUrl)) ?? audioUrl;
+    const audioBuffer = await fetchAudioBuffer(resolvedAudioUrl);
     console.log(`[Subtitle] audio fetched: ${audioBuffer.length} bytes`);
 
     // 2. Kirim ke Groq Whisper via multipart/form-data
@@ -251,15 +304,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: publicUrlData } = supabase.storage
-      .from("acs-subtitles")
-      .getPublicUrl(filePath);
-    const subtitleUrl = publicUrlData.publicUrl;
+    // ===== BUCKET PRIVATE (migration 017): buat signed URL segar (TTL 1 jam) =====
+    const subtitleUrl = await getSignedStorageUrl("acs-subtitles", filePath);
+    if (!subtitleUrl) {
+      return NextResponse.json(
+        { success: false, error: "Gagal membuat signed URL subtitle" },
+        { status: 500 }
+      );
+    }
 
     // 6. Update kolom subtitle_url di tabel projects
     const { error: updateError } = await supabase
       .from("projects")
-      .update({ subtitle_url: subtitleUrl, updated_at: new Date().toISOString() })
+      .update({ subtitle_url: filePath, updated_at: new Date().toISOString() })
       .eq("id", projectId);
 
     if (updateError) {

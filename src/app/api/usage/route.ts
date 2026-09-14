@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
-import { getUsage } from "@/lib/usage";
+import { createSupabaseServerClient } from "@/lib/supabase/ssr";
+import { getUsage, getUsageForUser } from "@/lib/usage";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 
 /**
@@ -20,7 +21,14 @@ export async function GET(request: NextRequest) {
 
   try {
     const identity = getServerIdentity(request);
-    const usage = await getUsage(identity.identityKey);
+    // Metering: login → keyed by user_id; anon → keyed by identity_key.
+    const usageSession = createSupabaseServerClient();
+    const {
+      data: { user: usageUser },
+    } = await usageSession.auth.getUser();
+    const usage = usageUser
+      ? await getUsageForUser(usageUser.id)
+      : await getUsage(identity.identityKey);
 
     const res = NextResponse.json({ success: true, data: usage });
     if (identity.isNew) {

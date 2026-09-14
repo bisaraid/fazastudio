@@ -1,4 +1,4 @@
--- ViraLoop Database Schema — Migration 011 (ACS)
+-- Faza Studio Database Schema — Migration 011 (ACS)
 -- Tabel behavior_events: mencatat sinyal perilaku user (mis. tombol "Ulangi").
 -- Dipakai sistem untuk belajar preferensi user di masa depan.
 

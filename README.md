@@ -8,8 +8,7 @@ Data topik yang "lagi banyak dicari" diambil dari **YouTube Data API v3** (regio
 di-scoring, dan disimpan ke tabel `trend_ideas` di Supabase. Endpoint `/api/ideas` membaca
 data ini (bukan fetch langsung saat user buka halaman), jadi tampil instan tanpa loading.
 
-> Catatan: project Supabase dipakai bersama viraLoop yang punya tabel `trend_signals` sendiri.
-> ACS memakai nama tabel terpisah `trend_ideas` agar tidak bentrok dengan schema crawler viraLoop.
+> Catatan: Faza Studio memakai nama tabel sendiri (`trend_ideas` dan `script_generations`) agar skema data tetap mandiri.
 
 ### Sumber data (berurutan)
 1. **Primary — YouTube Data API v3** (`YOUTUBE_API_KEY`): video trending Indonesia per

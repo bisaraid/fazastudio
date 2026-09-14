@@ -1,4 +1,4 @@
--- ViraLoop Database Schema — Migration 009 (ACS)
+-- Faza Studio Database Schema — Migration 009 (ACS)
 -- Sistem personalisasi onboarding Faza Studio (REVISI: SEMUA 4 LAYER WAJIB).
 --
 -- 1. Tabel persona_prompts: menyimpan prompt persona untuk kombinasi

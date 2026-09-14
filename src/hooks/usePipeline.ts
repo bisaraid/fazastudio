@@ -143,10 +143,10 @@ function bumpProgress(
 }
 
 /**
- * Mapping Genre ACS → CategoryId ViraLoop (1:1 karena sudah disamakan)
+ * Mapping Genre ACS → CategoryId engine (1:1 karena sudah disamakan)
  */
 function mapGenreToCategory(genre: Genre): CategoryId {
-  // Genre ACS sekarang identik dengan CategoryId ViraLoop
+  // Genre ACS sekarang identik dengan CategoryId engine
   // "horor" → "horror", sisanya sama persis
   if (genre === "horor") return "horror";
   return genre as CategoryId;
@@ -257,12 +257,12 @@ export function usePipeline() {
           case "audio": {
             if (!project.script) throw new Error("Script belum digenerate");
             const opts = audioOptions || {};
-            // ACS Scene.content → narration untuk TTS (mirror viralop)
+            // ACS Scene.content → narration untuk TTS
             const scenes = project.script.scenes.map((s: { content: string }) => ({
               narration: s.content,
             }));
 
-            // Bangun settings object per provider (mirror viralop)
+            // Bangun settings object per provider
             const provider = opts.provider || "cartesia";
             let settings: unknown;
             if (provider === "cartesia") {
@@ -452,11 +452,9 @@ export function usePipeline() {
               }))
               .filter((s: any) => s.videoUrl);
 
-            // ===== SSE STREAMING: POST + ReadableStream (EventSource tidak support POST body) =====
-            // /api/generate-video kini mengembalikan Server-Sent Events:
-            //   data: {"percent": 0..100}
-            //   data: {"status":"done","videoUrl":"..."}
-            //   data: {"status":"error","message":"..."}
+            // ===== WORKER FLOW: enqueue job → subscribe progress via SSE =====
+            // 1. POST ke /api/generate-video → dapat jobId (worker terpisah yang render)
+            // 2. Subscribe ke /api/video-progress?projectId=xxx via EventSource
             const vidRes = await fetchWithTimeout("/api/generate-video", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -467,101 +465,99 @@ export function usePipeline() {
                 genre: project.genre,
                 platform: project.platform,
                 backgroundUrl,
-                // SOURCE OF TRUTH — dikirim dari project state terbaru.
-                // subtitleUrl tetap sebagai fallback backward compat di renderer.
                 subtitleSegments: project.subtitle?.segments || [],
                 subtitleStyle: project.subtitle?.style,
-                // Timeline: footage per scene untuk concat (jika ada)
                 sceneFootage,
-                // Scene list dari script — untuk visual otomatis per-scene
-                // (route akan memilih video unik per scene bila sceneFootage kosong).
                 scenes: project.script?.scenes || [],
               }),
-            }, FETCH_TIMEOUTS.video);
+            }, 30_000); // timeout enqueue 30 detik — render asinkron
 
-            if (!vidRes.ok || !vidRes.body) {
-              throw new Error(`Video render gagal (HTTP ${vidRes.status})`);
+            if (!vidRes.ok) {
+              const errBody = await vidRes.json().catch(() => ({}));
+              throw new Error(errBody.error || `Video render gagal (HTTP ${vidRes.status})`);
             }
 
-            const reader = vidRes.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
-            let videoUrl: string | undefined;
-            let resolution: string | undefined;
-            let streamError: string | null = null;
+            const vidJson = await vidRes.json();
+            if (!vidJson.success || !vidJson.jobId) {
+              throw new Error("Gagal membuat job render: tidak ada jobId");
+            }
 
-            // Safety timeout: jika stream idle terlalu lama (mis. upload R2
-            // menggantung), hentikan loop agar spinner UI tidak "beku di 100%".
-            const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+            const jobId = vidJson.jobId;
+            console.log(`[Pipeline] Job enqueued: ${jobId}`);
 
-            while (true) {
-              const idle = new Promise<"idle">((resolve) =>
-                setTimeout(() => resolve("idle"), IDLE_TIMEOUT_MS)
-              );
-              const raced = await Promise.race([reader.read(), idle]);
-              if (raced === "idle") {
-                streamError =
-                  "Koneksi stream video terputus (timeout 5 menit). Coba render ulang.";
-                break;
-              }
-              const { done, value } = raced;
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
+            // 2. Subscribe progress via EventSource (SSE dari Redis pub/sub)
+            const videoUrl = await new Promise<string>((resolve, reject) => {
+              let streamError: string | null = null;
+              let doneUrl: string | undefined;
+              let doneResolution: string | undefined;
 
-              // Parse baris "data: {...}" dari SSE
-              const lines = buffer.split("\n");
-              buffer = lines.pop() || "";
-              for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed.startsWith("data:")) continue;
-                const payload = trimmed.slice(5).trim();
-                if (!payload) continue;
+              const es = new EventSource(`/api/video-progress?projectId=${encodeURIComponent(project.id)}`);
+
+              // Safety timeout total (15 menit — render panjang + upload)
+              const TOTAL_TIMEOUT_MS = 15 * 60 * 1000;
+              const totalTimer = setTimeout(() => {
+                es.close();
+                reject(new Error("Render video timeout (15 menit). Coba render ulang."));
+              }, TOTAL_TIMEOUT_MS);
+
+              es.onmessage = (event) => {
                 let msg: any;
                 try {
-                  msg = JSON.parse(payload);
+                  msg = JSON.parse(event.data);
                 } catch {
-                  continue;
+                  return;
                 }
-                // ===== TRACING SEMENTARA — untuk verifikasi alur SSE =====
-                console.log("[SSE]", msg);
+
+                console.log("[SSE progress]", msg);
+
                 if (typeof msg.percent === "number") {
-                  // Progress nyata dari FFmpeg — lewat bumpProgress agar monotonik
-                  // (abaikan nilai yang lebih kecil dari yang sudah tercapai),
-                  // dan set pesan tahap video berdasarkan persen.
                   setProgress((prev) => bumpProgress(prev, msg.percent, step));
-                } else if (msg.status === "uploading") {
-                  // FFmpeg selesai — sekarang tahap upload ke storage.
-                  // Tampilkan pesan eksplisit agar UI tidak terlihat beku di 100%.
-                  console.log("[SSE] uploading:", msg.message);
+                } else if (msg.status === "processing") {
                   setProgress((prev) => ({
                     ...prev,
-                    statusMessage: msg.message || "Mengunggah video ke cloud...",
+                    statusMessage: "Memproses render di server...",
+                  }));
+                } else if (msg.status === "uploading") {
+                  setProgress((prev) => ({
+                    ...prev,
+                    statusMessage: "Mengunggah video ke cloud...",
                   }));
                 } else if (msg.status === "done") {
-                  console.log("[SSE done] videoUrl:", msg.videoUrl);
-                  videoUrl = msg.videoUrl;
-                  resolution = msg.resolution;
+                  doneUrl = msg.videoUrl;
+                  doneResolution = msg.resolution;
+                  clearTimeout(totalTimer);
+                  es.close();
+                  if (doneUrl) {
+                    resolve(doneUrl);
+                  } else {
+                    reject(new Error("Video render selesai tanpa URL"));
+                  }
                 } else if (msg.status === "error") {
                   streamError = msg.message || "Video render gagal";
+                  clearTimeout(totalTimer);
+                  es.close();
+                  reject(new Error(streamError || "Video render gagal"));
                 }
-              }
-            }
+              };
 
-            if (streamError) {
-              throw new Error(streamError);
-            }
-            if (!videoUrl) {
-              throw new Error("Video render gagal: tidak ada videoUrl dari stream");
-            }
+              es.onerror = () => {
+                // EventSource auto-reconnect; hanya reject jika sudah ada error message
+                if (streamError) {
+                  clearTimeout(totalTimer);
+                  es.close();
+                  reject(new Error(streamError));
+                }
+              };
+            });
 
             // ===== TRACING SEMENTARA — verifikasi setVideoResult =====
-            console.log("[SSE] calling setVideoResult with:", videoUrl);
+            console.log("[Pipeline] calling setVideoResult with:", videoUrl);
             store.setVideoResult({
               id: project.id,
               url: videoUrl,
               duration: 0,
               format: "mp4",
-              resolution: resolution || "1080x1920",
+              resolution: "1080x1920", // worker update projects table; resolution detail dari SSE done
             } as VideoResult);
             break;
           }
@@ -626,6 +622,12 @@ export function usePipeline() {
         }
       }
       setProgress((prev) => ({ ...prev, isRunning: false }));
+
+      // Beri tahu hook useUsage agar kredit/plan di-refresh setelah generate selesai.
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("usage:refresh"));
+      }
+
       return result;
     },
     [generateSingleStep, store]

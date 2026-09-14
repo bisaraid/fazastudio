@@ -1,4 +1,4 @@
--- ViraLoop Database Schema — Migration 007 (ACS)
+-- Faza Studio Database Schema — Migration 007 (ACS)
 -- Tabel profiles untuk onboarding & preferensi user yang login (auth).
 --
 -- Menghubungkan biografi user (Supabase Auth: auth.users) dengan preferensi

@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { aiCompletion } from "@/lib/ai/completion";
 import { validateApiKey } from "@/lib/api-auth";
 
-// Semua kategori acs (10) — bukan cuma 6 dari viraloop asli.
+// Semua kategori acs (10).
 // Nama diambil dari acs/src/lib/categories/index.ts.
 const CATEGORY_NAMES: Record<string, string> = {
   horror: "Horor",

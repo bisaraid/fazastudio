@@ -1,9 +1,9 @@
 /**
  * Rate limiter menggunakan Redis self-hosted (ioredis) — sliding window
  *
- * Diadopsi dari viraloop/src/lib/rate-limit.ts (148 baris).
+ * Rate limiter internal ACS — Redis sliding window
  *
- * PERUBAHAN DARI VIRALOOP:
+ * CATATAN PERUBAHAN:
  * - Client library: @upstash/redis + @upstash/ratelimit → ioredis
  * - Koneksi: UPSTASH_REDIS_REST_URL/TOKEN → REDIS_URL (redis://localhost:6379)
  * - Algoritma sliding window diimplementasikan manual dengan Redis Sorted Set
@@ -214,7 +214,7 @@ async function redisCheck(key: string, maxRequests: number, windowMs: number): P
  *
  * @returns RateLimitResult dengan allowed, remaining, resetInSeconds
  *
- * Catatan: Signature function ini SAMA dengan implementasi asli viraloop.
+ * Catatan: Signature function ini stabil; tidak ada perubahan cara panggil di API routes.
  * Tidak ada perubahan cara panggil di API routes.
  */
 export async function checkRateLimit(
@@ -234,6 +234,20 @@ export async function checkRateLimit(
     console.error(`⚠️ [RateLimit] Redis error untuk key "${key}":`, error);
     return fallbackCheck(key, maxRequests, windowMs);
   }
+}
+
+/**
+ * Bouw een rate-limit key als combinatie van identity (device + user_id indien
+ * aanwezig) en IP. Zo kan:
+ *   - een ingelogde gebruiker limiet per account krijgen (identityKey = user),
+ *   - een anonieme gebruiker limiet per device + IP krijgen (identityKey = anon:<device>).
+ */
+export function buildBurstKey(
+  identityKey: string,
+  ip: string,
+  scope: string
+): string {
+  return `acs-rl:${scope}:${identityKey}:${ip}`;
 }
 
 /**

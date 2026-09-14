@@ -1,7 +1,7 @@
 /**
  * Konfigurasi Durasi Script — per kategori/mode.
  *
- * Diadopsi dari viraloop/src/lib/duration.ts (80 baris).
+ * Konfigurasi internal ACS.
  *
  * KOMENTAR ADAPTASI:
  * - Tipe `DurationConfig` dan `DurationTier` BELUM ada di types.ts acs.

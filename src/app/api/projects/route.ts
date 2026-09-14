@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
+import { requireProjectOwnership } from "@/lib/project-ownership";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/ssr";
+import { resolveMediaUrl } from "@/lib/signed-storage-url";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 
 export async function GET(request: NextRequest) {
@@ -33,7 +35,18 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Gagal mengambil projects" }, { status: 500 });
     }
 
-    const res = NextResponse.json({ success: true, data: data || [] });
+    // ===== BUCKET PRIVATE (migration 017): resolve kolom path audio/subtitle
+    // menjadi signed URL segar (TTL 1 jam) sebelum dikirim ke client =====
+    const rows = data || [];
+    const rowsWithSigned = await Promise.all(
+      rows.map(async (row: any) => ({
+        ...row,
+        audio_url: (await resolveMediaUrl("acs-audio", row.audio_url)) ?? row.audio_url,
+        subtitle_url: (await resolveMediaUrl("acs-subtitles", row.subtitle_url)) ?? row.subtitle_url,
+      }))
+    );
+
+    const res = NextResponse.json({ success: true, data: rowsWithSigned });
     if (identity.isNew) {
       res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
     }
@@ -131,13 +144,34 @@ export async function DELETE(request: NextRequest) {
     const identity = getServerIdentity(request);
     const identityKey = identity.identityKey;
 
+    // Baca sesi login (optioneel — anon blijft via identity_key).
+    const session = createSupabaseServerClient();
+    const {
+      data: { user },
+    } = await session.auth.getUser();
+    const userId = user?.id ?? null;
+
     const supabase = createServiceRoleClient();
-    // Hapus hanya project milik identity caller — cegah hapus punya orang lain.
+
+    // ===== OWNERSHIP GUARD (IDOR): project moet eigenaar zijn (user_id of identity_key) =====
+    const owned = await requireProjectOwnership({
+      projectId,
+      identityKey,
+      userId,
+    });
+    if (!owned) {
+      return NextResponse.json(
+        { success: false, error: "Project tidak ditemukan of geen toegang" },
+        { status: 404 }
+      );
+    }
+
+    // Hapus project milik identity caller — cegah hapus punya orang lain.
+    // (ownership guard hierboven heeft al user_id/identity_key gevalideerd)
     const { error } = await supabase
       .from("projects")
       .delete()
-      .eq("id", projectId)
-      .eq("identity_key", identityKey);
+      .eq("id", projectId);
 
     if (error) {
       console.error("[projects] DELETE error:", error);
@@ -201,6 +235,28 @@ export async function PATCH(request: NextRequest) {
     }
 
     updates.updated_at = new Date().toISOString();
+
+    // ===== OWNERSHIP GUARD (IDOR): project moet eigenaar zijn (user_id of identity_key) =====
+    const identity = getServerIdentity(request);
+    const identityKey = identity.identityKey;
+
+    const session = createSupabaseServerClient();
+    const {
+      data: { user },
+    } = await session.auth.getUser();
+    const userId = user?.id ?? null;
+
+    const owned = await requireProjectOwnership({
+      projectId,
+      identityKey,
+      userId,
+    });
+    if (!owned) {
+      return NextResponse.json(
+        { success: false, error: "Project tidak ditemukan of geen toegang" },
+        { status: 404 }
+      );
+    }
 
     const supabase = createServiceRoleClient();
 

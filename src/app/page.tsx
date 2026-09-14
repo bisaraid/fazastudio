@@ -7,7 +7,7 @@ import { useProjectStore } from "@/lib/store/projectStore";
 import { useUser } from "@/hooks/useUser";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
-import { PricingPlans } from "@/components/pricing-plans";
+import { PricingPlansWithUsage } from "@/components/pricing-plans-with-usage";
 import {
   Sparkles,
   ArrowRight,
@@ -374,7 +374,7 @@ export default function LandingPage() {
             Mulai gratis, naikkan sesuai kebutuhan produksimu.
           </p>
         </div>
-        <PricingPlans />
+        <PricingPlansWithUsage />
       </section>
 
       {/* CTA akhir */}

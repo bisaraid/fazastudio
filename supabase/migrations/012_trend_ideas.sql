@@ -1,10 +1,8 @@
 -- Migration 012: Tabel trend_ideas untuk menyimpan data trend dari YouTube & Google Trends
 -- Dipakai sistem /api/ideas untuk menampilkan rekomendasi topik ke user.
 --
--- CATATAN PENTING: Project Supabase ini dipakai BERSAMA project viraLoop, dan tabel
--- `trend_signals` SUDAH ADA di sana dengan skema milik crawler viraLoop (produk/affiliate).
--- Untuk menghindari bentrok/merusak data crawler tersebut, ACS memakai NAMA TABEL SENDIRI
--- (trend_ideas), bukan menabrak `trend_signals`.
+-- CATATAN: Faza Studio memakai nama tabel sendiri (`trend_ideas`) agar skema data
+-- tetap mandiri dan tidak bergantung ke tabel lain.
 
 create table if not exists trend_ideas (
   id uuid primary key default gen_random_uuid(),

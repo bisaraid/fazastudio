@@ -9,16 +9,21 @@ import {
   TTSScene,
   TTSProvider,
 } from "@/lib/tts";
+import { requireProjectOwnership } from "@/lib/project-ownership";
+import { getSignedStorageUrl } from "@/lib/signed-storage-url";
 import { validateApiKey } from "@/lib/api-auth";
+import { checkRateLimit, buildBurstKey, getClientIp } from "@/lib/rate-limit";
+import { RATE_LIMIT_LIMITS, DAILY_WINDOW_MS } from "@/lib/rate-limit-config";
 import { createServiceRoleClient } from "@/lib/supabase/service";
+import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
-import { checkCredits } from "@/lib/usage";
+import { checkCredits, checkCreditsForUser } from "@/lib/usage";
 import { isPreviewUsed, markPreviewUsed } from "@/lib/preview-guard";
 
 /**
  * POST /api/generate-tts
  *
- * Adopsi penuh model viralop:
+ * Model pipeline Faza Studio:
  * - Terima `scenes` array + `settings` object + `provider` + `preview` + `projectId`
  * - Preview: potong scenes[0].narration ke 7 kata, return binary audio/mpeg (hanya untuk browser)
  * - Non-preview: upload audio ke Supabase Storage bucket `acs-audio`, return JSON { audioUrl }
@@ -192,7 +197,14 @@ export async function POST(request: NextRequest) {
     // ===== NON-PREVIEW: upload ke Supabase Storage bucket `acs-audio` =====
     // ===== CREDIT CHECK (guard only — credit already decremented at generate-script) =====
     // identity/identityKey sudah diambil di awal (baris atas) — dipakai juga di sini.
-    const hasCredit = await checkCredits(identityKey);
+    // Metering: login → keyed by user_id; anon → keyed by identity_key.
+    const ttsSession = createSupabaseServerClient();
+    const {
+      data: { user: ttsUser },
+    } = await ttsSession.auth.getUser();
+    const hasCredit = ttsUser
+      ? await checkCreditsForUser(ttsUser.id)
+      : await checkCredits(identityKey);
     if (!hasCredit) {
       return NextResponse.json(
         { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
@@ -206,6 +218,46 @@ export async function POST(request: NextRequest) {
         { success: false, error: "Field projectId wajib diisi untuk generate TTS non-preview" },
         { status: 400 }
       );
+    }
+
+    // ===== OWNERSHIP GUARD (IDOR): project moet eigendom caller zijn =====
+    const owned = await requireProjectOwnership({
+      projectId,
+      identityKey,
+      userId: ttsUser?.id ?? null,
+    });
+    if (!owned) {
+      return NextResponse.json(
+        { success: false, error: "Project tidak ditemukan of geen toegang" },
+        { status: 404 }
+      );
+    }
+
+    // ===== RATE-LIMIT TTS (10 non-preview/dag per account of device+IP) =====
+    {
+      const ip = getClientIp(request);
+      const rlScopeKey = ttsUser?.id ? `u:${ttsUser.id}` : identityKey;
+      const ttsRl = await checkRateLimit(
+        buildBurstKey(rlScopeKey, ip, "tts"),
+        RATE_LIMIT_LIMITS.ttsPerDay,
+        DAILY_WINDOW_MS
+      );
+      if (!ttsRl.allowed) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Kamu sudah mencapai batas harian TTS (10). Coba lagi besok.",
+            code: "DAILY_TTS_LIMIT",
+          },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": ttsRl.resetInSeconds.toString(),
+              "X-RateLimit-Remaining": ttsRl.remaining.toString(),
+            },
+          }
+        );
+      }
     }
 
     // Guard 2: nama file unik agar regenerate tidak menimpa file lama / cache
@@ -227,10 +279,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: publicUrlData } = supabase.storage
-      .from("acs-audio")
-      .getPublicUrl(filePath);
-    const audioUrl = publicUrlData.publicUrl;
+    // ===== BUCKET PRIVATE (migration 017): buat signed URL segar (TTL 1 jam) =====
+    const audioUrl = await getSignedStorageUrl("acs-audio", filePath);
+    if (!audioUrl) {
+      return NextResponse.json(
+        { success: false, error: "Gagal membuat signed URL audio" },
+        { status: 500 }
+      );
+    }
 
     // Update kolom audio_url + metadata TTS di tabel projects
     const audioSettings = (settings || {}) as {
@@ -241,7 +297,7 @@ export async function POST(request: NextRequest) {
     const { error: updateProjectError } = await supabase
       .from("projects")
       .update({
-        audio_url: audioUrl,
+        audio_url: filePath,
         audio_provider: usedProvider || provider || "google",
         audio_voice: audioSettings.voice_id || "",
         audio_speed: audioSettings.speed ?? 1.0,

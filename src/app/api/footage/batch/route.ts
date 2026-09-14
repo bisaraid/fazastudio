@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
+import { getServerIdentity } from "@/lib/identity";
+import { checkRateLimit, buildBurstKey, getClientIp } from "@/lib/rate-limit";
+import { RATE_LIMIT_LIMITS, MINUTE_WINDOW_MS } from "@/lib/rate-limit-config";
 import { FootageOption } from "@/lib/types";
 import { searchFootage, resolveSearchQuery } from "@/lib/footage";
 
@@ -18,6 +21,33 @@ export async function POST(request: NextRequest) {
   const auth = validateApiKey(request);
   if (!auth.valid) {
     return NextResponse.json({ success: false, error: auth.error || "Unauthorized" }, { status: 401 });
+  }
+
+  // ===== RATE-LIMIT (20 zoekopdrachten Pexels/minuut per identity+IP) =====
+  {
+    const identity = getServerIdentity(request);
+    const ip = getClientIp(request);
+    const rl = await checkRateLimit(
+      buildBurstKey(identity.identityKey, ip, "footage"),
+      RATE_LIMIT_LIMITS.footagePerMinute,
+      MINUTE_WINDOW_MS
+    );
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Terlalu banyak request footage. Coba lagi dalam enkele detik.",
+          code: "FOOTAGE_RATE_LIMIT",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": rl.resetInSeconds.toString(),
+            "X-RateLimit-Remaining": rl.remaining.toString(),
+          },
+        }
+      );
+    }
   }
 
   try {

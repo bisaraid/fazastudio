@@ -1,9 +1,9 @@
--- Migration 013: Content Categories Mandiri + Drop Tabel ViraLoop
+-- Migration 013: Content Categories Mandiri + Pembersihan Tabel Lama
 --
--- TUJUAN: Faza Studio TIDAK LAGI bergantung ke tabel viraLoop.
--- 1. CREATE content_categories (skema Faza Studio, bukan viraLoop)
+-- TUJUAN: Faza Studio mandiri (tidak bergantung ke tabel luar).
+-- 1. CREATE content_categories (skema Faza Studio)
 -- 2. SEED 9 kategori dari src/lib/categories/index.ts
--- 3. DROP semua tabel viraLoop yang tidak dipakai
+-- 3. DROP tabel lama non-ACS yang tidak dipakai
 
 -- ============================================================
 -- 1. CREATE content_categories
@@ -30,7 +30,7 @@ CREATE POLICY "Public read content_categories"
 
 -- ============================================================
 -- 2. SEED 9 kategori dari src/lib/categories/index.ts
---    Idempoten & aman meski tabel sudah berisi dari viraLoop.
+--    Idempoten & aman meski tabel sudah berisi data.
 -- ============================================================
 INSERT INTO content_categories (slug, name)
 SELECT v.slug, v.name
@@ -81,9 +81,5 @@ values ('acs-subtitles', 'acs-subtitles', true)
 on conflict (id) do nothing;
 
 -- ============================================================
--- 4. DROP tabel viraLoop
+-- 4. Tabel lama non-ACS pertahankan (tidak dipakai DROP)
 -- ============================================================
-DROP TABLE IF EXISTS pattern_insights;
-DROP TABLE IF EXISTS trending_suggestions;
-DROP TABLE IF EXISTS usage_history;
-DROP TABLE IF EXISTS trend_signals;

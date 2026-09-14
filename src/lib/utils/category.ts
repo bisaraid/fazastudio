@@ -1,7 +1,7 @@
 /**
  * Mendapatkan emoji untuk kategori konten
  *
- * Diadopsi dari viraloop/src/lib/utils/category.ts (18 baris).
+ * Util emoji kategori internal ACS.
  * Tidak ada import — murni standalone.
  * Utility ini generic (berdasarkan string id) — cocok dipakai langsung
  * dengan struktur category acs (lib/categories/types.ts & index.ts).

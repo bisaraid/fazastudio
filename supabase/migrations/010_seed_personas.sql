@@ -1,4 +1,4 @@
--- ViraLoop Database Schema — Migration 010 (ACS)
+-- Faza Studio Database Schema — Migration 010 (ACS)
 -- SEED: 108 kombinasi persona Faza Studio (mode × niche × gaya × cerita).
 -- Semua Layer Wajib — tidak ada default. Key sinkron dengan persona-data.ts.
 -- ON CONFLICT: kombinasi unik → idempoten, aman dijalankan ulang.

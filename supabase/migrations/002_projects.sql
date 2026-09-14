@@ -1,4 +1,4 @@
--- ViraLoop Database Schema — Migration 002 (ACS)
+-- Faza Studio Database Schema — Migration 002 (ACS)
 -- Tabel projects untuk menyimpan project ACS secara real
 --
 -- content_categories dibuat DI SINI (bukan hanya di 013) karena projects
@@ -29,7 +29,7 @@ create policy "Public read content_categories"
 
 -- Seed 9 kategori dari src/lib/categories/index.ts (idempoten).
 -- Pakai WHERE NOT EXISTS (bukan ON CONFLICT slug) agar aman di DB yang
--- content_categories-nya sudah ada dari viraLoop namun slug-nya belum
+-- content_categories mungkin sudah ada dengan slug tertentu namun belum
 -- tentu punya unique constraint/index.
 insert into content_categories (slug, name)
 select v.slug, v.name

@@ -3,7 +3,9 @@
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useUsage } from "@/hooks/useUsage";
 import {
   Sun,
   Moon,
@@ -28,6 +30,8 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const { plan, creditsUsed, creditsTotal, loading } = useUsage();
+  const creditsRemaining = Math.max(0, (creditsTotal ? creditsTotal : 0) - (creditsUsed ? creditsUsed : 0));
 
   const handleLogout = async () => {
     if (loggingOut) return;
@@ -95,6 +99,16 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
           <div className="flex-1" />
 
           <div className="flex items-center gap-2">
+            {!loading && (
+              <span className="hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground md:flex">
+                {creditsRemaining} kredit tersisa
+              </span>
+            )}
+            {plan && plan !== "free" ? (
+              <Badge variant="outline" className="hidden md:inline-flex">
+                {plan === "starter" ? "Starter" : plan === "pro" ? "Pro" : plan}
+              </Badge>
+            ) : null}
             <Button
               variant="ghost"
               size="icon"

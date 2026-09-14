@@ -9,6 +9,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { fetchTrendingByNiche } from "@/lib/trend-youtube";
 import { scoreTrends, getTopTrends } from "@/lib/trend-scoring";
+import { checkRateLimit, buildBurstKey, getClientIp } from "@/lib/rate-limit";
+import { getServerIdentity } from "@/lib/identity";
+import { RATE_LIMIT_LIMITS, MINUTE_WINDOW_MS } from "@/lib/rate-limit-config";
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam
 
@@ -93,6 +96,34 @@ export async function GET(request: NextRequest) {
     });
   }
 
+
+  // ===== RATE-LIMIT rond AI-fallback (Groq — betaalde service) =====
+  // YouTube/cache-route kost niets; alleen de AI-call wordt gebounded.
+  {
+    const identity = getServerIdentity(request);
+    const ip = getClientIp(request);
+    const rl = await checkRateLimit(
+      buildBurstKey(identity.identityKey, ip, "ideas-ai"),
+      RATE_LIMIT_LIMITS.ideasAIperMinute,
+      MINUTE_WINDOW_MS
+    );
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Terlalu banyak request ide. Coba lagi dalam enkele detik.",
+          code: "IDEAS_AI_RATE_LIMIT",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": rl.resetInSeconds.toString(),
+            "X-RateLimit-Remaining": rl.remaining.toString(),
+          },
+        }
+      );
+    }
+  }
 
   // 3. YouTube gagal → Fallback AI
   const aiIdeas = await generateAIFallback(niche, limit);

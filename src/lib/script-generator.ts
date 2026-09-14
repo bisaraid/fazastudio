@@ -1,8 +1,8 @@
 /**
- * AC Script Generator — Engine Prompt Berbasis Kategori (ViraLoop-Style)
+ * AC Script Generator — Engine Prompt Berbasis Kategori (Engine ACS)
  *
- * Mengadopsi kualitas prompt viraloop (multi-segment parallel, anti-repeat,
- * clamping modes, narratorPersona, scriptSkeleton) tanpa merubah viraloop.
+ * Engine prompt multi-segment parallel, anti-repeat,
+ * clamping modes, narratorPersona, scriptSkeleton. Sepenuhnya internal ACS.
  * UI tetap milik ACS.
  */
 

@@ -2,7 +2,7 @@
  * Validasi environment variables saat startup
  * Me-throw error jelas jika ada yang kosong
  *
- * Diadopsi dari viraloop/src/lib/env.ts (63 baris).
+ * Validasi env internal ACS.
  *
  * SKIP (env var yang tidak relevan untuk acs):
  * - UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN — diganti REDIS_URL (self-hosted)
@@ -16,6 +16,7 @@ const REQUIRED_VARS = [
   'GROQ_API_KEY',
   'API_SECRET_KEY',
   'REDIS_URL',
+  'APP_DOMAIN',
 ] as const;
 
 const OPTIONAL_VARS = [
@@ -23,7 +24,6 @@ const OPTIONAL_VARS = [
   'ELEVENLABS_API_KEY',
   'GOOGLE_TTS_API_KEY',
   'GROQ_MODEL',
-  'APP_DOMAIN',
   'OPENROUTER_API_KEY',
   'OPENROUTER_MODEL',
   'AI_FALLBACK_ENABLED',

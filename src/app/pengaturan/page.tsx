@@ -13,6 +13,9 @@ import {
   getCeritaOptions,
 } from "@/lib/persona-data";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useUsage } from "@/hooks/useUsage";
+import { PricingPlans } from "@/components/pricing-plans";
+import type { Plan } from "@/lib/types";
 
 interface Profile {
   layer1_mode: string;
@@ -40,6 +43,13 @@ function ceritaLabel(niche: string, gaya: string, cerita: string): string {
   return getCeritaOptions(niche, gaya).find((c) => c.key === cerita)?.label ?? cerita;
 }
 
+function planLabel(plan: string): string {
+  return plan === "free" ? "Gratis"
+    : plan === "starter" ? "Starter"
+    : plan === "pro" ? "Pro"
+    : plan;
+}
+
 /** Apakah gaya lama masih tersedia untuk niche baru? */
 function gayaValidFor(niche: string, gaya: string): boolean {
   return !!gaya && (GAYA_BY_NICHE[niche] ?? []).some((g) => g.key === gaya);
@@ -55,6 +65,7 @@ export default function PengaturanPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
+  const { plan, creditsUsed, creditsTotal, loading: usageLoading } = useUsage();
 
   const [isEditing, setIsEditing] = useState(false);
   const [mode, setMode] = useState("");
@@ -320,17 +331,44 @@ return (
         </Card>
 
         {/* BILLING / PLAN */}
-        <Card>
+        <Card className="mb-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
               <CreditCard className="h-5 w-5 text-primary" /> Paket &amp; Kredit
             </CardTitle>
             <CardDescription>
-              Lihat paket, upgrade, dan kredit generate kamu di halaman Harga.
+              Paket aktif, kuota kredit generate, dan opsi naikkan.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <Button onClick={() => router.push("/harga")} className="gap-1.5">
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Paket Aktif</p>
+                <p className="font-medium">
+                  {usageLoading ? "Memuat..." : planLabel(plan)}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Kredit Terpakai</p>
+                <p className="font-medium">{creditsUsed} / {creditsTotal}</p>
+              </div>
+            </div>
+
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+              <div
+                className="h-full rounded-full bg-primary"
+                style={{
+                  width: `${creditsTotal > 0 ? Math.min(100, (creditsUsed / creditsTotal) * 100) : 0}%`,
+                }}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {Math.max(0, creditsTotal - creditsUsed)} kredit tersisa bulan ini.
+            </p>
+
+            <PricingPlans currentPlan={plan as Plan["id"] | undefined} />
+
+            <Button variant="outline" onClick={() => router.push("/harga")} className="gap-1.5">
               <CreditCard className="h-4 w-4" /> Ke Halaman Harga
             </Button>
           </CardContent>

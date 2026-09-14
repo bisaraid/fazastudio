@@ -2,7 +2,7 @@
  * Groq AI Completion — ACS Standalone
  *
  * Implements direct HTTP call to Groq API (no SDK dependency).
- * Pattern inspired by viraloop implementation, but self-contained for ACS.
+ * Implementasi direct HTTP call, self-contained untuk ACS.
  *
  * Includes retry + backoff for 429 (rate limit) — reads Retry-After header.
  */

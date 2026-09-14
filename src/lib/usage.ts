@@ -1,13 +1,15 @@
 /**
  * User Usage / Credit — ACS
  *
- * Credit metering per identity per bulan (period = "YYYY-MM").
- * Satu baris unik per (identity_key, period) di tabel `user_usage`.
+ * Credit metering per bulan (period = "YYYY-MM").
+ * - Anon:  satu baris unik per (identity_key, period) → identity_key = "anon:<device>".
+ * - Login: satu baris unik per (user_id, period)       → metering terikat ke AKUN,
+ *          bukan device_id/cookie (migration 018).
  *
  * RULE (Finish plan STEP 3): decrement hanya ONCE per project, di
  * /api/generate-script (one project = one credit). Jadi:
- * - generate-script  → decrementCredit()   [actually charge]
- * - tts/subtitle/video → checkCredits()     [go to 402 if exhausted, NO decrement]
+ * - generate-script  → decrementCredit() / decrementCreditForUser()  [actually charge]
+ * - tts/subtitle/video → checkCredits() / checkCreditsForUser()      [402 if exhausted, NO decrement]
  *
  * ATOMICITY (Sesi 1 fix — migration 014):
  * - fetchOrCreate   → RPC ensure_usage_row()  (INSERT..ON CONFLICT DO NOTHING + SELECT,
@@ -304,6 +306,202 @@ export async function setPlan(identityKey: string, plan: PlanTier): Promise<bool
 
   if (error) {
     console.warn("[usage] setPlan error:", error.message);
+    return false;
+  }
+  return true;
+}
+
+// ============================================================
+// METERING KEYED BY AKUN (user_id) — migration 018
+// Jalur login: metering terikat ke akun, bukan device/cookie.
+// Jalur anon tetap diperlakukan via function lama (identity_key).
+// ============================================================
+
+/** Get-or-create row ATOMIC keyed by user_id — primary RPC by_user (018). */
+async function fetchOrCreateByUser(userId: string, period: string): Promise<UsageRow> {
+  const supabase = createServiceRoleClient();
+
+  // Primary: atomic RPC — satu round-trip, keyed by user_id.
+  try {
+    const { data, error } = await supabase
+      .rpc("ensure_usage_row_by_user", {
+        p_user_id: userId,
+        p_period: period,
+      })
+      .maybeSingle();
+
+    if (!error && data) {
+      return normalizeRow(data);
+    }
+    if (error && !isFunctionNotFound(error)) {
+      // Error bukan "function not found" — log, lanjut fallback.
+      console.warn("[usage] ensure_usage_row_by_user unexpected error:", error.message);
+    }
+  } catch (e) {
+    console.warn("[usage] ensure_usage_row_by_user error:", e instanceof Error ? e.message : e);
+  }
+
+  // Fallback: legacy get-then-insert keyed by user_id (sebelum migration 018 deploy).
+  return fetchOrCreateLegacyByUser(supabase, userId, period);
+}
+
+/** Legacy get-then-insert keyed by user_id — transisi sebelum migration 018. */
+async function fetchOrCreateLegacyByUser(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  userId: string,
+  period: string
+): Promise<UsageRow> {
+  const { data: existing, error } = await supabase
+    .from(USAGE_TABLE)
+    .select("plan, credits_total, credits_used")
+    .eq("user_id", userId)
+    .eq("period", period)
+    .maybeSingle();
+
+  if (!error && existing) {
+    return normalizeRow(existing);
+  }
+
+  const defaults: UsageRow = { plan: "free", credits_total: FREE_CREDITS, credits_used: 0 };
+  try {
+    const { data: created } = await supabase
+      .from(USAGE_TABLE)
+      .insert({
+        user_id: userId,
+        period,
+        plan: "free",
+        credits_total: FREE_CREDITS,
+        credits_used: 0,
+      })
+      .select("plan, credits_total, credits_used")
+      .single();
+
+    if (created) {
+      return normalizeRow(created);
+    }
+  } catch (e) {
+    console.warn("[usage] Gagal menyimpan usage row by user:", e);
+  }
+
+  return defaults;
+}
+
+/** Baca usage keyed by user_id — auto-creates free/default row jika belum ada. */
+export async function getUsageForUser(userId: string): Promise<UsageResult> {
+  const period = currentPeriod();
+  const row = await fetchOrCreateByUser(userId, period);
+  return {
+    plan: row.plan,
+    creditsTotal: row.credits_total,
+    creditsUsed: row.credits_used,
+    creditsRemaining: Math.max(0, row.credits_total - row.credits_used),
+  };
+}
+
+/**
+ * DECREMENT credit keyed by user_id — panggil ONCE per project di
+ * /api/generate-script voor user login. Atomic via RPC by_user (018).
+ */
+export async function decrementCreditForUser(userId: string): Promise<boolean> {
+  const period = currentPeriod();
+  const supabase = createServiceRoleClient();
+
+  try {
+    const { data, error } = await supabase.rpc("decrement_credit_by_user", {
+      p_user_id: userId,
+      p_period: period,
+    });
+
+    if (error) {
+      if (isFunctionNotFound(error)) {
+        // Migration 018 belum deploy → guarded fallback (never overspend).
+        console.warn("[usage] decrement_credit_by_user RPC belum tersedia, fallback guarded");
+        return fallbackDecrementCreditByUser(userId, period);
+      }
+      // Error DB lain — fail-open konsisten doc codebase.
+      console.warn("[usage] decrementCreditForUser error (fail-open):", error.message);
+      return true;
+    }
+
+    // data === null → UPDATE tidak match → kuota habis / row belum ada.
+    return data !== null && data !== undefined;
+  } catch (e) {
+    console.warn("[usage] decrementCreditForUser RPC error (fail-open):", e instanceof Error ? e.message : e);
+    return true;
+  }
+}
+
+/** Fallback guarded decrement keyed by user_id — CAS anti-lost-update. */
+async function fallbackDecrementCreditByUser(userId: string, period: string): Promise<boolean> {
+  const supabase = createServiceRoleClient();
+  const MAX_ATTEMPTS = 12;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const row = await fetchOrCreateByUser(userId, period);
+    if (row.credits_total <= 0 || row.credits_used >= row.credits_total) return false;
+
+    const { data, error } = await supabase
+      .from(USAGE_TABLE)
+      .update({
+        credits_used: row.credits_used + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("period", period)
+      .eq("credits_used", row.credits_used)
+      .lt("credits_used", row.credits_total)
+      .select("credits_used")
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[usage] fallback by-user decrement error (fail-open):", error.message);
+      return true;
+    }
+
+    if (data !== null && data !== undefined) {
+      return true;
+    }
+
+    if (attempt < MAX_ATTEMPTS) {
+      console.debug(`[usage] fallback CAS miss by user (attempt ${attempt}/${MAX_ATTEMPTS})`);
+    }
+  }
+
+  console.warn("[usage] fallback CAS by user exhausted — debit tidak dipakai (coba lagi)");
+  return false;
+}
+
+/** CHECK credit keyed by user_id — use for tts/subtitle/video ketika login. */
+export async function checkCreditsForUser(userId: string): Promise<boolean> {
+  const period = currentPeriod();
+  const row = await fetchOrCreateByUser(userId, period);
+  return row.credits_total > 0 && row.credits_used < row.credits_total;
+}
+
+/** SET PLAN keyed by user_id — untuk flow yang punya userId. */
+export async function setPlanForUser(userId: string, plan: PlanTier): Promise<boolean> {
+  const period = currentPeriod();
+  const supabase = createServiceRoleClient();
+
+  // Pastikan baris ada (create with default free jika not exist).
+  await fetchOrCreateByUser(userId, period);
+
+  const { error } = await supabase.from(USAGE_TABLE).upsert(
+    {
+      user_id: userId,
+      period,
+      plan,
+      credits_total: PLAN_CREDITS[plan] ?? FREE_CREDITS,
+      credits_used: 0,
+      updated_at: new Date().toISOString(),
+    },
+    {
+      onConflict: "user_id,period",
+    }
+  );
+
+  if (error) {
+    console.warn("[usage] setPlanForUser error:", error.message);
     return false;
   }
   return true;
