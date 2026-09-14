@@ -59,6 +59,17 @@ export interface FootageOption {
 // Project
 // ============================================================
 
+/** State pipeline yang terpersist di kolom projects.metadata (JSONB). */
+export interface ProjectMetadata {
+  currentStep?: string;
+  subtitleSrt?: string;
+  audioProvider?: "google" | "cartesia" | "elevenlabs";
+  audioSpeed?: number;
+  audioEmotion?: string;
+  overridePlatform?: Platform | null;
+  overrideDuration?: number | null;
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -88,6 +99,8 @@ export interface Project {
    * Struktur siap untuk scene-based (lihat Scene.footage).
    */
   footage?: FootageOption;
+  /** State pipeline ter-persist: currentStep, subtitleSrt, pilihan audio, override. */
+  metadata?: ProjectMetadata;
 }
 
 // ============================================================

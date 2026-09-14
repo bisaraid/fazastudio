@@ -11,6 +11,7 @@ import {
   FootageOption,
   Genre,
   Platform,
+  ProjectMetadata,
 } from "@/lib/types";
 import { generateId } from "@/lib/utils";
 import { providerLabel } from "@/lib/constants";
@@ -42,6 +43,8 @@ interface ProjectState {
     platform: Platform;
     targetDuration: number;
   }) => Promise<void>;
+  /** Merge + persist state pipeline (kolom projects.metadata JSONB). */
+  updateProjectMetadata: (patch: Partial<ProjectMetadata>) => Promise<void>;
   advanceStep: (step: PipelineStep) => void;
   resetWizardForm: () => void;
   updateWizardForm: (data: Partial<WizardFormData>) => void;
@@ -101,6 +104,18 @@ function safeParseScript(raw: unknown): ScriptResult | undefined {
   }
 }
 
+/** Parse kolom metadata (JSONB). Return undefined jika tidak valid/kosong. */
+function safeParseMetadata(raw: unknown): ProjectMetadata | undefined {
+  if (!raw) return undefined;
+  try {
+    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (obj && typeof obj === "object") return obj as ProjectMetadata;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Normalisasi genre DB → Genre valid; "" jika invalid. */
 function normalizeGenre(raw: unknown): Genre | "" {
   const v = typeof raw === "string" ? raw.toLowerCase().trim() : "";
@@ -134,6 +149,7 @@ function mapDbRowToProjectSafe(row: any): Project | null {
   const script = safeParseScript(row.script);
   const nowIso = new Date().toISOString();
   const title = typeof row.title === "string" ? row.title : "";
+  const metadata = safeParseMetadata(row.metadata);
 
   return {
     id: row.id,
@@ -160,7 +176,8 @@ function mapDbRowToProjectSafe(row: any): Project | null {
       if (row.status === "completed" && derived !== "draft") return "completed";
       return derived as Project["status"];
     })(),
-    currentStep: "script",
+    currentStep: (metadata?.currentStep as PipelineStep) || "script",
+    metadata,
     // Derive step status dari data DB — jangan reset semua ke "pending".
     // Jika data sudah ada di DB, step dianggap "done".
     steps: {
@@ -197,8 +214,8 @@ function mapDbRowToProjectSafe(row: any): Project | null {
             strokeColor: "#000000",
             strokeWidth: 2,
           },
-          srtContent: "",
-          vttContent: "",
+          srtContent: metadata?.subtitleSrt || "",
+          vttContent: metadata?.subtitleSrt || "",
           language: "id-ID",
           // URL subtitle dari DB — penting untuk generate-video.
           url: row.subtitle_url,
@@ -248,6 +265,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       status: "draft",
       currentStep: "script",
       steps: createInitialSteps(),
+      metadata: { currentStep: "script" },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -374,6 +392,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         p.id === updatedProject.id ? updatedProject : p
       ),
     }));
+
+    // Persist subtitle srtContent → metadata (agar export SRT/VTT tidak hilang saat reload).
+    if (result?.srtContent) {
+      const metadata: ProjectMetadata = {
+        ...(currentProject.metadata || {}),
+        subtitleSrt: result.srtContent,
+      };
+      fetch("/api/projects", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: updatedProject.id, metadata }),
+      }).catch((err) =>
+        console.warn("[projectStore] setSubtitleResult persist metadata error:", err)
+      );
+    }
   },
 
   setVideoResult: (result: VideoResult) => {
@@ -507,6 +540,35 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  updateProjectMetadata: async (patch: Partial<ProjectMetadata>) => {
+    const { currentProject } = get();
+    if (!currentProject) return;
+
+    const merged: ProjectMetadata = { ...(currentProject.metadata || {}), ...patch };
+    const updatedProject = {
+      ...currentProject,
+      metadata: merged,
+      updatedAt: new Date().toISOString(),
+    };
+
+    set((state) => ({
+      currentProject: updatedProject,
+      projects: state.projects.map((p) =>
+        p.id === updatedProject.id ? updatedProject : p
+      ),
+    }));
+
+    try {
+      await fetch("/api/projects", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: updatedProject.id, metadata: merged }),
+      });
+    } catch (error) {
+      console.warn("[projectStore] updateProjectMetadata persist error:", error);
+    }
+  },
+
   advanceStep: (step: PipelineStep) => {
     const { currentProject } = get();
     if (!currentProject) return;
@@ -518,9 +580,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const nextStep = stepOrder[currentIndex + 1];
 
     if (nextStep) {
+      const metadata: ProjectMetadata = {
+        ...(currentProject.metadata || {}),
+        currentStep: nextStep,
+      };
       const updatedProject = {
         ...currentProject,
         currentStep: nextStep,
+        metadata,
         updatedAt: new Date().toISOString(),
       };
 
@@ -530,6 +597,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           p.id === updatedProject.id ? updatedProject : p
         ),
       }));
+
+      // Persist currentStep → metadata JSONB (agar reload resetting alur).
+      fetch("/api/projects", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: updatedProject.id, metadata }),
+      }).catch((err) =>
+        console.warn("[projectStore] advanceStep persist metadata error:", err)
+      );
     }
   },
 

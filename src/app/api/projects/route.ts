@@ -226,6 +226,10 @@ export async function PATCH(request: NextRequest) {
     // Field script (opsional — backward compat)
     if (body.script !== undefined) updates.script = JSON.stringify(body.script);
 
+    // Metadata pipeline (JSONB) — currentStep, subtitleSrt, pilihan audio,
+    // override platform/durasi. Disimpan apa adanya sebagai objek JSON.
+    if (body.metadata !== undefined) updates.metadata = body.metadata;
+
     // Tidak ada field yang diupdate
     if (Object.keys(updates).length === 0) {
       return NextResponse.json(
