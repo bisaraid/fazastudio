@@ -211,6 +211,7 @@ export function usePipeline() {
                 customGenre: project.customGenre,
                 duration,
                 targetDuration: project.targetDuration,
+                usedClosingIds: project.metadata?.usedClosingIds ?? [],
                 platform: project.platform,
                 identityKey: `anon:${project.id}`,
                 projectId,
@@ -242,6 +243,7 @@ export function usePipeline() {
             };
 
             store.setScriptResult(acsScript);
+            store.updateProjectMetadata({ usedClosingIds: json.data.usedClosingIds ?? [] });
             break;
           }
           case "audio": {

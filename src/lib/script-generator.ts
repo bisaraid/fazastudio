@@ -54,6 +54,7 @@ export interface GenerateScriptInput {
   identityKey?: string;
   /** Persona user (Layer 1-4) — di-inject sebagai blok pertama system prompt. */
   personaPrompt?: string;
+  usedClosingIds?: string[];
 }
 
 export interface GeneratedScene {
@@ -84,6 +85,7 @@ export interface GenerateScriptResult {
   wordCount: number;
   hookPatternUsed?: string;
   failedSegment?: number;
+  usedClosingIds: string[];
 }
 
 export interface GenerateScriptProgress {
@@ -450,8 +452,11 @@ Hindari pengulangan pola pembuka yang sama setiap generate.`;
 
   // Session seed — variasi diksi per generate (hanya runtime, tidak ke DB)
   const sessionSeed = generateSeed();
+  const STORY_ANGLES = ["orang awam yang baru tahu", "ahli yang menjelaskan simpel", "teman yang cerita pengalaman", "jurnalis yang investigasi"];
+  const angle = STORY_ANGLES[Math.floor(Math.random() * STORY_ANGLES.length)];
   prompt += `\n\nATURAN VARIASI DIKSI:
 Variasikan diksi dan struktur kalimat. Session seed: ${sessionSeed} — gunakan sebagai inspirasi tone, bukan ditulis literal.`;
+  prompt += "\n\nSUDUT PANDANG WAJIB (kontras dgn sebelum):\nBahas topik ini dari sudut pandang: "+angle+".\nPerspektif ini HARUS muncul di narasi dan diksi, jangan tulis kata literal.";
 
   // Hook selection — simple random dari static hooks
   const hookPool: HookEntry[] = [...staticHookEntries];
@@ -637,6 +642,9 @@ Outline harus mencakup:
 Format: teks biasa, 3-5 kalimat saja.`;
   }
 
+  const ORDER_PATTERNS = ["dari yang paling mencolok ke biasa", "dari konteks umum ke detail", "dari masalah ke dampak lalu solusi", "kronologis dari awal ke akhir"];
+  const orderPattern = ORDER_PATTERNS[Math.floor(Math.random()*ORDER_PATTERNS.length)];
+  prompt += "\n\nUrutan poin outline kali ini (ikuti pola ini): "+orderPattern+".";
   const systemContent =
     skeleton === "informational_arc"
       ? `Kamu adalah penulis script ${config.name} Indonesia. Buat outline berupa poin-poin informatif.`
@@ -714,7 +722,7 @@ export async function generateScriptWithAI(
     }));
 
     // Anti-repeat untuk closing strategy misteri (scope terpisah dari hook)
-    const usedClosingIds: string[] = [];
+    const usedClosingIds: string[] = [...(input.usedClosingIds??[])];
 
     // Step 1: Outline
     onProgress?.({ status: "generating_outline", message: "Membuat outline..." });
@@ -919,6 +927,7 @@ export async function generateScriptWithAI(
       estimatedDuration: Math.max(5, Math.round(wordCount / 2.4)),
       wordCount,
       hookPatternUsed,
+      usedClosingIds,
     };
   } catch (error) {
     console.error("[generateScriptWithAI] Error:", error);

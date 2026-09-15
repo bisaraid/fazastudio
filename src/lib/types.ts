@@ -68,6 +68,7 @@ export interface ProjectMetadata {
   audioEmotion?: string;
   overridePlatform?: Platform | null;
   overrideDuration?: number | null;
+  usedClosingIds?: string[];
 }
 
 export interface Project {

@@ -192,6 +192,7 @@ export async function POST(request: NextRequest) {
         affiliateInput: body.affiliateInput,
         identityKey,
         personaPrompt,
+        usedClosingIds: body.usedClosingIds,
       },
       undefined,
       undefined
@@ -264,6 +265,7 @@ export async function POST(request: NextRequest) {
         estimatedDuration: script.estimatedDuration,
         wordCount: script.wordCount,
         hookPatternUsed: script.hookPatternUsed ?? null,
+        usedClosingIds: script.usedClosingIds,
         failedSegment: script.failedSegment ?? null,
       },
     });

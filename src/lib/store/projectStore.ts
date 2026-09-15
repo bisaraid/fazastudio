@@ -500,12 +500,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { currentProject } = get();
     if (!currentProject) return;
 
+    const topicChanged = data.topic?.trim() !== (currentProject.topic?.trim() ?? "");
     const updatedProject: Project = {
       ...currentProject,
       ...data,
       // Judul project mengikuti topic (agar kartu menampilkan judul yang terisi).
       title: data.topic || currentProject.title || "",
       customGenre: data.customGenre,
+      metadata: topicChanged ? { ...(currentProject.metadata || {}), usedClosingIds: [] } : currentProject.metadata,
       updatedAt: new Date().toISOString(),
     };
 
