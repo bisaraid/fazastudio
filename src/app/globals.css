@@ -106,3 +106,35 @@
 .step-active {
   animation: progress-pulse 2s ease-in-out infinite;
 }
+
+/* Shimmer sweep untuk badge "Paling Populer — CSS-only, hanya transform */
+@keyframes shimmer-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.shimmer-sweep {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.shimmer-sweep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.18),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: shimmer-sweep 3s ease-in-out infinite;
+}

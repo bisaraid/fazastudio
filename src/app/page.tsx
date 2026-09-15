@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useProjectStore } from "@/lib/store/projectStore";
@@ -41,6 +41,38 @@ const CONTOH_SECTIONS = [
   },
 ];
 
+// Topik fallback (dipakai bila /api/ideas gagal saat pertama load).
+const FALLBACK_TOPICS = [
+  "Review skincare viral TikTok",
+  "Produk dapur murah meriah",
+  "Suplemen fitness terbaik",
+  "Gadget under 500rb",
+  "Kopi kekinian hits",
+];
+
+// Normalisasi keyword sebelum tampil sebagai chip:
+// 1) buang hashtag (#kata) 2) trim whitespace 3) potong maks 40 char + "..."
+function cleanChipText(raw: string): string {
+  const base = raw.replace(/#\S+/g, "").trim();
+  return base.length > 40 ? `${base.slice(0, 40)}...` : base;
+}
+
+// Siapkan list topik chip: dedupe keyword identik/mirip (case-insensitive,
+// basis teks yang akan ditampilkan) + bersihkan tiap keyword, batasi maks 4.
+function prepareChipTopics(raw: string[], max: number = 4): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    const cleaned = cleanChipText(item);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cleaned);
+  }
+  return out.slice(0, max);
+}
+
 function formatTime(sec: number) {
   if (!Number.isFinite(sec)) return "0:00";
   const m = Math.floor(sec / 60);
@@ -54,6 +86,77 @@ export default function LandingPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [topic, setTopic] = useState("");
+
+  // State & ref untuk efek focus field di hero (blur/dim pada elemen luar card).
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [focused, setFocused] = useState(false);
+
+  // Topik trending dari /api/ideas — null = masih loading (tampil skeleton).
+  const [trendingTopics, setTrendingTopics] = useState<string[] | null>(null);
+  // State reveal scroll-triggered untuk section di bawah hero.
+  const [revealed, setRevealed] = useState<{ bukti?: boolean; pricing?: boolean }>({});
+
+  // Auto-resize textarea: tinggi menyesuaikan isi (dipicu onInput + saat topic berubah).
+  const resizeTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
+  useEffect(() => {
+    resizeTextarea();
+  }, [resizeTextarea, topic]);
+
+  // Ambil topik trending saat homepage load (mode global: top 1 per niche, beragam);
+  // dedupe & bersihkan. Fallback ke hardcode bila gagal.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/ideas?limit=6");
+        const data: { success?: boolean; ideas?: Array<{ keyword?: unknown }> } =
+          await res.json();
+        if (!cancelled) {
+          const keywords = prepareChipTopics(
+            (data?.ideas ?? []).map((i) =>
+              typeof i.keyword === "string" ? i.keyword : ""
+            )
+          );
+          setTrendingTopics(
+            keywords.length ? keywords : prepareChipTopics(FALLBACK_TOPICS)
+          );
+        }
+      } catch {
+        if (!cancelled) setTrendingTopics(prepareChipTopics(FALLBACK_TOPICS));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Reveal scroll-triggered (opacity + translate) untuk section bukti & pricing.
+  useEffect(() => {
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          const key = entry.target.getAttribute("data-reveal");
+          if (key === "bukti" || key === "pricing") {
+            setRevealed((prev) => ({ ...prev, [key]: true }));
+            io.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.1, rootMargin: "0px 0px -50px 0px" }
+    );
+    ["bukti", "pricing"].forEach((key) => {
+      const el = document.querySelector(`[data-reveal="${key}"]`);
+      if (el) io.observe(el);
+    });
+    return () => io.disconnect();
+  }, []);
 
   // Audio preview contoh script
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -115,6 +218,8 @@ export default function LandingPage() {
     setCreating(true);
     setError(null);
     try {
+      // Bawa topik ke halaman editor (/konten/[projectId]).
+      window.sessionStorage.setItem("initial_topic", topic.trim());
       const project = await createProject({
         genre: "",
         customGenre: undefined,
@@ -235,38 +340,97 @@ export default function LandingPage() {
       </header>
 
       {/* Hero */}
-      <section className="mx-auto max-w-6xl px-4 pb-16 pt-20 text-center lg:px-8 lg:pt-28">
-        <h1 className="mx-auto max-w-3xl text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
+      <section className="relative mx-auto max-w-6xl px-4 pb-20 pt-24 text-center lg:px-8 lg:pt-32">
+        {/* Gradient subtle dari primary (depth) — CSS-only, GPU-safe */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-[-10rem] h-[28rem] w-[48rem] -translate-x-1/2 rounded-full bg-primary/5 blur-3xl"
+        />
+        {/* Overlay focus field: blur + gelapkan semua elemen di luar card hero */}
+        <div
+          aria-hidden
+          className={`fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm transition-opacity duration-300 ${
+            focused ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+        />
+        <h1 className="mx-auto max-w-3xl text-4xl font-bold leading-[1.1] tracking-tight sm:text-5xl lg:text-7xl">
           satu ide.
-          <span className="block text-primary">satu konten.</span>
+          <span className="block pb-2 text-primary">satu konten.</span>
         </h1>
-          <p className="mx-auto mt-4 max-w-lg text-sm text-muted-foreground sm:text-base">
-            AI yang meneliti, menulis dan membuat konten untukmu.
-          </p>
-        <div className="relative mx-auto mt-8 w-full max-w-2xl overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <textarea
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            rows={3}
-            disabled={creating}
-            placeholder="Ceritakan ide kontenmu..."
-            className="block w-full min-h-[132px] resize-none border-0 bg-transparent px-5 pt-4 pb-20 text-base leading-relaxed text-zinc-900 outline-none placeholder:text-zinc-400 disabled:opacity-60"
-          />
-          <Button
-            size="lg"
-            onClick={handleCobaGratis}
-            disabled={creating}
-            className="absolute bottom-4 right-4 gap-2 text-white"
-          >
-            {creating ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
-            {creating ? "Menyiapkan…" : "Coba Gratis"}
-            {!creating && <ArrowRight className="h-5 w-5" />}
-          </Button>
+        <p className="mx-auto mt-6 max-w-lg text-base leading-relaxed text-muted-foreground/70 sm:text-lg lg:mt-8">
+          AI yang meneliti, menulis dan membuat konten untukmu.
+        </p>
+        <div className="relative z-[70] mx-auto mt-10 w-full max-w-2xl lg:mt-12">
+          <div className="relative overflow-hidden rounded-2xl border border-border/80 bg-card/80 shadow-sm backdrop-blur-sm transition-all duration-300 focus-within:border-primary/40 focus-within:bg-card focus-within:shadow-lg focus-within:ring-2 focus-within:ring-primary/20">
+            <textarea
+              ref={textareaRef}
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              onInput={resizeTextarea}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              rows={2}
+              disabled={creating}
+              placeholder="Mau bikin konten tentang apa hari ini?"
+              className="block w-full min-h-[68px] resize-none overflow-hidden border-0 bg-transparent px-6 py-3 text-base leading-snug text-foreground outline-none placeholder:text-muted-foreground/70 focus:placeholder:text-muted-foreground/50 disabled:opacity-60"
+            />
+            {/* Baris bawah: saran topik (kiri) + tombol Coba Gratis (kanan) */}
+            <div className="flex items-center justify-between gap-3 px-5 pb-4">
+              <div className="flex flex-1 flex-col text-left">
+                {topic.trim().length === 0 && (
+                  <>
+                    <span className="mb-2 text-[11px] text-muted-foreground">
+                      Trending hari ini
+                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {trendingTopics === null
+                        ? Array.from({ length: 4 }).map((_, i) => (
+                            <span
+                              key={i}
+                              className="h-7 w-28 animate-pulse rounded-full bg-muted"
+                            />
+                          ))
+                        : trendingTopics.map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setTopic(s);
+                                textareaRef.current?.focus();
+                                resizeTextarea();
+                              }}
+                              className="max-w-full truncate rounded-full border border-border/60 bg-background px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
+                            >
+                              {s}
+                            </button>
+                          ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              <Button
+                size="lg"
+                onClick={handleCobaGratis}
+                disabled={creating}
+                className="shrink-0 gap-2 text-white"
+              >
+                {creating ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
+                {creating ? "Menyiapkan…" : "Coba Gratis"}
+                {!creating && <ArrowRight className="h-5 w-5" />}
+              </Button>
+            </div>
+          </div>
         </div>
-        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+        {error && <p className="relative z-[70] mt-3 text-sm text-destructive">{error}</p>}
       </section>
       {/* Bukti hasil */}
-      <section className="border-y bg-muted/40">
+      <section
+        data-reveal="bukti"
+        className={`border-y bg-muted/40 transition-all duration-500 ease-out ${
+          revealed.bukti ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+        }`}
+      >
         <div className="mx-auto max-w-4xl px-4 py-16 lg:px-8">
         <div className="rounded-2xl border bg-card p-8 shadow-sm lg:p-10">
           <div className="text-center">
@@ -367,7 +531,12 @@ export default function LandingPage() {
       </section>
 
       {/* Pricing */}
-      <section className="mx-auto max-w-5xl px-4 py-16 lg:px-8">
+      <section
+        data-reveal="pricing"
+        className={`mx-auto max-w-5xl px-4 py-16 transition-all duration-500 ease-out lg:px-8 ${
+          revealed.pricing ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+        }`}
+      >
         <div className="mb-10 text-center">
           <h2 className="text-3xl font-bold tracking-tight">Investasi kecil, hasil maksimal</h2>
           <p className="mt-3 text-muted-foreground">

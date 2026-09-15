@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useProjectStore } from "@/lib/store/projectStore";
 import { usePipeline } from "@/hooks/usePipeline";
+import { useUser } from "@/hooks/useUser";
 import { Navbar } from "@/components/layout/navbar";
 import { Button } from "@/components/ui/button";
 import { recordBehavior } from "@/lib/behavior";
@@ -84,6 +86,7 @@ export default function ProjectEditorPage() {
   const { currentProject, loadProjects, setCurrentProject, updateProjectSetup, updateProjectMetadata } =
     useProjectStore();
   const { progress, generateStep, previewAudio } = usePipeline();
+  const { user } = useUser();
 
   // ==== Pilihan audio + preview ====
   const [audioProvider, setAudioProvider] = useState<"google" | "cartesia" | "elevenlabs">("cartesia");
@@ -96,7 +99,11 @@ export default function ProjectEditorPage() {
 
   const [profile, setProfile] = useState<{ mode: string; niche: string; gaya?: string; cerita?: string } | null>(null);
   const [topic, setTopic] = useState("");
+  // Guard hydrate topik: hanya sekali per project (jangan timpa ketikan user).
+  const hydratedFor = useRef<string | null>(null);
   const [editOpen, setEditOpen] = useState(true);
+  // Gate login anonim untuk step audio.
+  const [authGateOpen, setAuthGateOpen] = useState(false);
   const [overridePlatform, setOverridePlatform] = useState<Platform | null>(null);
   const [overrideDuration, setOverrideDuration] = useState<number | null>(null);
   const [trends, setTrends] = useState<{ keyword: string; source: string }[]>([]);
@@ -113,6 +120,16 @@ export default function ProjectEditorPage() {
       })
       .catch(() => {});
     return () => { cancelled = true; };
+  }, []);
+
+  // Bawa topik dari homepage ("Coba Gratis"): isi ke field topik lalu hapus.
+  useEffect(() => {
+    const initial =
+      typeof window !== "undefined" ? window.sessionStorage.getItem("initial_topic") : null;
+    if (initial != null && initial.trim()) {
+      setTopic(initial.trim());
+      window.sessionStorage.removeItem("initial_topic");
+    }
   }, []);
 
   useEffect(() => {
@@ -139,6 +156,15 @@ export default function ProjectEditorPage() {
     })();
     return () => { cancelled = true; };
   }, [projectId, loadProjects, setCurrentProject]);
+
+  useEffect(function () {
+    if (!currentProject) return;
+    if (currentProject.id !== projectId) return;
+    if (hydratedFor.current === projectId) return;
+    const t = currentProject.topic?.trim();
+    if (t) setTopic(t);
+    hydratedFor.current = projectId;
+  }, [projectId, currentProject?.id]);
 
   // Restore pilihan user dari metadata (persist)
   useEffect(() => {
@@ -210,9 +236,15 @@ export default function ProjectEditorPage() {
 
   const handleContinueAudio = useCallback(async () => {
     if (isRunning) return;
+    // Login wall anonim: bukan login → tampilkan gate, jangan generate audio dulu.
+    if (!user) {
+      setAuthGateOpen(true);
+      return;
+    }
+    setAuthGateOpen(false);
     recordBehavior("lanjut_script_langsung", projectId);
     await generateStep("audio", projectId, { provider: audioProvider, speed: audioSpeed, emotion: audioProvider === "cartesia" ? audioEmotion : undefined });
-  }, [isRunning, projectId, generateStep, audioProvider, audioSpeed, audioEmotion]);
+  }, [isRunning, user, projectId, generateStep, audioProvider, audioSpeed, audioEmotion]);
 
   const handleRegenAudio = useCallback(async () => {
     if (isRunning) return;
@@ -374,6 +406,42 @@ export default function ProjectEditorPage() {
           </div>
 
           <div ref={audioRef}>
+            {/* Login wall anonim: muncul di atas AudioCard saat klik "Lanjut ke Audio" */}
+            <div
+              className={`overflow-hidden transition-all duration-500 ease-out ${
+                authGateOpen
+                  ? "mb-4 max-h-[560px] translate-y-0 opacity-100"
+                  : "max-h-0 -translate-y-2 opacity-0"
+              }`}
+              aria-hidden={!authGateOpen}
+            >
+              <div className="rounded-2xl border border-primary/25 bg-card/90 p-6 shadow-sm backdrop-blur-sm">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-foreground sm:text-base">
+                      Script kamu sudah siap!
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Daftar gratis untuk lanjut ke audio dan video.
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-stretch gap-2 sm:items-end sm:text-right">
+                    <Button asChild className="w-full sm:w-auto">
+                      <Link href="/daftar">Daftar Gratis</Link>
+                    </Button>
+                    <Link
+                      href="/masuk"
+                      className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      Sudah punya akun? Masuk
+                    </Link>
+                    <p className="text-xs text-muted-foreground/70">
+                      Gratis tanpa kartu kredit • Scriptmu tersimpan otomatis
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
             <AudioCard
               mode={audioMode}
               audio={projectAudio}

@@ -20,14 +20,60 @@ export async function GET(request: NextRequest) {
   const niche = searchParams.get("niche") ?? "";
   const limit = Math.min(parseInt(searchParams.get("limit") ?? "5", 10), 10);
 
-  if (!niche) {
-    return NextResponse.json(
-      { success: false, error: "Parameter 'niche' wajib diisi" },
-      { status: 400 }
-    );
-  }
-
   const supabase = createServiceRoleClient();
+
+  // ===== Mode GLOBAL (tanpa niche): top 1 per niche, maks 6, urut score tertinggi =====
+  // Tidak wajib niche — dipakai homepage untuk menampilkan trending lintas kategori.
+  if (!niche) {
+    const cutoff = new Date(Date.now() - CACHE_TTL_MS).toISOString();
+    const GLOBAL_MAX = 6;
+
+    // Ambil hasil yang sudah ORDER BY score desc, lalu ambil 1 (paling tinggi) per niche.
+    // Ini setara "distinct on (niche_slug) ... order by niche_slug, score desc",
+    // tanpa index baru & tanpa fitur distinctOn (belum didukung supabase-js versi ini).
+    const collect = async (requireFresh: boolean) => {
+      let query = supabase
+        .from("trend_ideas")
+        .select("keyword, niche_slug, score")
+        .eq("source", "youtube")
+        .order("score", { ascending: false });
+      if (requireFresh) query = query.gte("fetched_at", cutoff);
+
+      const { data } = await query;
+      const seen = new Set<string>();
+      const out: Array<{ keyword: string; niche_slug: string; score: number }> = [];
+      for (const r of (data ?? []) as Array<{
+        keyword?: unknown;
+        niche_slug?: unknown;
+        score?: unknown;
+      }>) {
+        const niche = typeof r.niche_slug === "string" ? r.niche_slug : "";
+        if (!niche || seen.has(niche)) continue;
+        seen.add(niche);
+        out.push({
+          keyword: typeof r.keyword === "string" ? r.keyword : "",
+          niche_slug: niche,
+          score: Number(r.score ?? 0),
+        });
+        if (out.length >= GLOBAL_MAX) break;
+      }
+      return out;
+    };
+
+    // Fallback: jika hasil < 3, ambil tanpa filter fetched_at (data lama > kosong).
+    let ideas = await collect(true);
+    if (ideas.length < 3) {
+      const stale = await collect(false);
+      if (stale.length > ideas.length) ideas = stale;
+    }
+
+    return NextResponse.json({
+      success: true,
+      source: "global",
+      count: ideas.length,
+      ideas,
+    });
+  }
 
   // 1. Cek cache (< 6 jam)
   const cacheCutoff = new Date(Date.now() - CACHE_TTL_MS).toISOString();
