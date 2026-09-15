@@ -145,6 +145,20 @@ function estimateWordsForDuration(seconds: number): number {
   return Math.max(20, words);
 }
 
+function cutAtSentenceBoundary(words: string[], maxWords: number): string {
+  const windowText = words.slice(0, maxWords).join(" ");
+  let cut = windowText.lastIndexOf(".");
+  cut = Math.max(cut, windowText.lastIndexOf("!"));
+  cut = Math.max(cut, windowText.lastIndexOf("?"));
+  if (cut !==-1) return windowText.slice(0, cut + 1).trim();
+  const full = words.join(" ");
+  let fullCut = full.lastIndexOf(".");
+  fullCut = Math.max(fullCut, full.lastIndexOf("!"));
+  fullCut = Math.max(fullCut, full.lastIndexOf("?"));
+  if (fullCut !==-1) return full.slice(0, fullCut + 1).trim();
+  return windowText.trim();
+}
+
 /** Potong narasi setiap scene agar total kata tidak melebihi target.
  *  Mengembalikan salinan baru, narasi asli tidak diubah.
  *  Strategi: alokasikan budget kata per scene secara proporsional, lalu
@@ -168,7 +182,7 @@ function enforceWordBudget(
       .split(/\s+/)
       .filter(Boolean);
     const budget = Math.max(1, Math.round(words.length * ratio));
-    const trimmed = words.slice(0, budget).join(" ");
+    const trimmed = cutAtSentenceBoundary(words, budget);
     return { ...s, content: trimmed, narration: trimmed };
   });
 
@@ -181,7 +195,7 @@ function enforceWordBudget(
     for (let i = raw.length - 1; i >= 0 && over > 0; i--) {
       const w = (raw[i].content || "").split(/\s+/).filter(Boolean);
       const keep = Math.max(1, w.length - over);
-      const trimmed = w.slice(0, keep).join(" ");
+      const trimmed = cutAtSentenceBoundary(w, keep);
       over -= (w.length - keep);
       raw[i] = { ...raw[i], content: trimmed, narration: trimmed };
     }
@@ -521,11 +535,16 @@ async function generateSegment(
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_tokens: 2048,
+      max_tokens: 3072,
       response_format: { type: "json_object" },
       temperature: (explicitConfig || getCategoryConfig(categoryId)).temperature ?? 0.7,
       signal,
     });
+
+  if (result.finish_reason === "length") {
+    console.warn("[Script] terpotong (length)");
+    throw new Error("Segmen script terpotong oleh limit token. Ulangi generate.");
+  }
 
     const parsed = parseScriptJson(result.content);
     if (!parsed || !parsed.scenes || parsed.scenes.length === 0) {
