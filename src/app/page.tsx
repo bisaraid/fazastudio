@@ -158,6 +158,17 @@ export default function LandingPage() {
     return () => io.disconnect();
   }, []);
 
+  // Scroll ke section #harga (di landing) — fallback ke halaman /harga.
+  const scrollToHarga = useCallback(
+    (e: { preventDefault: () => void }) => {
+      e.preventDefault();
+      const el = document.getElementById("harga");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      else router.push("/harga");
+    },
+    [router]
+  );
+
   // Audio preview contoh script
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioAvailable, setAudioAvailable] = useState(true);
@@ -234,7 +245,11 @@ export default function LandingPage() {
         voiceEmotion: "netral",
         visualStyle: "stock",
       });
-      if (project?.id) router.push(`/konten/${project.id}`);
+      if (project?.id) {
+        // Tandai agar editor langsung auto-generate script untuk project ini.
+        window.sessionStorage.setItem("auto_generate", project.id);
+        router.push(`/konten/${project.id}`);
+      }
     } catch {
       setError("Gagal membuat sesi. Coba lagi.");
       setCreating(false);
@@ -325,7 +340,7 @@ export default function LandingPage() {
             <>
               <nav className="hidden items-center gap-1 md:flex">
                 <Button variant="ghost" size="sm" asChild>
-                  <Link href="/harga">Harga</Link>
+                  <a href="#harga" onClick={scrollToHarga}>Harga</a>
                 </Button>
                 <Button variant="ghost" size="sm" asChild>
                   <Link href="/masuk">Masuk</Link>
@@ -532,8 +547,9 @@ export default function LandingPage() {
 
       {/* Pricing */}
       <section
+        id="harga"
         data-reveal="pricing"
-        className={`mx-auto max-w-5xl px-4 py-16 transition-all duration-500 ease-out lg:px-8 ${
+        className={`mx-auto max-w-5xl scroll-mt-24 px-4 py-16 transition-all duration-500 ease-out lg:px-8 ${
           revealed.pricing ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
         }`}
       >
@@ -572,7 +588,7 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 py-8 text-sm text-muted-foreground sm:flex-row sm:justify-between lg:px-8">
           <span>© {new Date().getFullYear()} Faza Studio</span>
           <div className="flex gap-4">
-            <Link href="/harga" className="hover:text-foreground">Harga</Link>
+            <a href="#harga" onClick={scrollToHarga} className="hover:text-foreground">Harga</a>
             <Link href="/masuk" className="hover:text-foreground">Masuk</Link>
           </div>
         </div>
