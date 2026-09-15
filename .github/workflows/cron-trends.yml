@@ -12,6 +12,6 @@ jobs:
     steps:
       - name: Ping /api/cron/trends
         run: |
-          curl -fsS \
+          curl -fsSL \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "https://fazastudio.my.id/api/cron/trends"
