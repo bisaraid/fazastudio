@@ -56,7 +56,7 @@ export async function middleware(request: NextRequest) {
   const isGuestOnly = GUEST_ONLY.some((p) => pathname === p);
 
   // Route publik yang tidak butuh keputusan auth (/, /harga, /mulai, /konten, API dll.)
-  if (!isLoginRequired && !isGuestOnly) {
+  if (!isLoginRequired && !isGuestOnly && pathname !== "/") {
     return NextResponse.next({ request });
   }
 
@@ -87,6 +87,11 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const url = request.nextUrl.clone();
+
+  if (user && pathname === "/") {
+    url.pathname = "/beranda";
+    return NextResponse.redirect(url);
+  }
 
   if (user && isGuestOnly) {
     url.pathname = "/beranda";
