@@ -1,7 +1,7 @@
 "use client";
 import { useState, type ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { CheckCircle2, ChevronDown, ChevronUp, Loader2, Lock } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 
 export type CardMode = "idle" | "active" | "done";
 
@@ -52,16 +52,7 @@ export function PipelineCard({
   );
 
   if (mode === "idle") {
-    return (
-      <Card key={mode} className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
-        <CardContent className="p-4">
-          {header(
-            <Lock className="h-4 w-4 text-muted-foreground" />,
-            <span className="text-xs text-muted-foreground">Belum dikerjakan</span>
-          )}
-        </CardContent>
-      </Card>
-    );
+    return null;
   }
 
   if (mode === "active") {
@@ -119,7 +110,7 @@ export function PipelineCard({
 
   // done — collapsed by default, expandable
   return (
-    <Card key={mode} className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+    <Card key={mode} className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300 opacity-60">
       <CardContent className="p-4 space-y-2">
         <button
           type="button"

@@ -231,11 +231,9 @@ export default function ProjectEditorPage() {
   const videoHas = !!projectVideo?.url;
   const runningStep: StepName | null = progress.isRunning ? (progress.currentStep as StepName) : null;
   const frontier: StepName | null = videoHas ? "video" : audioHas ? "audio" : scriptHas ? "script" : null;
-  const modeFor = (step: StepName, has: boolean): CardMode =>
-    runningStep === step ? "active" : has ? (frontier === step ? "active" : "done") : "idle";
-  const scriptMode = modeFor("script", scriptHas);
-  const audioMode = modeFor("audio", audioHas);
-  const videoMode = modeFor("video", videoHas);
+  const scriptMode: CardMode = runningStep === "script" ? "active" : frontier === "video" ? "done" : frontier === "audio" ? "done" : frontier === "script" ? "done" : "active";
+  const audioMode: CardMode = runningStep === "audio" ? "active" : frontier === "video" ? "done" : frontier === "audio" ? "done" : frontier === "script" ? "active" : "idle";
+  const videoMode: CardMode = runningStep === "video" ? "active" : frontier === "video" ? "done" : frontier === "audio" ? "active" : frontier === "script" ? "idle" : "idle";
 
   // Auto-scroll ke card aktif saat step berubah
   const scriptRef = useRef<HTMLDivElement | null>(null);
