@@ -14,4 +14,4 @@ jobs:
         run: |
           curl -fsSL \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://fazastudio.my.id/api/cron/trends"
+            "https://www.fazastudio.my.id/api/cron/trends"
