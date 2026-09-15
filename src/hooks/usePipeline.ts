@@ -629,6 +629,45 @@ export function usePipeline() {
     [generateSingleStep, store]
   );
 
+  // Auto-chain behavior-aware: script → (audio+subtitle) → video in un colpo,
+  // tenendo isRunning=true per tutto il percorso (niente flicker tra gli step).
+  const runAutoChain = useCallback(
+    async (projectId: string, opts?: { audioOptions?: AudioOptions }) => {
+      setProgress((prev) => ({
+        ...prev,
+        isRunning: true,
+        error: null,
+        currentStep: "script",
+        progress: 0,
+        statusMessage: STEP_MESSAGES.script,
+      }));
+      try {
+        const okScript = await generateSingleStep("script", projectId);
+        if (okScript !== true) return false;
+        store.advanceStep("script");
+
+        // AUDIO + SUBTITLE (subtitle = dependency interna di video)
+        const okAudio = await generateSingleStep("audio", projectId, opts?.audioOptions);
+        if (okAudio !== true) return false;
+        store.advanceStep("audio");
+        const freshProject = useProjectStore.getState().projects.find((p) => p.id === projectId);
+        await generateSingleStep("subtitle", projectId, undefined, freshProject?.audio?.url);
+
+        // VIDEO
+        const okVideo = await generateSingleStep("video", projectId);
+        if (okVideo !== true) return false;
+        store.advanceStep("video");
+        return true;
+      } finally {
+        setProgress((prev) => ({ ...prev, isRunning: false }));
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("usage:refresh"));
+        }
+      }
+    },
+    [generateSingleStep, store]
+  );
+
   // Preview audio: fetch 7 kata pertama TANPA menyentuh progress/isRunning/step status.
   // Kembalikan Blob URL audio preview (string) atau null jika gagal.
   const previewAudio = useCallback(
@@ -725,6 +764,7 @@ export function usePipeline() {
   return {
     progress,
     generateStep,
+    runAutoChain,
     previewAudio,
     resetProgress,
   };

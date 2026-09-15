@@ -1,10 +1,11 @@
 "use client";
+import { useState } from "react";
 import { type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { providerLabel, VOICE_EMOTIONS } from "@/lib/constants";
 import type { ScriptResult } from "@/lib/types";
-import { ArrowDown, Headphones, Loader2, Play, RefreshCw } from "lucide-react";
+import { ArrowDown, ChevronDown, Headphones, Loader2, Play, RefreshCw } from "lucide-react";
 import { PipelineCard, CardMode } from "./PipelineCard";
 
 export interface ScriptCardProps {
@@ -37,7 +38,25 @@ export function ScriptCard(p: ScriptCardProps) {
     ? `${p.script.scenes?.length ?? 0} scene · ${p.script.wordCount ?? 0} kata`
     : undefined;
 
-  const audioOptions = p.script && (
+  const [audioOpen, setAudioOpen] = useState(false);
+
+  // Controlli audio in accordion chiuso di default — non bloccano il flusso.
+  const audioOpenBtn = p.script && (
+    <button
+      type="button"
+      onClick={() => setAudioOpen(!audioOpen)}
+      className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/40"
+      aria-expanded={audioOpen}
+    >
+      <span className="flex items-center gap-2">
+        <Headphones className="h-4 w-4" />
+        Pengaturan Audio
+      </span>
+      <ChevronDown className={`h-4 w-4 transition-transform duration-300 ${audioOpen ? "rotate-180" : ""}`} />
+    </button>
+  );
+
+  const audioOptions = p.script && audioOpen && (
     <div className="space-y-3 rounded-lg border bg-muted/40 p-3">
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-xs font-medium text-muted-foreground">Suara</label>
@@ -139,6 +158,7 @@ export function ScriptCard(p: ScriptCardProps) {
           {p.script.fullScript}
         </div>
       )}
+      {audioOpenBtn}
       {audioOptions}
       {actions}
     </PipelineCard>

@@ -114,7 +114,9 @@ export default function LandingPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/ideas?limit=6");
+        // Personalized suggest (fallback global utk anonim) — reste global-flow lama
+        // tetap dipakai kalau endpoint gagal.
+        const res = await fetch("/api/suggest?limit=6");
         const data: { success?: boolean; ideas?: Array<{ keyword?: unknown }> } =
           await res.json();
         if (!cancelled) {

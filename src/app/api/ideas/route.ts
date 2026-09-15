@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { fetchTrendingByNiche } from "@/lib/trend-youtube";
+import { fetchTrendingByNiche, SOURCE_YOUTUBE_US } from "@/lib/trend-youtube";
 import { scoreTrends, getTopTrends } from "@/lib/trend-scoring";
 import { checkRateLimit, buildBurstKey, getClientIp } from "@/lib/rate-limit";
 import { getServerIdentity } from "@/lib/identity";
@@ -19,8 +19,31 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const niche = searchParams.get("niche") ?? "";
   const limit = Math.min(parseInt(searchParams.get("limit") ?? "5", 10), 10);
+  // Sinyal: "now" (default, trending sekarang) | "upcoming" (akan trending dari youtube_us).
+  const signal = searchParams.get("signal") ?? "now";
 
   const supabase = createServiceRoleClient();
+
+  // ===== Mode "AKAN TRENDING" (early-signal US) =====
+  // Keyword source "youtube_us" yang belum muncul di keyword source "youtube".
+  // Backward-compatible: default "now" → perilaku lama tidak berubah.
+  if (signal === "upcoming") {
+    const { getAkanTrending } = await import("@/lib/trend-engine");
+    const ideas = await getAkanTrending(niche);
+    return NextResponse.json({
+      success: true,
+      signal,
+      source: SOURCE_YOUTUBE_US,
+      count: ideas.length,
+      ideas: ideas.slice(0, limit).map((i) => ({
+        keyword: i.keyword,
+        niche_slug: i.niche_slug,
+        score: i.score,
+        velocity: i.velocity ?? null,
+        trend_direction: i.trend_direction ?? "up",
+      })),
+    });
+  }
 
   // ===== Mode GLOBAL (tanpa niche): top 1 per niche, maks 6, urut score tertinggi =====
   // Tidak wajib niche — dipakai homepage untuk menampilkan trending lintas kategori.
@@ -34,18 +57,20 @@ export async function GET(request: NextRequest) {
     const collect = async (requireFresh: boolean) => {
       let query = supabase
         .from("trend_ideas")
-        .select("keyword, niche_slug, score")
+        .select("keyword, niche_slug, score, velocity, trend_direction")
         .eq("source", "youtube")
         .order("score", { ascending: false });
       if (requireFresh) query = query.gte("fetched_at", cutoff);
 
       const { data } = await query;
       const seen = new Set<string>();
-      const out: Array<{ keyword: string; niche_slug: string; score: number }> = [];
+      const out: Array<{ keyword: string; niche_slug: string; score: number; velocity: number | null; trend_direction: string | null }> = [];
       for (const r of (data ?? []) as Array<{
         keyword?: unknown;
         niche_slug?: unknown;
         score?: unknown;
+        velocity?: unknown;
+        trend_direction?: unknown;
       }>) {
         const niche = typeof r.niche_slug === "string" ? r.niche_slug : "";
         if (!niche || seen.has(niche)) continue;
@@ -54,6 +79,8 @@ export async function GET(request: NextRequest) {
           keyword: typeof r.keyword === "string" ? r.keyword : "",
           niche_slug: niche,
           score: Number(r.score ?? 0),
+          velocity: r.velocity === null || r.velocity === undefined ? null : Number(r.velocity),
+          trend_direction: typeof r.trend_direction === "string" ? r.trend_direction : null,
         });
         if (out.length >= GLOBAL_MAX) break;
       }
@@ -69,6 +96,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      signal: "now",
       source: "global",
       count: ideas.length,
       ideas,
@@ -89,6 +117,7 @@ export async function GET(request: NextRequest) {
   if (cached && cached.length >= 3) {
     return NextResponse.json({
       success: true,
+      signal: "now",
       source: "youtube",
       ideas: cached.map((row) => ({
         keyword: row.keyword,
@@ -98,6 +127,8 @@ export async function GET(request: NextRequest) {
         youtubeTitle: row.youtube_title,
         youtubeChannel: row.youtube_channel,
         youtubeViews: row.youtube_views,
+        velocity: row.velocity === null || row.velocity === undefined ? null : Number(row.velocity),
+        trend_direction: typeof row.trend_direction === "string" ? row.trend_direction : null,
       })),
     });
   }
@@ -129,6 +160,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      signal: "now",
       source: "youtube",
       ideas: topTrends.map((t) => ({
         keyword: t.keyword,
@@ -138,6 +170,8 @@ export async function GET(request: NextRequest) {
         youtubeTitle: t.youtubeTitle,
         youtubeChannel: t.youtubeChannel,
         youtubeViews: t.youtubeViews,
+        velocity: null,
+        trend_direction: null,
       })),
     });
   }
@@ -187,12 +221,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      signal: "now",
       source: "ai_fallback",
       ideas: aiIdeas.map((idea) => ({ keyword: idea, score: 0, breakdown: {} })),
     });
   }
 
-  return NextResponse.json({ success: true, source: "none", ideas: [] });
+  return NextResponse.json({ success: true, signal: "now", source: "none", ideas: [] });
 }
 
 /**

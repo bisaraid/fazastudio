@@ -66,44 +66,103 @@ async function tryFetchExact(
   return (data as { prompt?: string } | null)?.prompt ?? null;
 }
 
+export interface BehaviorPreferences {
+  /** Provider paling sering dipakai dari kolom value (best-effort). */
+  provider?: string;
+  /** Rata-rata durasi (detik) dari kolom value. */
+  duration?: number;
+  /** Platform paling sering dipakai dari kolom value. */
+  platform?: string;
+}
+
+export interface BehaviorSignals {
+  regen: number;
+  lanjut: number;
+  /** Preferensi agregat dari kolom behavior_events.value (jsonb), best-effort. */
+  preferences: BehaviorPreferences;
+}
+
 /**
  * Baca behavior_events user 30 hari terakhir dan hitung rasio
- * "sering regen" vs "sering lanjut langsung".
+ * "sering regen" vs "sering lanjut langsung", plus agregasi preferensi
+ * (provider terbanyak, durasi rata-rata, platform terbanyak) dari kolom `value`.
  *
- * Kembalikan { regen, lanjut } — dipakai untuk menyesuaikan output persona.
- * Best-effort: kalau error/env tak tersedia → { regen: 0, lanjut: 0 } (netral).
+ * Kembalikan { regen, lanjut, preferences } — dipakai untuk menyesuaikan output persona.
+ * Best-effort: kalau error/env tak tersedia → netral.
  */
-async function readBehaviorSignals(userId?: string): Promise<{ regen: number; lanjut: number }> {
-  if (!userId) return { regen: 0, lanjut: 0 };
+export async function readBehaviorSignals(userId?: string): Promise<BehaviorSignals> {
+  const empty = () => ({ regen: 0, lanjut: 0, preferences: {} as BehaviorPreferences });
+  if (!userId) return empty();
 
   let supabase;
   try {
     const mod = await import("@/lib/supabase/service");
     supabase = mod.createServiceRoleClient();
   } catch {
-    return { regen: 0, lanjut: 0 };
+    return empty();
   }
 
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   try {
     const { data, error } = await supabase
       .from("behavior_events")
-      .select("event_type")
+      .select("event_type,value")
       .eq("user_id", userId)
       .gte("created_at", since);
 
-    if (error || !data) return { regen: 0, lanjut: 0 };
+    if (error || !data) return empty();
 
     let regen = 0;
     let lanjut = 0;
-    for (const row of data as { event_type: string }[]) {
+    const providerSeen = new Map<string, number>();
+    const platformSeen = new Map<string, number>();
+    const durations: number[] = [];
+    for (const row of data as { event_type: string; value?: unknown }[]) {
       if (row.event_type === "regen_script" || row.event_type === "regen_audio") regen++;
       if (row.event_type === "lanjut_script_langsung") lanjut++;
+
+      const v = row.value;
+      if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+      const doc = v as Record<string, unknown>;
+      if (typeof doc.provider === "string" && doc.provider) {
+        providerSeen.set(doc.provider, (providerSeen.get(doc.provider) ?? 0) + 1);
+      }
+      if (typeof doc.platform === "string" && doc.platform) {
+        platformSeen.set(doc.platform, (platformSeen.get(doc.platform) ?? 0) + 1);
+      }
+      if (typeof doc.duration === "number" && Number.isFinite(doc.duration)) {
+        durations.push(doc.duration);
+      }
     }
-    return { regen, lanjut };
+    return {
+      regen,
+      lanjut,
+      preferences: {
+        provider: topByCount(providerSeen),
+        platform: topByCount(platformSeen),
+        duration: durations.length ? avg(durations) : undefined,
+      },
+    };
   } catch {
-    return { regen: 0, lanjut: 0 };
+    return empty();
   }
+}
+
+/** Ambil kunci dengan frekuensi tertinggi (mode); undefined bila kosong. */
+function topByCount(map: Map<string, number>): string | undefined {
+  let best: string | undefined;
+  let bestCount = 0;
+  map.forEach((c, k) => {
+    if (c > bestCount) {
+      bestCount = c;
+      best = k;
+    }
+  });
+  return best;
+}
+
+function avg(nums: number[]): number {
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
 }
 
 /**

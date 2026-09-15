@@ -30,10 +30,19 @@ export async function POST(request: NextRequest) {
 
   let eventType = "";
   let projectId: string | null = null;
+  let value: Record<string, unknown> | null = null;
   try {
     const body = await request.json();
     eventType = typeof body?.eventType === "string" ? body.eventType : "";
     projectId = typeof body?.projectId === "string" ? body.projectId : null;
+    // value opsional (jsonb). Hanya dipakai bila merupakan objek plain (bukan array/null).
+    if (body?.value && typeof body.value === "object" && !Array.isArray(body.value)) {
+      const v: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(body.value as Record<string, unknown>)) {
+        if (typeof k === "string") v[k] = val;
+      }
+      if (Object.keys(v).length > 0) value = v;
+    }
   } catch {
     eventType = "";
   }
@@ -45,11 +54,14 @@ export async function POST(request: NextRequest) {
   // Insert best-effort via service role (bypass RLS). Jangan sampai throw.
   try {
     const svc = createServiceRoleClient();
-    await svc.from("behavior_events").insert({
+    // Retro-compat: kalau tidak ada value → biarkan kolom null (tidak diset).
+    const insert: Record<string, unknown> = {
       user_id: userId,
       project_id: projectId,
       event_type: eventType,
-    });
+    };
+    if (value) insert.value = value;
+    await svc.from("behavior_events").insert(insert);
   } catch (e) {
     // Hanya log; user tidak perlu tahu. Tidak menghentikan apapun.
     console.error("[behavior] insert gagal (diabaikan):", (e as Error)?.message);

@@ -9,6 +9,7 @@ import { useUser } from "@/hooks/useUser";
 import { Navbar } from "@/components/layout/navbar";
 import { Button } from "@/components/ui/button";
 import { recordBehavior } from "@/lib/behavior";
+import { readPreferences, recordPreference } from "@/lib/preferences";
 import { Genre, Platform } from "@/lib/types";
 import { Sparkles, Loader2, Pencil, ChevronDown, ChevronUp } from "lucide-react";
 import { ScriptCard } from "@/components/pipeline/ScriptCard";
@@ -85,11 +86,11 @@ export default function ProjectEditorPage() {
   const projectId = params.projectId as string;
   const { currentProject, loadProjects, setCurrentProject, updateProjectSetup, updateProjectMetadata } =
     useProjectStore();
-  const { progress, generateStep, previewAudio } = usePipeline();
+  const { progress, generateStep, runAutoChain, previewAudio } = usePipeline();
   const { user } = useUser();
 
   // ==== Pilihan audio + preview ====
-  const [audioProvider, setAudioProvider] = useState<"google" | "cartesia" | "elevenlabs">("cartesia");
+  const [audioProvider, setAudioProvider] = useState<"google" | "cartesia" | "elevenlabs">("google");
   const [audioSpeed, setAudioSpeed] = useState(1.0);
   const [audioEmotion, setAudioEmotion] = useState<string>("netral");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -101,7 +102,7 @@ export default function ProjectEditorPage() {
   const [topic, setTopic] = useState("");
   // Guard hydrate topik: hanya sekali per project (jangan timpa ketikan user).
   const hydratedFor = useRef<string | null>(null);
-  const [editOpen, setEditOpen] = useState(true);
+  const [editOpen, setEditOpen] = useState(false);
   // Gate login anonim untuk step audio.
   const [authGateOpen, setAuthGateOpen] = useState(false);
   // Guard auto-generate script dari homepage ("Coba Gratis") — hanya sekali per project.
@@ -138,14 +139,35 @@ export default function ProjectEditorPage() {
     if (!profile?.niche) return;
     let cancelled = false;
     setTrendsLoading(true);
-    fetch(`/api/ideas?niche=${encodeURIComponent(profile.niche)}&limit=5`)
+
+    // Personalized suggest dulu; kalau returned false/kosong → fallback per-niche lama.
+    const fetchPerNicheFallback = () =>
+      fetch(`/api/ideas?niche=${encodeURIComponent(profile.niche!)}&limit=5`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (cancelled) return;
+          if (d?.success && Array.isArray(d.ideas)) {
+            setTrends(d.ideas.map((i: any) => ({ keyword: i.keyword, source: d.source })));
+          }
+        })
+        .catch(() => {})
+        .finally(() => !cancelled && setTrendsLoading(false));
+
+    fetch("/api/suggest?limit=5")
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;
-        if (data?.success && Array.isArray(data.ideas)) setTrends(data.ideas.map((i: any) => ({ keyword: i.keyword, source: data.source })));
+        if (data?.success && Array.isArray(data.ideas) && data.ideas.length) {
+          // Personal: tampil label "Akan trending" bila sinyalnya up-coming (youtube_us).
+          setTrends(
+            data.ideas.map((i: any) => ({ keyword: i.keyword, source: data.source }))
+          );
+          return;
+        }
+        return fetchPerNicheFallback();
       })
-      .catch(() => {})
-      .finally(() => !cancelled && setTrendsLoading(false));
+      .catch(() => fetchPerNicheFallback());
+
     return () => { cancelled = true; };
   }, [profile?.niche]);
 
@@ -230,18 +252,63 @@ export default function ProjectEditorPage() {
     await generateStep("script", projectId);
   }, [topic, isRunning, profile, activePlatform, activeDuration, updateProjectSetup, generateStep, projectId]);
 
-  // Auto-generate script jika datang dari homepage "Coba Gratis" (langsung proses generate).
+  // Auto-chain behavior-aware: per login script→audio→video automatico;
+  // anonimo solo script (gate audio resta nello ScriptCard).
+  const handleAutoRun = useCallback(async () => {
+    if (!topic.trim() || isRunning) return;
+
+    // Preferenze behavior (più scelto) > profilo > default tiktok/30/google.
+    // Hybrid: DB untuk user login, fallback localStorage untuk anonim/gagal.
+    const prefs = await readPreferences();
+    const platform: Platform =
+      (prefs.platform as Platform) ?? (profile ? defaultPlatformFor(profile.mode) : "tiktok");
+    const targetDuration =
+      prefs.duration != null
+        ? prefs.duration
+        : (profile ? defaultDurationFor(profile.mode, platform) : 30);
+    const provider = (prefs.provider as "google" | "cartesia" | "elevenlabs") ?? "google";
+    const mode = profile?.mode || "";
+    const niche = profile?.niche || "";
+    const genre = genreForNiche(mode, niche);
+
+    await updateProjectSetup({ genre, customGenre: undefined, topic: topic.trim(), platform, targetDuration });
+
+    // Anonimo: fermati a script (nessun trigger audio). Login: chain completa.
+    if (!user) {
+      await generateStep("script", projectId);
+      return;
+    }
+    // Segnale behavior "lanjut langsung" registrato anche in auto (no click manuale).
+    recordBehavior("lanjut_script_langsung", projectId, {
+      provider: audioProvider,
+      speed: audioSpeed,
+      emotion: audioEmotion,
+      platform: activePlatform,
+      duration: activeDuration,
+    });
+    await runAutoChain(projectId, {
+      audioOptions: {
+        provider,
+        speed: audioSpeed,
+        emotion: provider === "cartesia" ? audioEmotion : undefined,
+      },
+    });
+  }, [topic, isRunning, profile, user, projectId, updateProjectSetup, generateStep, runAutoChain, audioProvider, audioSpeed, audioEmotion, activePlatform, activeDuration]);
+
+  // Auto-generate se arriva dalla homepage "Coba Gratis" (lancia auto-chain/login, script per anonimo).
   useEffect(() => {
     if (!currentProject) return;
     if (currentProject.id !== projectId) return;
     if (autoGeneratedRef.current === projectId) return;
     if (window.sessionStorage.getItem("auto_generate") !== projectId) return;
-    // Tunggu topik ter-hydrate (dari initial_topic / project.topic).
+    // Attendi topic idratato (da initial_topic / project.topic).
     if (!topic.trim()) return;
+    // Per login attendi anche il profilo (default genre/platform/durata dalla persona).
+    if (user && !profile) return;
     autoGeneratedRef.current = projectId;
     window.sessionStorage.removeItem("auto_generate");
-    void handleGenerate();
-  }, [currentProject, projectId, topic, handleGenerate]);
+    void handleAutoRun();
+  }, [currentProject, projectId, topic, user, profile, handleAutoRun]);
 
   const handleRegenScript = useCallback(async () => {
     if (isRunning) return;
@@ -257,13 +324,21 @@ export default function ProjectEditorPage() {
       return;
     }
     setAuthGateOpen(false);
-    recordBehavior("lanjut_script_langsung", projectId);
+    recordBehavior("lanjut_script_langsung", projectId, {
+      provider: audioProvider,
+      speed: audioSpeed,
+      emotion: audioEmotion,
+      platform: activePlatform,
+      duration: activeDuration,
+    });
     await generateStep("audio", projectId, { provider: audioProvider, speed: audioSpeed, emotion: audioProvider === "cartesia" ? audioEmotion : undefined });
-  }, [isRunning, user, projectId, generateStep, audioProvider, audioSpeed, audioEmotion]);
+  }, [isRunning, user, projectId, generateStep, audioProvider, audioSpeed, audioEmotion, activePlatform, activeDuration]);
 
   const handleRegenAudio = useCallback(async () => {
     if (isRunning) return;
-    recordBehavior("regen_audio", projectId);
+    recordBehavior("regen_audio", projectId, { provider: audioProvider, speed: audioSpeed, emotion: audioEmotion });
+    // Preferenza behavior: provider usato per la rigenerazione (per auto-chain future).
+    recordPreference("provider", audioProvider);
     await generateStep("audio", projectId, { provider: audioProvider, speed: audioSpeed, emotion: audioProvider === "cartesia" ? audioEmotion : undefined });
   }, [isRunning, projectId, generateStep, audioProvider, audioSpeed, audioEmotion]);
 
@@ -326,7 +401,7 @@ export default function ProjectEditorPage() {
               {(trends.length > 0 || trendsLoading) && (
                 <div className="rounded-xl border bg-card p-4">
                   <p className="text-xs font-medium text-muted-foreground mb-2">
-                    {trendsLoading ? "Mencari topik yang lagi naik..." : trends[0]?.source === "ai_fallback" ? "Topik yang lagi naik:" : "Lagi banyak dicari hari ini:"}
+                    {trendsLoading ? "Mencari topik yang lagi naik..." : trends[0]?.source === "ai_fallback" ? "Topik yang lagi naik:" : trends[0]?.source === "youtube_us" ? "Akan trending (early signal):" : "Lagi banyak dicari hari ini:"}
                   </p>
                   {!trendsLoading && (
                     <>
@@ -348,7 +423,7 @@ export default function ProjectEditorPage() {
                   <p className="text-xs font-medium text-muted-foreground mb-2">Platform</p>
                   <div className="flex flex-wrap gap-2">
                     {(Object.keys(PLATFORM_LABEL) as Platform[]).map((pl) => (
-                      <button key={pl} onClick={() => pickOverridePlatform(pl)} className={`rounded-full border px-3 py-1.5 text-sm ${activePlatform === pl ? "border-primary bg-primary text-primary-foreground" : "hover:bg-accent"}`}>{PLATFORM_LABEL[pl]}</button>
+                      <button key={pl} onClick={() => { pickOverridePlatform(pl); recordBehavior("ganti_platform", projectId, { platform: pl }); recordPreference("platform", pl as string); }} className={`rounded-full border px-3 py-1.5 text-sm ${activePlatform === pl ? "border-primary bg-primary text-primary-foreground" : "hover:bg-accent"}`}>{PLATFORM_LABEL[pl]}</button>
                     ))}
                   </div>
                 </div>
@@ -356,7 +431,7 @@ export default function ProjectEditorPage() {
                   <p className="text-xs font-medium text-muted-foreground mb-2">Durasi</p>
                   <div className="flex flex-wrap gap-2">
                     {[15, 30, 60, 90, 180].map((d) => (
-                      <button key={d} onClick={() => { pickOverrideDuration(d); recordBehavior("ganti_durasi", projectId); }} className={`rounded-full border px-3 py-1.5 text-sm ${activeDuration === d ? "border-primary bg-primary text-primary-foreground" : "hover:bg-accent"}`}>{d === 180 ? "3 menit" : `${d} detik`}</button>
+                      <button key={d} onClick={() => { pickOverrideDuration(d); recordBehavior("ganti_durasi", projectId, { duration: d }); recordPreference("duration", d); }} className={`rounded-full border px-3 py-1.5 text-sm ${activeDuration === d ? "border-primary bg-primary text-primary-foreground" : "hover:bg-accent"}`}>{d === 180 ? "3 menit" : `${d} detik`}</button>
                     ))}
                   </div>
                 </div>

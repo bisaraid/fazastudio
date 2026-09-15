@@ -143,3 +143,55 @@ export function scoreTrends(
 export function getTopTrends(scored: ScoredTrend[], n: number = 5): ScoredTrend[] {
   return scored.slice(0, n);
 }
+
+// ============================================================
+// Trend Pattern Engine — helper murni (tanpa IO, mudah di-test)
+// ============================================================
+
+/** Ambang selisih score (Δ) untuk menentukan arah tren. Konstanta terpusat — mudah diubah. */
+export const VELOCITY_DIRECTION_THRESHOLD = 5;
+
+export interface VelocityResult {
+  /** Selisih score saat ini vs hari sebelumnya (1 desimal). */
+  velocity: number;
+  /** 'up' | 'stable' | 'down'. */
+  direction: "up" | "stable" | "down";
+}
+
+/**
+ * Hitung velocity antar-hari: score hari-kini minus score hari-sebelumnya.
+ * Tanpa baseline (previous null/undefined) → return null (belum cukup data poin).
+ */
+export function computeVelocity(
+  currentScore: number,
+  previousScore: number | null | undefined
+): VelocityResult | null {
+  if (previousScore === null || previousScore === undefined) return null;
+  const velocity = Math.round((currentScore - previousScore) * 10) / 10;
+  const direction: VelocityResult["direction"] =
+    velocity >= VELOCITY_DIRECTION_THRESHOLD
+      ? "up"
+      : velocity <= -VELOCITY_DIRECTION_THRESHOLD
+      ? "down"
+      : "stable";
+  return { velocity, direction };
+}
+
+/**
+ * Cek apakah sebuah keyword sudah "muncul" di daftar keyword baseline (data ID).
+ * Memakai normalisasi substring dua arah (bukan exact) karena hasil terjemahan
+ * tidak selalu identik. Basis untuk sinyal "akan trending" (keyword US yang belum
+ * ada di data ID).
+ */
+export function isKeywordAlreadyPresent(
+  baselineKeywords: string[],
+  keyword: string
+): boolean {
+  const k = keyword.toLowerCase().trim();
+  if (!k) return true; // keyword kosong dianggap sudah ada → jangan diusulkan.
+  return baselineKeywords.some((b) => {
+    const base = b.toLowerCase().trim();
+    if (!base) return false;
+    return k.includes(base) || base.includes(k);
+  });
+}

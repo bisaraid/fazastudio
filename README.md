@@ -12,10 +12,30 @@ data ini (bukan fetch langsung saat user buka halaman), jadi tampil instan tanpa
 
 ### Sumber data (berurutan)
 1. **Primary — YouTube Data API v3** (`YOUTUBE_API_KEY`): video trending Indonesia per
-   niche (via `videoCategoryId`). Data: judul, views, likes, upload date.
-2. **Enrichment — Google Trends**: opsional, bila YouTube kurang menutup suatu niche.
-3. **Fallback — AI (Groq)**: hanya bila YouTube & cache kosong. Label di UI dibedakan
+   niche (via `videoCategoryId`). Data: judul, views, likes, upload date. **Timestamp**
+   disimpan `source: "youtube"`.
+2. **Early-signal — YouTube US harvest** (`source: "youtube_us"`): video trending USA per
+   niche (region `US`, category sama), judul diterjemahkan ke Bahasa Indonesia (via Groq)
+   sebelum disimpan. Jadi sinyal awal "akan trending" sebelum tren masuk pasar Indonesia.
+3. **Enrichment — Google Trends**: opsional, bila YouTube kurang menutup suatu niche.
+4. **Fallback — AI (Groq)**: hanya bila YouTube & cache kosong. Label di UI dibedakan
    ("Saran topik dari AI") agar user tidak tertipu bahwa itu data trending nyata.
+
+### Dua sinyal trend
+- **Trending sekarang** (`/api/ideas?signal=now` — default): `source:"youtube"`, score tinggi,
+  plus `velocity`/`trend_direction` (up/stable/down) dari perbandingan score hari ini vs kemarin.
+- **Akan trending** (`/api/ideas?signal=upcoming`): `source:"youtube_us"` yang belum muncul
+  di keyword `youtube` niche yang sama (match normalisasi).
+
+### Personalized Suggest (`/api/suggest`)
+Gabungan behavior user + trend intelligence, dipakai homepage & editor:
+- **Niche authoritative** = `profile.niche_slug`; `projects` hanya sebagai sinyal recency.
+- **Sinyal** dipilih dari pola behavior: regenerasi tinggi (regen ≥ 3 & ≥ 2×lanjut) → bias
+  **"akan trending"** (US); normal/lanjut dominan → **"tren sekarang"** (ID).
+- **Preferensi** (provider/platform/durasi) dikembalikan sebagai *metadata* — tidak mengubah ranking.
+- **Fallback**: user baru / anonim / tanpa profil → suggest global (`personalized:false`,
+  `source:"global"`).
+- Response: `{ personalized, signal, source, niches, ideas[] }`.
 
 ### Cron job (`/api/cron/trends`)
 Menjalankan pengambilan + scoring + simpan untuk **12 niche** setiap **6 jam**

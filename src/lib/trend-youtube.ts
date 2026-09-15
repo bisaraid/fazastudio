@@ -11,6 +11,11 @@
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 
+/** Source untuk data trending lokal Indonesia (region ID). */
+export const SOURCE_YOUTUBE = "youtube";
+/** Source untuk early-signal harvest USA (region US, keyword diterjemahkan ke ID). */
+export const SOURCE_YOUTUBE_US = "youtube_us";
+
 /** Mapping niche → YouTube Category ID */
 export const NICHE_TO_YT_CATEGORY: Record<string, number | null> = {
   // Jualan
@@ -45,13 +50,15 @@ export interface FetchTrendingResult {
 }
 
 /**
- * Fetch video trending Indonesia per kategori YouTube.
+ * Fetch video trending per kategori YouTube untuk region tertentu.
  * @param categoryId — YouTube category ID (22, 24, 26, 27, 28)
  * @param maxResults — jumlah hasil (max 50)
+ * @param regionCode — kode region (default "ID"). Pakai "US" untuk early-signal harvest.
  */
 export async function fetchYouTubeTrending(
   categoryId: number,
-  maxResults: number = 10
+  maxResults: number = 10,
+  regionCode: string = "ID"
 ): Promise<FetchTrendingResult> {
   if (!YOUTUBE_API_KEY) {
     return { success: false, data: [], error: "YOUTUBE_API_KEY tidak tersedia" };
@@ -60,7 +67,7 @@ export async function fetchYouTubeTrending(
   const params = new URLSearchParams({
     part: "snippet,statistics,contentDetails",
     chart: "mostPopular",
-    regionCode: "ID",
+    regionCode,
     videoCategoryId: categoryId.toString(),
     maxResults: Math.min(maxResults, 50).toString(),
     key: YOUTUBE_API_KEY,
@@ -99,14 +106,16 @@ export async function fetchYouTubeTrending(
 /**
  * Fetch trending per niche — wrapper yang handle mapping kategori.
  * Kalau niche tidak punya kategori spesifik, return empty (pakai fallback).
+ * @param regionCode — kode region (default "ID"; gunakan "US" untuk early-signal).
  */
 export async function fetchTrendingByNiche(
   niche: string,
-  maxResults: number = 10
+  maxResults: number = 10,
+  regionCode: string = "ID"
 ): Promise<FetchTrendingResult> {
   const categoryId = NICHE_TO_YT_CATEGORY[niche];
   if (!categoryId) {
     return { success: false, data: [], error: `Niche "${niche}" tidak punya mapping kategori YouTube` };
   }
-  return fetchYouTubeTrending(categoryId, maxResults);
+  return fetchYouTubeTrending(categoryId, maxResults, regionCode);
 }
