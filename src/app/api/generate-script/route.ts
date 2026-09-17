@@ -16,6 +16,8 @@ import { RATE_LIMIT_LIMITS, DAILY_WINDOW_MS } from "@/lib/rate-limit-config";
 import { decrementCredit, decrementCreditForUser } from "@/lib/usage";
 import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
+import { MAX_FREE_CONTENT_PROJECTS } from "@/lib/constants";
+import { countContentProjects, oldestContentProject } from "@/lib/project-media";
 
 export async function POST(request: NextRequest) {
   const ip = getClientIp(request);
@@ -234,6 +236,27 @@ export async function POST(request: NextRequest) {
           { success: false, error: "Project tidak ditemukan of geen toegang" },
           { status: 404 }
         );
+      }
+
+      const quarantine = createServiceRoleClient();
+      let hasContent = false;
+      const { data: proj } = await quarantine.from("projects").select("script,audio_url,video_url").eq("id",body.projectId).maybeSingle();
+      if (proj) {
+        if (proj.script) hasContent = true;
+        if (proj.audio_url) hasContent = true;
+        if (proj.video_url) hasContent = true;
+      }
+      if (hasContent === false) {
+        const column = user?.id ? "user_id" : "identity_key";
+        const scope = user?.id ?? identityKey;
+        const count = await countContentProjects(column, scope);
+        if (count >= MAX_FREE_CONTENT_PROJECTS) {
+          const oldest = await oldestContentProject(column, scope);
+          return NextResponse.json(
+            { success: false, code: "PROJECT_LIMIT", oldest, error: "Batas project ber-isi tercapai." },
+            { status: 409 },
+          );
+        }
       }
 
       const supabase = createServiceRoleClient();

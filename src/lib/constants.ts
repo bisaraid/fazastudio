@@ -1,4 +1,6 @@
-import { Genre, Platform, Tone, VoiceEmotion, VisualStyle, Plan } from "./types";
+import { Genre, Platform, Tone, VoiceEmotion, VisualStyle, Plan }
+from "./types";
+export const MAX_FREE_CONTENT_PROJECTS = 20;
 
 export const GENRES: { value: Genre; label: string; icon: string }[] = [
   { value: "horor", label: "Horor", icon: "👻" },

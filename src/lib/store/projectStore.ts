@@ -26,6 +26,7 @@ interface ProjectState {
 
   // Actions
   loadProjects: () => Promise<void>;
+  appendProjects: (offset: number, limit: number) => Promise<number>;
   createProject: (formData: WizardFormData) => Promise<Project>;
   setCurrentProject: (projectId: string) => void;
   updateProjectStep: (step: PipelineStep, status: StepStatus) => void;
@@ -250,6 +251,22 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       console.error("[projectStore] loadProjects error:", error);
     }
   },
+    appendProjects: async (offset: number, limit: number) => {
+    try {
+      const res = await fetch("/api/projects?limit=" + limit + "&offset=" + offset);
+      if (res.ok === false) return 0;
+      const json = await res.json();
+      const incoming = (json.success && Array.isArray(json.data)) ? json.data.map(mapDbRowToProjectSafe).filter((p: Project | null): p is Project=> p !== null) : [];
+      const merged = get().projects.slice();
+      const seen = new Set();
+      for (const p of incoming) {
+        if (seen.has(p.id) === false) { seen.add(p.id); merged.push(p); }
+      }
+      set({ projects: merged });
+      return incoming.length;
+
+    } catch (error) {      console.error("[projectStore] appendProjects error:", error);
+      return 0;    }  },
 
   createProject: async (formData: WizardFormData) => {
     const newProject: Project = {

@@ -54,6 +54,7 @@ export interface PipelineProgress {
   thinkSteps?: string[];
   /** Indeks langkah thinking yang sudah muncul (0-based). */
   thinkActiveIndex?: number;
+  limitProject?: { id?: string; title?: string | null } | null;
 }
 
 export interface AudioOptions {
@@ -219,7 +220,18 @@ export function usePipeline() {
             }, FETCH_TIMEOUTS.script);
             const json = await res.json();
             if (!json.success || !json.data) {
-              throw new Error(json.error || "Generate script gagal");
+                          if (json) {
+              if (json.code === "PROJECT_LIMIT") {
+                let oldestTitle = "";
+                setProgress((prev)=> ({ ...prev, limitProject: json.oldest }));
+                if (json.oldest) {
+                  if (json.oldest.title) oldestTitle = json.oldest.title;
+                  else oldestTitle = json.oldest.id;
+                }
+                throw new Error("Batas project ber-isi tercapai. Hapus project terlama: "+ oldestTitle);
+              }
+            }
+throw new Error(json.error || "Generate script gagal");
             }
             const script = json.data as ScriptResult;
 
@@ -603,7 +615,7 @@ export function usePipeline() {
   // Returns: boolean (true = sukses) untuk generate penuh, atau string URL untuk preview audio
   const generateStep = useCallback(
     async (step: PipelineStep, projectId: string, audioOptions?: AudioOptions) => {
-      setProgress((prev) => ({ ...prev, isRunning: true, error: null }));
+      setProgress((prev) => ({ ...prev, isRunning: true, error: null, limitProject: null }));
       const result = await generateSingleStep(step, projectId, audioOptions);
       if (result === true) {
         store.advanceStep(step);

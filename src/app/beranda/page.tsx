@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/lib/store/projectStore";
 import { Navbar } from "@/components/layout/navbar";
@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { formatDuration } from "@/lib/utils";
 import { Genre, Platform, Project } from "@/lib/types";
+import { ProjectRow } from "@/components/project-row";
 import { NICHES } from "@/lib/persona-data";
 
 // Genre ACS default per niche (untuk createProject — bukan kosong).
@@ -93,14 +94,19 @@ function projectTitle(p: Project): string {
   return p.title?.trim() || p.topic?.trim() || "Proyek tanpa judul";
 }
 
+const PAGE_SIZE = 20;
+
 export default function DashboardPage() {
   const router = useRouter();
-  const { projects, loadProjects, deleteProject, createProject } = useProjectStore();
+  const { projects, appendProjects, deleteProject, createProject } = useProjectStore();
   const [profile, setProfile] = useState<{ mode: string; niche: string } | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
+    appendProjects(0, PAGE_SIZE).then(function (n) { setHasMore(n >= PAGE_SIZE); });
+  }, [appendProjects]);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,6 +124,26 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(function () {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(function (en) {
+      en.forEach(function (e) {
+        if (e.isIntersecting && hasMore && !loadingMore) {
+          setLoadingMore(true);
+          appendProjects(projects.length, PAGE_SIZE).then(function (n) {
+            setHasMore(n >= PAGE_SIZE);
+            setLoadingMore(false);
+          });
+        }
+      });
+    }, { rootMargin: "0px 0px 600px 0px" });
+    obs.observe(el);
+    return function () {
+      obs.disconnect();
+    };
+  }, [hasMore, loadingMore, projects, appendProjects]);
 
   const handleCreateNew = async () => {
     const niche = profile?.niche ?? "";
@@ -306,15 +332,21 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <ul className="divide-y divide-border">
               {projects.map((project) => (
-                <ProjectCard
+                <ProjectRow
                   key={project.id}
                   project={project}
                   onOpen={() => router.push(`/konten/${project.id}`)}
                   onDelete={() => handleDeleteProject(project.id)}
                 />
               ))}
+            </ul>
+          )}
+          <div ref={sentinelRef} className="h-10" />
+          {loadingMore && (
+            <div className="flex justify-center py-4">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           )}
         </div>
@@ -345,6 +377,7 @@ function ProjectCard({
   // FIX 3 — badge video free 24 jam / kedaluwarsa di kartu.
   // Hanya tampil bila project benar-benar punya video (bukan "Draft" kosong).
   const hasVideo = Boolean(project.video?.url);
+  const [videoBroken, setVideoBroken] = useState(false);
   const isFreeVideoExpiring =
     hasVideo &&
     project.videoStoragePlan === "free" &&
@@ -356,18 +389,34 @@ function ProjectCard({
   return (
     <Card className={`group hover:shadow-md transition-shadow cursor-pointer overflow-hidden`} onClick={onOpen}>
       {/* Thumbnail: video utk project selesai, gradient+ikon per niche utk in-progress */}
-      {project.video?.url ? (
+      {isVideoExpired ? (
+        <div className="relative aspect-video w-full overflow-hidden bg-muted">
+          <div className="flex flex-col items-center justify-center gap-2 p-4 text-center text-sm text-muted-foreground">
+            <p>Video kedaluwarsa</p>
+            <span className="text-primary text-sm underline-offset-2">Generate ulang</span>
+          </div>
+        </div>
+      ) : project.video?.url ? (
+        videoBroken ? (
+          <div className="relative aspect-video w-full overflow-hidden bg-muted">
+            <div className="flex items-center justify-center p-4 text-sm text-muted-foreground">
+              <p>Video tidak tersedia</p>
+            </div>
+          </div>
+        ) : (
         <div className="relative aspect-video w-full overflow-hidden bg-muted">
           <video
             src={project.video.url}
             className="h-full w-full object-cover"
             muted
             preload="metadata"
+            onError={()=> setVideoBroken(true)}
           />
           <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
             <Play className="h-8 w-8 text-white" />
           </div>
         </div>
+        )
       ) : (
         (() => {
           const vis = nicheVisual(project.genre);
@@ -459,4 +508,8 @@ function ProjectCard({
       </CardContent>
     </Card>
   );
+
+
+
+  
 }

@@ -4,6 +4,7 @@ import { requireProjectOwnership } from "@/lib/project-ownership";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { resolveMediaUrl } from "@/lib/signed-storage-url";
+import { deleteProjectMedia } from "@/lib/project-media";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 
 export async function GET(request: NextRequest) {
@@ -28,7 +29,15 @@ export async function GET(request: NextRequest) {
     let query = supabase.from("projects").select("*").order("created_at", { ascending: false });
     query = userId ? query.eq("user_id", userId) : query.eq("identity_key", identityKey);
 
-    const { data, error } = await query;
+    const limitRaw = request.nextUrl.searchParams.get("limit");
+    const offsetRaw = request.nextUrl.searchParams.get("offset");
+    const limit = limitRaw ? Math.max(0, parseInt(limitRaw, 10)) : 0;
+    const offset = offsetRaw ? Math.max(0, parseInt(offsetRaw, 10)) : 0;
+    let scopedQuery = query;
+    if (limit) {
+      scopedQuery = scopedQuery.range(offset, offset + limit - 1);
+    }
+    const { data, error } = await scopedQuery;
 
     if (error) {
       console.error("[projects] GET error:", error);
@@ -168,6 +177,12 @@ export async function DELETE(request: NextRequest) {
 
     // Hapus project milik identity caller — cegah hapus punya orang lain.
     // (ownership guard hierboven heeft al user_id/identity_key gevalideerd)
+    const { data: delRow } = await supabase
+      .from("projects")
+      .select("video_url,audio_url,subtitle_url")
+      .eq("id", projectId)
+      .maybeSingle();
+
     const { error } = await supabase
       .from("projects")
       .delete()
@@ -180,6 +195,8 @@ export async function DELETE(request: NextRequest) {
         { status: 500 }
       );
     }
+
+    await deleteProjectMedia(delRow ?? {});
 
     const res = NextResponse.json({ success: true });
     if (identity.isNew) {
