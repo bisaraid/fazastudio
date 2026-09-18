@@ -9,6 +9,7 @@
  * Memakai env GROQ_API_KEY2 (terpisah dari GROQ_API_KEY milik generate script,
  * agar kuota token tidak berbagi). Best-effort: bila gagal/key tak ada →
  * array kosong (tidak pernah throw).
+ * tes
  */
 
 const GROQ_API_BASE = "https://api.groq.com/openai/v1";
