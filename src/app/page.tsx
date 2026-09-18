@@ -50,27 +50,46 @@ const FALLBACK_TOPICS = [
   "Kopi kekinian hits",
 ];
 
-// Normalisasi keyword sebelum tampil sebagai chip:
-// 1) buang hashtag (#kata) 2) trim whitespace 3) potong maks 40 char + "..."
-function cleanChipText(raw: string): string {
-  const base = raw.replace(/#\S+/g, "").trim();
-  return base.length > 40 ? `${base.slice(0, 40)}...` : base;
+// Normalisasi keyword (untuk dedupe & full text): buang hashtag, trim.
+function normalizeTopic(raw: string): string {
+  return raw.replace(/#\S+/g, "").trim();
 }
 
-// Siapkan list topik chip: dedupe keyword identik/mirip (case-insensitive,
-// basis teks yang akan ditampilkan) + bersihkan tiap keyword, batasi maks 4.
-function prepareChipTopics(raw: string[], max: number = 4): string[] {
+// Text pendek untuk UI chip: maks 25 char + "..." Hanya untuk tampilan.
+function shortTopic(text: string): string {
+  return text.length > 25 ? `${text.slice(0, 25)}...` : text;
+}
+
+// Model chip: display = teks pendek (UI), full = teks lengkap (dipakai generate).
+interface ChipTopic {
+  full: string;
+  display: string;
+}
+
+// Siapkan list topik chip: dedupe keyword identik/mirip (case-insensitive) lalu
+// batasi maks 6. Setiap item punya full (lengkap) & display (pendek + "...").
+function prepareChipTopics(raw: string[], max: number = 6): ChipTopic[] {
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: ChipTopic[] = [];
   for (const item of raw) {
-    const cleaned = cleanChipText(item);
-    if (!cleaned) continue;
-    const key = cleaned.toLowerCase();
+    const full = normalizeTopic(item);
+    if (!full) continue;
+    const key = full.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(cleaned);
+    out.push({ full, display: shortTopic(full) });
   }
   return out.slice(0, max);
+}
+
+// Fisher–Yates shuffle agar tiap session mendapat kombinasi chip berbeda.
+function shuffle<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 function formatTime(sec: number) {
@@ -92,7 +111,7 @@ export default function LandingPage() {
   const [focused, setFocused] = useState(false);
 
   // Topik trending dari /api/ideas — null = masih loading (tampil skeleton).
-  const [trendingTopics, setTrendingTopics] = useState<string[] | null>(null);
+  const [trendingTopics, setTrendingTopics] = useState<ChipTopic[] | null>(null);
   // State reveal scroll-triggered untuk section di bawah hero.
   const [revealed, setRevealed] = useState<{ bukti?: boolean; pricing?: boolean }>({});
 
@@ -108,29 +127,27 @@ export default function LandingPage() {
     resizeTextarea();
   }, [resizeTextarea, topic]);
 
-  // Ambil topik trending saat homepage load (mode global: top 1 per niche, beragam);
-  // dedupe & bersihkan. Fallback ke hardcode bila gagal.
+  // Ambil topik trending saat homepage load: request 10 ide, shuffle untuk variasi
+  // kombinasi per session, lalu tampilkan maks 6 chip. Fallback ke hardcode bila gagal.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        // Personalized suggest (fallback global utk anonim) — reste global-flow lama
-        // tetap dipakai kalau endpoint gagal.
-        const res = await fetch("/api/suggest?limit=6");
+        // Personalized suggest (fallback global utk anonim).
+        const res = await fetch("/api/suggest?limit=10");
         const data: { success?: boolean; ideas?: Array<{ keyword?: unknown }> } =
           await res.json();
         if (!cancelled) {
-          const keywords = prepareChipTopics(
-            (data?.ideas ?? []).map((i) =>
-              typeof i.keyword === "string" ? i.keyword : ""
-            )
+          const rawKeywords = (data?.ideas ?? []).map((i) =>
+            typeof i.keyword === "string" ? i.keyword : ""
           );
+          const topics = prepareChipTopics(shuffle(rawKeywords), 6);
           setTrendingTopics(
-            keywords.length ? keywords : prepareChipTopics(FALLBACK_TOPICS)
+            topics.length ? topics : prepareChipTopics(shuffle(FALLBACK_TOPICS), 6)
           );
         }
       } catch {
-        if (!cancelled) setTrendingTopics(prepareChipTopics(FALLBACK_TOPICS));
+        if (!cancelled) setTrendingTopics(prepareChipTopics(shuffle(FALLBACK_TOPICS), 6));
       }
     })();
     return () => {
@@ -401,25 +418,26 @@ export default function LandingPage() {
                     </span>
                     <div className="flex flex-wrap items-center gap-2">
                       {trendingTopics === null
-                        ? Array.from({ length: 4 }).map((_, i) => (
+                        ? Array.from({ length: 6 }).map((_, i) => (
                             <span
                               key={i}
                               className="h-7 w-28 animate-pulse rounded-full bg-muted"
                             />
                           ))
-                        : trendingTopics.map((s) => (
+                        : trendingTopics.map((t) => (
                             <button
-                              key={s}
+                              key={t.full}
                               type="button"
                               onMouseDown={(e) => e.preventDefault()}
+                              title={t.full}
                               onClick={() => {
-                                setTopic(s);
+                                setTopic(t.full);
                                 textareaRef.current?.focus();
                                 resizeTextarea();
                               }}
                               className="max-w-full truncate rounded-full border border-border/60 bg-background px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
                             >
-                              {s}
+                              {t.display}
                             </button>
                           ))}
                     </div>

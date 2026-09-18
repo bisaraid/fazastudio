@@ -19,7 +19,7 @@ export interface TrendIdeaItem {
   trend_direction?: string | null;
 }
 
-const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+const TWELVE_HOURS_MS = 48 * 60 * 60 * 1000;
 
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
@@ -78,21 +78,12 @@ export async function getTrendingNow(
     if (error || !data) return [];
 
     const rows = data as TrendRow[];
-    // Distinct per niche untuk mode GLOBAL.
-    const seen = new Set<string>();
+    // Top 10 by score — bebas niche (global & per-niche sama). Distinct-per-niche
+    // dihapus; ambil item teratas saja.
     const out: TrendIdeaItem[] = [];
     for (const r of rows) {
-      const item = rowToItem(r);
-      const key = niche ? item.niche_slug : `${item.niche_slug}|${item.keyword.toLowerCase()}`;
-      if (niche) {
-        out.push(item);
-        if (out.length >= 10) break;
-      } else {
-        if (seen.has(item.niche_slug)) continue;
-        seen.add(item.niche_slug);
-        out.push(item);
-        if (out.length >= 6) break;
-      }
+      out.push(rowToItem(r));
+      if (out.length >= 10) break;
     }
     return out;
   } catch {
