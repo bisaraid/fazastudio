@@ -11,6 +11,7 @@ import { PricingPlansWithUsage } from "@/components/pricing-plans-with-usage";
 import {
   Sparkles,
   ArrowRight,
+  Check,
   Loader2,
   Play,
   Pause,
@@ -374,7 +375,7 @@ export default function LandingPage() {
       </header>
 
       {/* Hero */}
-      <section className="relative mx-auto max-w-6xl px-4 pb-20 pt-24 text-center lg:px-8 lg:pt-32">
+      <section className="relative mx-auto max-w-6xl px-4 pb-12 pt-16 text-center lg:px-8 lg:pt-20">
         {/* Gradient subtle dari primary (depth) — CSS-only, GPU-safe */}
         <div
           aria-hidden
@@ -394,10 +395,11 @@ export default function LandingPage() {
         <p className="mx-auto mt-6 max-w-lg text-base leading-relaxed text-muted-foreground/70 sm:text-lg lg:mt-8">
           AI yang meneliti, menulis dan membuat konten untukmu.
         </p>
-        <div className="relative z-[70] mx-auto mt-10 w-full max-w-2xl lg:mt-12">
-          <div className="relative overflow-hidden rounded-2xl border border-border/80 bg-card/80 shadow-sm backdrop-blur-sm transition-all duration-300 focus-within:border-primary/40 focus-within:bg-card focus-within:shadow-lg focus-within:ring-2 focus-within:ring-primary/20">
+        <div className="relative z-[70] mx-auto mt-8 w-full max-w-2xl lg:mt-10">
+          <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-primary/10 shadow-sm backdrop-blur-sm transition-all duration-300 focus-within:border-primary/40 focus-within:bg-primary/15 focus-within:shadow-lg focus-within:ring-2 focus-within:ring-primary/20">
             <textarea
               ref={textareaRef}
+              data-hero-input
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               onInput={resizeTextarea}
@@ -435,7 +437,7 @@ export default function LandingPage() {
                                 textareaRef.current?.focus();
                                 resizeTextarea();
                               }}
-                              className="max-w-full truncate rounded-full border border-border/60 bg-background px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
+                              className="max-w-full truncate rounded-full border border-primary/30 bg-background px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/15 hover:text-foreground"
                             >
                               {t.display}
                             </button>
@@ -462,114 +464,148 @@ export default function LandingPage() {
       {/* Bukti hasil */}
       <section
         data-reveal="bukti"
-        className={`border-y bg-muted/40 transition-all duration-500 ease-out ${
+        className={`transition-all duration-500 ease-out ${
           revealed.bukti ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
         }`}
       >
-        <div className="mx-auto max-w-4xl px-4 py-16 lg:px-8">
-        <div className="rounded-2xl border bg-card p-8 shadow-sm lg:p-10">
+        <div className="mx-auto max-w-5xl px-4 py-12 lg:px-8">
           <div className="text-center">
-            <h2 className="text-3xl font-bold tracking-tight">Contoh script yang dihasilkan</h2>
-            <p className="mt-3 text-muted-foreground">
-              Ini contoh nyata format output dari alur Script Faza Studio.
-            </p>
+            <h2 className="text-3xl font-bold tracking-tight">Lihat hasilnya sendiri</h2>
+            <p className="mt-3 text-muted-foreground">Output nyata dari Faza Studio.</p>
           </div>
-          <div className="mt-8 border-t pt-8">
-            {/* Audio preview */}
-            {audioAvailable && (
-              <div className="mb-6 flex items-center gap-4 rounded-xl border bg-muted/40 p-4">
-                <button
-                  type="button"
-                  onClick={toggleAudio}
-                  aria-label={audioPlaying ? "Pause preview" : "Putar preview"}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-white transition-transform hover:scale-105"
-                >
-                  {audioPlaying ? (
-                    <Pause className="h-5 w-5" />
-                  ) : (
-                    <Play className="h-5 w-5 translate-x-[1px]" />
-                  )}
-                </button>
-                <div className="flex-1">
-                  <p className="text-xs font-medium text-muted-foreground">Dengarkan contohnya</p>
-                  <div
-                    className="mt-2 h-1.5 w-full cursor-pointer overflow-hidden rounded-full bg-border"
-                    onClick={(e) => {
-                      const el = audioRef.current;
-                      if (!el || !audioDuration) return;
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      el.currentTime = ((e.clientX - rect.left) / rect.width) * audioDuration;
-                    }}
-                  >
-                    <div
-                      className="h-full rounded-full bg-primary transition-[width] duration-150"
-                      style={{
-                        width: audioDuration ? `${(audioCurrent / audioDuration) * 100}%` : "0%",
-                      }}
-                    />
-                  </div>
-                </div>
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {formatTime(audioCurrent)} / {formatTime(audioDuration)}
-                </span>
-              </div>
-            )}
-            <audio
-              ref={audioRef}
-              src={CONTOH_AUDIO_SRC}
-              preload="metadata"
-              onPlay={() => setAudioPlaying(true)}
-              onPause={() => setAudioPlaying(false)}
-              onEnded={() => {
-                setAudioPlaying(false);
-                setAudioCurrent(0);
-              }}
-              onTimeUpdate={(e) => setAudioCurrent(e.currentTarget.currentTime)}
-              onLoadedMetadata={(e) => setAudioDuration(e.currentTarget.duration)}
-              onError={() => setAudioAvailable(false)}
-            />
-            {/* Script sections — accordion rows */}
-            <div className="divide-y border-t border-b">
-              {CONTOH_SECTIONS.map((section, i) => (
-                <div key={section.label}>
+
+          <div className="mt-10 grid gap-10 lg:grid-cols-2 lg:items-stretch">
+            {/* Kiri: audio player + accordion script */}
+            <div className="rounded-2xl border border-primary/20 bg-primary/10 p-6 shadow-sm lg:p-8">
+              {/* Audio preview */}
+              {audioAvailable && (
+                <div className="mb-6 flex items-center gap-4 rounded-xl border-primary/20 bg-primary/5 p-4">
                   <button
                     type="button"
-                    onClick={() => setExpandedSection(expandedSection === i ? null : i)}
-                    className="flex w-full items-center gap-4 px-1 py-4 text-left transition-colors hover:bg-muted/40"
+                    onClick={toggleAudio}
+                    aria-label={audioPlaying ? "Pause preview" : "Putar preview"}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-white transition-transform hover:scale-105"
                   >
-                    <span className="w-6 shrink-0 text-xs tabular-nums text-muted-foreground">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <span className="flex-1 text-sm font-medium">{section.label}</span>
-                    <ChevronDown
-                      className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
-                        expandedSection === i ? "rotate-180" : ""
-                      }`}
-                    />
+                    {audioPlaying ? (
+                      <Pause className="h-5 w-5" />
+                    ) : (
+                      <Play className="h-5 w-5 translate-x-[1px]" />
+                    )}
                   </button>
-                  {expandedSection === i && (
-                    <p className="px-1 pb-4 pl-10 text-sm leading-relaxed text-muted-foreground">
-                      {section.text}
-                    </p>
-                  )}
+                  <div className="flex-1">
+                    <p className="text-xs font-medium text-muted-foreground">Dengarkan contohnya</p>
+                    <div
+                      className="mt-2 h-1.5 w-full cursor-pointer overflow-hidden rounded-full bg-border"
+                      onClick={(e) => {
+                        const el = audioRef.current;
+                        if (!el || !audioDuration) return;
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        el.currentTime = ((e.clientX - rect.left) / rect.width) * audioDuration;
+                      }}
+                    >
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-150"
+                        style={{
+                          width: audioDuration ? `${(audioCurrent / audioDuration) * 100}%` : "0%",
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {formatTime(audioCurrent)} / {formatTime(audioDuration)}
+                  </span>
                 </div>
-              ))}
+              )}
+              <audio
+                ref={audioRef}
+                src={CONTOH_AUDIO_SRC}
+                preload="metadata"
+                onPlay={() => setAudioPlaying(true)}
+                onPause={() => setAudioPlaying(false)}
+                onEnded={() => {
+                  setAudioPlaying(false);
+                  setAudioCurrent(0);
+                }}
+                onTimeUpdate={(e) => setAudioCurrent(e.currentTarget.currentTime)}
+                onLoadedMetadata={(e) => setAudioDuration(e.currentTarget.duration)}
+                onError={() => setAudioAvailable(false)}
+              />
+              {/* Script sections — accordion rows */}
+              <div className="divide-y border-t border-b">
+                {CONTOH_SECTIONS.map((section, i) => (
+                  <div key={section.label}>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedSection(expandedSection === i ? null : i)}
+                      className="flex w-full items-center gap-4 px-1 py-4 text-left transition-colors hover:bg-muted/40"
+                    >
+                      <span className="w-6 shrink-0 text-xs tabular-nums text-muted-foreground">
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      <span className="flex-1 text-sm font-medium">{section.label}</span>
+                      <ChevronDown
+                        className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
+                          expandedSection === i ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                    {expandedSection === i && (
+                      <p className="px-1 pb-4 pl-10 text-sm leading-relaxed text-muted-foreground">
+                        {section.text}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="mt-6 flex justify-end">
-              <Button variant="outline" size="sm" onClick={handleCobaGratis} disabled={creating}>
-                Buat yang serupa
+
+            {/* Kanan: panel trust signal */}
+            <div className="rounded-2xl border border-primary/20 bg-primary/10 p-6">
+              <p className="text-4xl font-bold text-primary">10.000+</p>
+              <p className="text-sm text-muted-foreground">script dibuat dengan Faza Studio</p>
+
+              <div className="my-4 h-px w-full bg-border/60" />
+
+              <ul className="mt-1 space-y-2 text-sm text-muted-foreground">
+                <li className="flex items-center gap-2">
+                  <Check className="h-4 w-4 shrink-0 text-primary" />
+                  Riset otomatis dari trending hari ini
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="h-4 w-4 shrink-0 text-primary" />
+                  Format hook-isi-penutup yang terbukti viral
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="h-4 w-4 shrink-0 text-primary" />
+                  Siap lanjut ke audio &amp; video
+                </li>
+              </ul>
+
+              <Button
+                size="lg"
+                className="mt-4 w-full gap-2 text-white"
+                onClick={() => {
+                  const target = document.querySelector("[data-hero-input]");
+                  target?.scrollIntoView({ behavior: "smooth" });
+                  (target as HTMLTextAreaElement | null)?.focus();
+                }}
+              >
+                Coba sekarang — gratis →
               </Button>
+
+              <p className="mt-3 text-center text-xs text-muted-foreground">
+                Tanpa kartu kredit. Tanpa daftar dulu.
+              </p>
             </div>
           </div>
         </div>
-      </div>
       </section>
 
       {/* Pricing */}
       <section
         id="harga"
         data-reveal="pricing"
-        className={`mx-auto max-w-5xl scroll-mt-24 px-4 py-16 transition-all duration-500 ease-out lg:px-8 ${
+        className={`mx-auto max-w-5xl scroll-mt-24 px-4 py-12 transition-all duration-500 ease-out lg:px-8 ${
           revealed.pricing ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
         }`}
       >
@@ -583,9 +619,9 @@ export default function LandingPage() {
       </section>
 
       {/* CTA akhir */}
-      <section className="border-t bg-muted/30">
-        <div className="mx-auto max-w-5xl px-4 py-20 lg:px-8">
-        <div className="flex flex-col gap-6 rounded-2xl border border-primary/20 bg-primary/5 p-8 sm:flex-row sm:items-center sm:justify-between lg:p-10">
+      <section className="">
+        <div className="mx-auto max-w-5xl px-4 py-12 lg:px-8">
+        <div className="flex flex-col gap-6 rounded-2xl border border-primary/20 bg-primary/10 p-8 sm:flex-row sm:items-center sm:justify-between lg:p-10">
           <div>
             <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">
               Siap lanjut jadi audio &amp; video?
@@ -604,8 +640,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="border-t bg-muted/30">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 py-8 text-sm text-muted-foreground sm:flex-row sm:justify-between lg:px-8">
+      <footer className="">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 py-6 text-sm text-muted-foreground sm:flex-row sm:justify-between lg:px-8">
           <span>© {new Date().getFullYear()} Faza Studio</span>
           <div className="flex gap-4">
             <a href="#harga" onClick={scrollToHarga} className="hover:text-foreground">Harga</a>

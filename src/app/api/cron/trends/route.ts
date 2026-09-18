@@ -1,12 +1,12 @@
 /**
  * Cron Job: /api/cron/trends
  *
- * Dipanggil otomatis setiap 6 jam oleh Vercel Cron Jobs.
- * Mengambil YouTube trending untuk semua niche yang ada di sistem:
- *  - ID harvest (region ID) → score → simpan source "youtube".
- *  - US harvest (region US, keyword diterjemahkan ke Bahasa Indonesia)
- *    → score → simpan source "youtube_us" sebagai early-signal.
- *  - Keduanya di-refresh velocity-nya (banding score hari ini vs hari sebelumnya).
+ * Harvest flow nieuw (Sesi A):
+ *  - Fetch top 50 trending ID + top 50 trending US (geen category filter).
+ *  - Dedupe per judul.
+ *  - Ekstrahieren topik + klassificatie niche via OpenRouter (topic-extractor).
+ *  - Group per niche → simpan ke trend_ideas met source="youtube" en
+ *    topik bersih (niet judul mentah) di kolom `keyword`.
  *
  * Proteksi: header Authorization: Bearer CRON_SECRET
  */
@@ -14,41 +14,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
-  fetchTrendingByNiche,
-  NICHE_TO_YT_CATEGORY,
+  fetchYouTubeTrending,
   SOURCE_YOUTUBE,
-  SOURCE_YOUTUBE_US,
+  YouTubeVideo,
 } from "@/lib/trend-youtube";
-import { scoreTrends, getTopTrends, computeVelocity } from "@/lib/trend-scoring";
-import { translateMany } from "@/lib/translate";
+import { extractTopicsFromTitles } from "@/lib/topic-extractor";
 
-const ALL_NICHES = [
-  "skincare", "fashion", "gadget", "makanan", "suplemen", "perabot",
-  "mistis", "motivasi", "edukasi", "keuangan", "curhat", "sejarah",
-];
-
-const US_HARVEST_MAX = 10;
-
-async function findPreviousScore(
-  supabase: ReturnType<typeof createServiceRoleClient>,
-  keyword: string,
-  niche: string,
-  source: string,
-  todayStart: string
-): Promise<number | null> {
-  const { data } = await supabase
-    .from("trend_ideas")
-    .select("score")
-    .eq("keyword", keyword)
-    .eq("niche_slug", niche)
-    .eq("source", source)
-    .lt("fetched_at", todayStart)
-    .order("fetched_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const score = data?.score;
-  return typeof score === "number" && Number.isFinite(score) ? score : null;
-}
+const TOP_VIDEOS = 50;
 
 export async function GET(request: NextRequest) {
   // ===== Proteksi CRON_SECRET =====
@@ -59,97 +31,91 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceRoleClient();
-  const results: { niche: string; count: number; usCount: number; source: string }[] = [];
-  const todayStart = new Date().toISOString().split("T")[0]; // hari ini (UTC) sebagai boundary
+  const nowIso = new Date().toISOString();
 
-  for (const niche of ALL_NICHES) {
-    const hasCategory = NICHE_TO_YT_CATEGORY[niche] !== null && NICHE_TO_YT_CATEGORY[niche] !== undefined;
-    if (!hasCategory) {
-      results.push({ niche, count: 0, usCount: 0, source: "skipped" });
+  // ===== 1. Fetch top 50 ID + top 50 US (zonder category filter) =====
+  const idRes = await fetchYouTubeTrending(TOP_VIDEOS, "ID");
+  const usRes = await fetchYouTubeTrending(TOP_VIDEOS, "US");
+
+  // ===== 2. Dedupe per judul =====
+  const seen = new Set<string>();
+  const videos: YouTubeVideo[] = [];
+  for (const v of [...(idRes.data ?? []), ...(usRes.data ?? [])]) {
+    const title = (v.title || "").trim();
+    if (!title) continue;
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    videos.push(v);
+  }
+
+  console.log(
+    `[cron-trends] fetched id=${idRes.data?.length ?? 0} us=${usRes.data?.length ?? 0} dedupe=${videos.length}`
+  );
+
+  // ===== 3. Topic-extractor via OpenRouter =====
+  const extracted = await extractTopicsFromTitles(videos.map((v) => v.title));
+
+  // ===== 4. Group per niche + prepare rows =====
+  const byNiche: Record<string, Record<string, unknown>[]> = {};
+  let skipped = 0;
+  for (const item of extracted) {
+    if (!item.topic || !item.niche) {
+      skipped++;
       continue;
     }
-
-    // ===== 1. ID harvest (source "youtube") =====
-    const ytResult = await fetchTrendingByNiche(niche, 10, "ID");
-    let count = 0;
-    if (ytResult.success && ytResult.data.length > 0) {
-      const scored = scoreTrends(ytResult.data, niche);
-      const topTrends = getTopTrends(scored, 5);
-      const rowsToInsert = await buildRows(topTrends, niche, SOURCE_YOUTUBE, supabase, todayStart);
-      if (rowsToInsert.length > 0) {
-        await supabase.from("trend_ideas").insert(rowsToInsert);
-        count = rowsToInsert.length;
-      }
-    }
-
-    // ===== 2. US harvest (source "youtube_us") → translate → simpan =====
-    let usCount = 0;
-    const usResult = await fetchTrendingByNiche(niche, US_HARVEST_MAX, "US");
-    if (usResult.success && usResult.data.length > 0) {
-      const usScored = scoreTrends(usResult.data, niche);
-      const usTop = getTopTrends(usScored, Math.min(usScored.length, US_HARVEST_MAX));
-      const usKeywords = usTop.map((t) => t.keyword);
-      const translated = await translateMany(usKeywords);
-      const translatedScored = usTop.map((t, i) => ({
-        ...t,
-        keyword: translated[i] || t.keyword,
-        youtubeTitle: translated[i] || t.youtubeTitle,
-      }));
-      const rowsToInsert = await buildRows(translatedScored, niche, SOURCE_YOUTUBE_US, supabase, todayStart);
-      if (rowsToInsert.length > 0) {
-        await supabase.from("trend_ideas").insert(rowsToInsert);
-        usCount = rowsToInsert.length;
-      }
-    }
-
-    results.push({
-      niche,
-      count,
-      usCount,
-      source: count + usCount > 0 ? (usCount > 0 ? "youtube+youtube_us" : "youtube") : "miss",
-    });
-
-    // Rate limit: jeda 200ms antar request YouTube.
-    await new Promise((r) => setTimeout(r, 200));
+    const v = videos[item.index];
+    const row: Record<string, unknown> = {
+      keyword: item.topic,
+      niche_slug: item.niche,
+      source: SOURCE_YOUTUBE,
+      score: 0,
+      score_breakdown: {},
+      youtube_video_id: v?.videoId ?? null,
+      youtube_title: v?.title ?? item.sourceTitle,
+      youtube_channel: v?.channelTitle ?? null,
+      youtube_views: v?.viewCount ?? 0,
+      youtube_likes: v?.likeCount ?? 0,
+      youtube_uploaded_at: v?.publishedAt || null,
+      fetched_at: nowIso,
+      first_seen_at: nowIso,
+    };
+    byNiche[item.niche] = byNiche[item.niche] ? [...byNiche[item.niche], row] : [row];
   }
+
+  // ===== 5. Insert per niche (error handling + logging per niche) =====
+  const results: { niche: string; count: number; source: string }[] = [];
+  let total = 0;
+  for (const niche of Object.keys(byNiche)) {
+    const nicheRows = byNiche[niche];
+    let count = 0;
+    let err: string | null = null;
+    try {
+      const { error } = await supabase.from("trend_ideas").insert(nicheRows);
+      if (error) {
+        err = error.message;
+      } else {
+        count = nicheRows.length;
+      }
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+    }
+    console.log(
+      `[cron-trends] niche=${niche} rows=${count}` + (err ? ` error=${err}` : "")
+    );
+    results.push({ niche, count, source: err ? "error" : "youtube" });
+    total += count;
+  }
+
+  console.log(
+    `[cron-trends] done extracted=${extracted.length} inserted=${total} skipped=${skipped}`
+  );
 
   return NextResponse.json({
     success: true,
-    message: `Cron trends selesai: ${results.reduce((a, r) => a + r.count + r.usCount, 0)} data dari ${results.length} niche`,
+    message: `Cron trends selesai: ${total} data dari ${Object.keys(byNiche).length} niche`,
+    total,
+    skipped,
     results,
   });
-}
-
-/** Bangun baris insert + hitung velocity (banding score hari sebelumnya). */
-async function buildRows(
-  scored: ReturnType<typeof scoreTrends>,
-  niche: string,
-  source: string,
-  supabase: ReturnType<typeof createServiceRoleClient>,
-  todayStart: string
-) {
-  const rows: Record<string, unknown>[] = [];
-  for (const t of scored) {
-    const prevScore = await findPreviousScore(supabase, t.keyword, niche, source, todayStart);
-    const vel = computeVelocity(t.score, prevScore);
-    rows.push({
-      keyword: t.keyword,
-      niche_slug: niche,
-      source,
-      score: t.score,
-      score_breakdown: t.breakdown,
-      youtube_video_id: t.youtubeVideoId ?? null,
-      youtube_title: t.youtubeTitle ?? t.keyword,
-      youtube_channel: t.youtubeChannel ?? null,
-      youtube_views: t.youtubeViews ?? 0,
-      youtube_likes: t.youtubeLikes ?? 0,
-      youtube_uploaded_at: t.youtubeUploadedAt ?? null,
-      fetched_at: new Date().toISOString(),
-      first_seen_at: new Date().toISOString(),
-      prev_score: prevScore,
-      velocity: vel ? vel.velocity : null,
-      trend_direction: vel ? vel.direction : null,
-    });
-  }
-  return rows;
 }

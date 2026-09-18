@@ -19,7 +19,7 @@ export interface TrendIdeaItem {
   trend_direction?: string | null;
 }
 
-const TWELVE_HOURS_MS = 48 * 60 * 60 * 1000;
+const TREND_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
@@ -48,16 +48,27 @@ function rowToItem(r: TrendRow): TrendIdeaItem {
   };
 }
 
+/** Fisher–Yates shuffle untuk diversifikasi pool di level engine. */
+function shuffleTrends<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /**
  * "Trending sekarang": keyword source "youtube", score tinggi, arah velocity positif/up.
- * Kalau `niche` kosong → GLOBAL (across niche, distinct per niche, urut score).
+ * Kalau `niche` kosong → GLOBAL: top 2 by score per niche (pool beragam dari semua niche),
+ * lalu shuffled di level engine. Window tetap 48 jam.
  */
 export async function getTrendingNow(
   niche: string
 ): Promise<TrendIdeaItem[]> {
   try {
     const supabase = createServiceRoleClient();
-    const cutoff = new Date(Date.now() - TWELVE_HOURS_MS).toISOString();
+    const cutoff = new Date(Date.now() - TREND_WINDOW_MS).toISOString();
 
     let query = supabase
       .from("trend_ideas")
@@ -78,12 +89,28 @@ export async function getTrendingNow(
     if (error || !data) return [];
 
     const rows = data as TrendRow[];
-    // Top 10 by score — bebas niche (global & per-niche sama). Distinct-per-niche
-    // dihapus; ambil item teratas saja.
-    const out: TrendIdeaItem[] = [];
-    for (const r of rows) {
-      out.push(rowToItem(r));
-      if (out.length >= 10) break;
+    let out: TrendIdeaItem[] = [];
+    if (niche) {
+      // Mode per-niche: top 10 by score untuk niche tsb.
+      for (const r of rows) {
+        out.push(rowToItem(r));
+        if (out.length >= 10) break;
+      }
+    } else {
+      // Mode global: top 2 by score per niche (pool beragam dari semua niche),
+      // lalu shuffle di level engine agar variasi per request.
+      const byNiche = new Map<string, TrendIdeaItem[]>();
+      for (const r of rows) {
+        const item = rowToItem(r);
+        const key = item.niche_slug;
+        const list = byNiche.get(key) ?? [];
+        if (list.length < 2) {
+          list.push(item);
+          byNiche.set(key, list);
+        }
+      }
+      Array.from(byNiche.values()).forEach((list) => out.push(...list));
+      out = shuffleTrends(out);
     }
     return out;
   } catch {
@@ -100,7 +127,7 @@ export async function getAkanTrending(
 ): Promise<TrendIdeaItem[]> {
   try {
     const supabase = createServiceRoleClient();
-    const cutoff = new Date(Date.now() - TWELVE_HOURS_MS).toISOString();
+    const cutoff = new Date(Date.now() - TREND_WINDOW_MS).toISOString();
 
     const buildBase = () =>
       supabase

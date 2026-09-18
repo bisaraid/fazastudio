@@ -83,7 +83,7 @@ export function PricingPlans({ currentPlan, ctaHref = "/daftar" }: PricingPlansP
           return (
             <div
               key={plan.id}
-              className={`relative flex flex-col gap-6 rounded-2xl border bg-card p-6 transition-all duration-300 ease-out sm:p-8 ${
+              className={`relative flex flex-col gap-6 rounded-2xl border border-primary/20 bg-primary/10 p-6 transition-all duration-300 ease-out sm:p-8 ${
                 plan.highlighted
                   ? "-translate-y-1 border-2 border-primary/60 shadow-[0_0_30px_-5px] shadow-primary/30 hover:-translate-y-2 hover:shadow-lg"
                   : "hover:-translate-y-1 hover:shadow-lg"

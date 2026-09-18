@@ -1,11 +1,11 @@
 /**
  * YouTube Data API v3 Client — Faza Studio
  *
- * Mengambil video trending Indonesia per kategori (niche).
+ * Mengambil video trending Indonesia (zonder category filter) per region.
  * Data: judul, views, likes, upload date, channel.
  *
  * API: https://www.googleapis.com/youtube/v3/videos
- * Endpoint: chart=mostPopular, regionCode=ID, videoCategoryId={catId}
+ * Endpoint: chart=mostPopular, regionCode=ID|US (geen videoCategoryId)
  */
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
@@ -13,26 +13,8 @@ const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 
 /** Source untuk data trending lokal Indonesia (region ID). */
 export const SOURCE_YOUTUBE = "youtube";
-/** Source untuk early-signal harvest USA (region US, keyword diterjemahkan ke ID). */
+/** Source untuk early-signal harvest USA (region US). */
 export const SOURCE_YOUTUBE_US = "youtube_us";
-
-/** Mapping niche → YouTube Category ID */
-export const NICHE_TO_YT_CATEGORY: Record<string, number | null> = {
-  // Jualan
-  skincare: 26,        // Howto & Style
-  fashion: 26,         // Howto & Style
-  gadget: 28,          // Science & Technology
-  makanan: 22,         // People & Blogs
-  suplemen: 22,        // People & Blogs
-  perabot: 22,         // People & Blogs
-  // Konten
-  mistis: 24,          // Entertainment
-  motivasi: 22,        // People & Blogs
-  edukasi: 27,         // Education
-  keuangan: 27,        // Education
-  curhat: 22,          // People & Blogs
-  sejarah: 27,         // Education
-};
 
 export interface YouTubeVideo {
   videoId: string;
@@ -50,14 +32,11 @@ export interface FetchTrendingResult {
 }
 
 /**
- * Fetch video trending per kategori YouTube untuk region tertentu.
- * @param categoryId — YouTube category ID (22, 24, 26, 27, 28)
- * @param maxResults — jumlah hasil (max 50)
- * @param regionCode — kode region (default "ID"). Pakai "US" untuk early-signal harvest.
+ * Fetch video trending top-N voor een regio, ZONDER category filter
+ * (chart=mostPopular + regionCode). maxResults cap 50.
  */
 export async function fetchYouTubeTrending(
-  categoryId: number,
-  maxResults: number = 10,
+  maxResults: number = 50,
   regionCode: string = "ID"
 ): Promise<FetchTrendingResult> {
   if (!YOUTUBE_API_KEY) {
@@ -68,7 +47,6 @@ export async function fetchYouTubeTrending(
     part: "snippet,statistics,contentDetails",
     chart: "mostPopular",
     regionCode,
-    videoCategoryId: categoryId.toString(),
     maxResults: Math.min(maxResults, 50).toString(),
     key: YOUTUBE_API_KEY,
   });
@@ -104,18 +82,14 @@ export async function fetchYouTubeTrending(
 }
 
 /**
- * Fetch trending per niche — wrapper yang handle mapping kategori.
- * Kalau niche tidak punya kategori spesifik, return empty (pakai fallback).
- * @param regionCode — kode region (default "ID"; gunakan "US" untuk early-signal).
+ * Compat-shim: fetch trending voor een regio (geen category filter meer).
+ * Bewaard zodat /api/ideas blijft compileren; nieuwe flow (cron) gebruikt
+ * fetchYouTubeTrending direct.
  */
 export async function fetchTrendingByNiche(
   niche: string,
   maxResults: number = 10,
   regionCode: string = "ID"
 ): Promise<FetchTrendingResult> {
-  const categoryId = NICHE_TO_YT_CATEGORY[niche];
-  if (!categoryId) {
-    return { success: false, data: [], error: `Niche "${niche}" tidak punya mapping kategori YouTube` };
-  }
-  return fetchYouTubeTrending(categoryId, maxResults, regionCode);
+  return fetchYouTubeTrending(maxResults, regionCode);
 }
