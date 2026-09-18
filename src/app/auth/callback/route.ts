@@ -16,7 +16,17 @@ export async function GET(request: Request) {
   const code = searchParams.get("code");
   const tokenHash = searchParams.get("token_hash");
   const type = searchParams.get("type");
-  const next = searchParams.get("next") ?? "/beranda";
+  // Normalisasi next sebelum dipakai redirect:
+  // - null/kosong, "/", atau bukan path valid (tidak diawali "/") -> /beranda
+  // - blok "//..." (protokol-relatif) juga -> /beranda (cegah open-redirect)
+  const rawNext = searchParams.get("next");
+  const next =
+    rawNext &&
+    rawNext.startsWith("/") &&
+    !rawNext.startsWith("//") &&
+    rawNext !== "/"
+      ? rawNext
+      : "/beranda";
 
   if (!(code || tokenHash)) {
     return NextResponse.redirect(`${origin}/masuk?error=callback`);
