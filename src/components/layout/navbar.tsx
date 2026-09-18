@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useUsage } from "@/hooks/useUsage";
+import { useUser } from "@/hooks/useUser";
 import {
   Sun,
   Moon,
@@ -32,6 +33,7 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
   const [loggingOut, setLoggingOut] = useState(false);
   const { plan, creditsUsed, creditsTotal, loading } = useUsage();
   const creditsRemaining = Math.max(0, (creditsTotal ? creditsTotal : 0) - (creditsUsed ? creditsUsed : 0));
+  const { user: authUser, loading: authLoading } = useUser();
 
   const handleLogout = async () => {
     if (loggingOut) return;
@@ -119,42 +121,62 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
               <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
             </Button>
 
-            <div className="relative">
+            {authLoading ? (
               <Button
                 variant="ghost"
                 size="icon"
                 className="rounded-full"
-                onClick={() => setShowUserMenu(!showUserMenu)}
+                disabled
+                aria-label="Memuat sesi"
               >
                 <User className="h-4 w-4" />
               </Button>
+            ) : authUser ? (
+              <div className="relative">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full"
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                >
+                  <User className="h-4 w-4" />
+                </Button>
 
-              {showUserMenu && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setShowUserMenu(false)}
-                  />
-                  <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg border bg-popover p-1 shadow-md">
-                    <button
-                      onClick={() => { router.push("/pengaturan"); setShowUserMenu(false); }}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                    >
-                      <Settings className="h-4 w-4" />
-                      Pengaturan
-                    </button>
-                    <button
-                      onClick={handleLogout}
-                      disabled={loggingOut}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      {loggingOut ? "Keluar..." : "Keluar"}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+                {showUserMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowUserMenu(false)}
+                    />
+                    <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg border bg-popover p-1 shadow-md">
+                      <button
+                        onClick={() => { router.push("/pengaturan"); setShowUserMenu(false); }}
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                      >
+                        <Settings className="h-4 w-4" />
+                        Pengaturan
+                      </button>
+                      <button
+                        onClick={handleLogout}
+                        disabled={loggingOut}
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                      >
+                        <LogOut className="h-4 w-4" />
+                        {loggingOut ? "Keluar..." : "Keluar"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => router.push("/masuk")}
+              >
+                Masuk
+              </Button>
+            )}
           </div>
         </div>
       </header>
