@@ -1,16 +1,21 @@
 /**
  * Topic Extractor — Faza Studio
  *
- * Neem array judul video (max 50), stuurt naar OpenRouter (LLM) om per judul
- * een bermakelijk konten-topik te ekstrahieren en te klassificeren in a van de
- * 12 niche. Niet-relevante judul → skip.
+ * Menerima array judul video (max 50), mengirim ke Groq (LLM) untuk per judul
+ * mengekstrak topik konten yang bermakna dan mengklasifikasikan ke salah satu
+ * dari 12 niche. Judul yang tidak relevan → skip.
  *
- * Best-effort: bij fout/key onbeschikbaar → lege array (nooit throw).
+ * Memakai env GROQ_API_KEY2 (terpisah dari GROQ_API_KEY milik generate script,
+ * agar kuota token tidak berbagi). Best-effort: bila gagal/key tak ada →
+ * array kosong (tidak pernah throw).
  */
 
-import { openrouterCompletion } from "@/lib/ai/openrouter";
+const GROQ_API_BASE = "https://api.groq.com/openai/v1";
 
-/** De 12 niche waarnaar geclassificeerd wordt (zelfde als system). */
+/** Model sama dengan yang dipakai generate script / translate. */
+const MODEL = process.env.TOPIC_EXTRACTOR_GROQ_MODEL || "llama-3.3-70b-versatile";
+
+/** Ke-12 niche yang dipakai klasifikasi (sama seperti di seluruh sistem). */
 export const NICHE_SLUGS = [
   "skincare", "fashion", "gadget", "makanan", "suplemen", "perabot",
   "mistis", "motivasi", "edukasi", "keuangan", "curhat", "sejarah",
@@ -18,8 +23,6 @@ export const NICHE_SLUGS = [
 
 const VALID_NICHE = new Set<string>(NICHE_SLUGS);
 
-const PRIMARY_MODEL = process.env.TOPIC_EXTRACTOR_MODEL || "google/gemini-flash-1.5";
-const FALLBACK_MODEL = "openai/gpt-4o-mini";
 const MAX_INPUT = 50;
 const MAX_TOKENS = 2048;
 
@@ -27,7 +30,7 @@ export interface ExtractedTopic {
   topic: string;
   niche: string;
   sourceTitle: string;
-  /** Posisi original in de input-array (om metadata terug te linken). */
+  /** Posisi aslinya di array input (untuk menautkan metadata video). */
   index: number;
 }
 
@@ -37,7 +40,12 @@ interface RawItem {
   niche?: unknown;
 }
 
-/** Parse JSON-object uit LLM content + filter/validate items. */
+interface GroqMessage {
+  role: "system" | "user";
+  content: string;
+}
+
+/** Parse JSON-object dari content LLM + filter/validasi item. */
 function parseItems(content: string, titles: string[]): ExtractedTopic[] {
   try {
     const cleaned = content
@@ -57,7 +65,7 @@ function parseItems(content: string, titles: string[]): ExtractedTopic[] {
       if (!Number.isInteger(idx) || idx < 0 || idx >= titles.length) continue;
       const topic = typeof it?.topic === "string" ? it.topic.trim() : "";
       const niche = typeof it?.niche === "string" ? it.niche.trim() : "";
-      if (!topic || !VALID_NICHE.has(niche)) continue; // skip irrelevant/unknow
+      if (!topic || !VALID_NICHE.has(niche)) continue; // skip irrelevant/unknown
       out.push({ topic, niche, sourceTitle: titles[idx], index: idx });
     }
     return out;
@@ -66,42 +74,86 @@ function parseItems(content: string, titles: string[]): ExtractedTopic[] {
   }
 }
 
-/** Aanroep OpenRouter met gebruike model en parse antwoord. */
-async function runModel(
-  model: string,
+/**
+ * Fetch Groq dengan retry + backoff untuk status 429 (rate limit).
+ * Pola sama dengan src/lib/ai/groq.ts: baca header Retry-After (default 15s).
+ */
+async function callGroqWithRetry(
+  url: string,
+  init: RequestInit,
+  maxRetries: number = 3
+): Promise<Response> {
+  for (let i = 0; i < maxRetries; i++) {
+    const res = await fetch(url, init);
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get("retry-after") ?? "15", 10);
+      const safeRetry = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 15;
+      console.warn(`[topic-extractor] Groq 429 - retry ${i + 1}/${maxRetries} after ${safeRetry}s`);
+      await new Promise((r) => setTimeout(r, safeRetry * 1000));
+      continue;
+    }
+    return res;
+  }
+  throw new Error("Groq max retries exceeded");
+}
+
+/** Panggil Groq chat/completions dengan GROQ_API_KEY2. */
+async function groqClassify(
   titles: string[],
   signal?: AbortSignal
 ): Promise<ExtractedTopic[]> {
+  const apiKey = process.env.GROQ_API_KEY2;
+  if (!apiKey) {
+    console.warn("[topic-extractor] GROQ_API_KEY2 tidak tersedia");
+    return [];
+  }
+
   const system =
-    "Kamu bent een content strategen. Ekstrahieren een bermakelijk konten-topik " +
-    "uit elke judul video en klassificeer het naar een van deze 12 niches: " +
+    "Kamu adalah penulis konten. Ekstrak topik konten yang bermakna dari judul video YouTube " +
+    "dan klasifikasikan ke salah satu dari 12 niche: " +
     NICHE_SLUGS.join(", ") +
-    ". Geef alleen een JSON object met de key \"items\": een array van " +
-    "{ \"index\": <int, de positie in de invoer-array>, \"topic\": string, \"niche\": string|null }. " +
-    "Topic moet een kort, zinvol onderwerp zijn (niet de ruwe judul, geen hashtag/merk). " +
-    "Alleen outputs voor judul die in een niche passen; zet \"niche\" op null voor de rest.";
+    ". Output berupa JSON object dengan kunci \"items\": array dari " +
+    "{ \"index\": <int posisi dalam array input>, \"topic\": string, \"niche\": string|null }. " +
+    "Topic harus topik yang ringkas dan bermakna (bukan judul mentah, bukan hashtag/merk). " +
+    "Kalau suatu judul tidak relevan dengan niche apapun, set \"niche\" ke null (dilewati/skipped).";
 
   const user = "Judul:\n" + JSON.stringify(titles);
 
-  const res = await openrouterCompletion({
-    model,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    max_tokens: MAX_TOKENS,
-    response_format: { type: "json_object" },
-    temperature: 0.2,
+  const init: RequestInit = {
+    method: "POST",
     signal,
-  });
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ] as GroqMessage[],
+      max_tokens: MAX_TOKENS,
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+    }),
+  };
 
-  return parseItems(res.content, titles);
+  const response = await callGroqWithRetry(`${GROQ_API_BASE}/chat/completions`, init);
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error(`[topic-extractor] Groq error ${response.status}:`, errorBody.slice(0, 300));
+    return [];
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content ?? "";
+  return parseItems(content, titles);
 }
 
 /**
- * Ekstraheer topics + niche uit een array judul (max 50) via OpenRouter.
- * Primary model (default google/gemini-flash-1.5); bij fout → fallback
- * (openai/gpt-4o-mini); als beide falen → lege array.
+ * Ekstrak topik + niche dari array judul (max 50) via Groq (GROQ_API_KEY2).
+ * Best-effort: kalau Groq gagal / key tak ada → array kosong.
  */
 export async function extractTopicsFromTitles(
   titles: string[],
@@ -109,23 +161,11 @@ export async function extractTopicsFromTitles(
 ): Promise<ExtractedTopic[]> {
   const slice = titles.slice(0, MAX_INPUT);
   if (slice.length === 0) return [];
-  if (!process.env.OPENROUTER_API_KEY) return [];
 
   try {
-    return await runModel(PRIMARY_MODEL, slice, signal);
-  } catch (primaryErr) {
-    console.error(
-      "[topic-extractor] primary gagal:",
-      primaryErr instanceof Error ? primaryErr.message : primaryErr
-    );
-    try {
-      return await runModel(FALLBACK_MODEL, slice, signal);
-    } catch (fallbackErr) {
-      console.error(
-        "[topic-extractor] fallback gagal:",
-        fallbackErr instanceof Error ? fallbackErr.message : fallbackErr
-      );
-      return [];
-    }
+    return await groqClassify(slice, signal);
+  } catch (e) {
+    console.error("[topic-extractor] Groq gagal:", e instanceof Error ? e.message : e);
+    return [];
   }
 }

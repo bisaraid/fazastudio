@@ -4,7 +4,7 @@
  * Harvest flow nieuw (Sesi A):
  *  - Fetch top 50 trending ID + top 50 trending US (geen category filter).
  *  - Dedupe per judul.
- *  - Ekstrahieren topik + klassificatie niche via OpenRouter (topic-extractor).
+ *  - Ekstrak topik + klasifikasi niche via Groq (topic-extractor).
  *  - Group per niche → simpan ke trend_ideas met source="youtube" en
  *    topik bersih (niet judul mentah) di kolom `keyword`.
  *
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
     `[cron-trends] fetched id=${idRes.data?.length ?? 0} us=${usRes.data?.length ?? 0} dedupe=${videos.length}`
   );
 
-  // ===== 3. Topic-extractor via OpenRouter =====
+  // ===== 3. Topic-extractor via Groq =====
   const extracted = await extractTopicsFromTitles(videos.map((v) => v.title));
 
   // ===== 4. Group per niche + prepare rows =====
@@ -91,11 +91,19 @@ export async function GET(request: NextRequest) {
     let count = 0;
     let err: string | null = null;
     try {
-      const { error } = await supabase.from("trend_ideas").insert(nicheRows);
-      if (error) {
-        err = error.message;
-      } else {
-        count = nicheRows.length;
+      // Insert per baris agar duplikat (unique_violation 23505) bisa di-skip aman
+      // sehingga satu baris duplikat tidak menggagalkan seluruh batch. Duplikat tidak dihitung.
+      for (const row of nicheRows) {
+        const { error } = await supabase.from("trend_ideas").insert([row]);
+        if (error) {
+          if (error.code !== "23505") {
+            err = error.message;
+            break;
+          }
+          // 23505 = unique_violation → skip aman (tidak dihitung, bukan error)
+        } else {
+          count++;
+        }
       }
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
