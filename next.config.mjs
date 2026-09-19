@@ -17,6 +17,11 @@ const nextConfig = {
     "/api/generate-video": ["./public/fonts/**/*"],
     "/api/generate-subtitle": ["./public/fonts/**/*"],
   },
+  webpack: (config) => {
+    // Abaikan dependensi opsional BullMQ yang belum tersedia saat build.
+    config.externals.push("@valkey/valkey-glide");
+    return config;
+  },
 };
 
 export default nextConfig;

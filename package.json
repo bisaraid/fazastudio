@@ -51,8 +51,5 @@
     "typescript": "^5.4.0",
     "vite-tsconfig-paths": "^5.0.0",
     "vitest": "^2.1.0"
-  },
-  "optionalDependencies": {
-    "@valkey/valkey-glide": "*"
   }
 }
