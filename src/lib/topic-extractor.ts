@@ -149,6 +149,7 @@ async function groqClassify(
 
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content ?? "";
+console.log("[topic-extractor] raw response:", content?.slice(0, 500));
   return parseItems(content, titles);
 }
 
