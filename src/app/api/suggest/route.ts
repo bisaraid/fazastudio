@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { getTrendingNow, getAkanTrending } from "@/lib/trend-engine";
+import { getTrendingNow } from "@/lib/trend-engine";
 import { readBehaviorSignals } from "@/lib/persona";
 import { buildPersonalizedSuggest, SuggestDeps } from "@/lib/suggest-engine";
 
@@ -62,7 +62,6 @@ export async function GET(request: NextRequest) {
       return readBehaviorSignals(userId ?? undefined);
     },
     loadTrendingNow: (niche: string) => getTrendingNow(niche),
-    loadAkanTrending: (niche: string) => getAkanTrending(niche),
   };
 
   const result = await buildPersonalizedSuggest(deps, limit);

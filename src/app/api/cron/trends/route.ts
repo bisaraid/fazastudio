@@ -1,12 +1,11 @@
 /**
  * Cron Job: /api/cron/trends
  *
- * Harvest flow nieuw (Sesi A):
- *  - Fetch top 50 trending ID + top 50 trending US (geen category filter).
- *  - Dedupe per judul.
- *  - Ekstrak topik + klasifikasi niche via Groq (topic-extractor).
- *  - Group per niche → simpan ke trend_ideas met source="youtube" en
- *    topik bersih (niet judul mentah) di kolom `keyword`.
+ * Harvest flow (multi-source):
+ * - Fetch top 50 trending ID (YouTube, geen category filter).
+ * - Fetch Google Trends (daily, ID) + RSS (Detik/Kompas) parallel.
+ * - Gabung alle judul -> dedupe -> topic-extractor (Groq).
+ * - Insert naar trend_ideas met source per asal: "youtube" | "google_trends" | "rss".
  *
  * Proteksi: header Authorization: Bearer CRON_SECRET
  */
@@ -19,9 +18,12 @@ import {
   YouTubeVideo,
 } from "@/lib/trend-youtube";
 import { extractTopicsFromTitles } from "@/lib/topic-extractor";
+import { fetchGoogleTrends } from "@/lib/harvest-google-trends";
+import { fetchRssTitles } from "@/lib/harvest-rss";
 
 const TOP_VIDEOS = 50;
-
+const SOURCE_GOOGLE_TRENDS = "google_trends";
+const SOURCE_RSS = "rss";
 export async function GET(request: NextRequest) {
   // ===== Proteksi CRON_SECRET =====
   const authHeader = request.headers.get("authorization");
@@ -33,31 +35,43 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceRoleClient();
   const nowIso = new Date().toISOString();
 
-  // ===== 1. Fetch top 50 ID + top 50 US (zonder category filter) =====
+  // ===== 1. Fetch top 50 ID (geen category filter) =====
   const idRes = await fetchYouTubeTrending(TOP_VIDEOS, "ID");
-  const usRes = await fetchYouTubeTrending(TOP_VIDEOS, "US");
 
-  // ===== 2. Dedupe per judul =====
+  // ===== 1b. Google Trends + RSS (parallel, best-effort) =====
+  const [gtRes, rssRes] = await Promise.allSettled([
+    fetchGoogleTrends(),
+    fetchRssTitles(),
+  ]);
+  const gtTitles = gtRes.status === "fulfilled" ? gtRes.value : [];
+  const rssTitles = rssRes.status === "fulfilled" ? rssRes.value : [];
+  // ===== 2. Gabung judul + dedupe (source per asal data) =====
   const seen = new Set<string>();
-  const videos: YouTubeVideo[] = [];
-  for (const v of [...(idRes.data ?? []), ...(usRes.data ?? [])]) {
-    const title = (v.title || "").trim();
-    if (!title) continue;
-    const key = title.toLowerCase();
-    if (seen.has(key)) continue;
+  const titles: string[] = [];
+  const sources: string[] = [];
+  const videos: Array<YouTubeVideo | null> = [];
+
+  function pushTitle(title: string, source: string, video: YouTubeVideo | null) {
+    const t = (title || "").trim();
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
     seen.add(key);
-    videos.push(v);
+    titles.push(t);
+    sources.push(source);
+    videos.push(video);
   }
-console.log(`[cron-trends] fetch id=${idRes.data?.length ?? 0} us=${usRes.data?.length ?? 0} videos=${videos.length}`);
+  for (const v of idRes.data ?? []) pushTitle(v.title, SOURCE_YOUTUBE, v);
+  for (const t of gtTitles) pushTitle(t, SOURCE_GOOGLE_TRENDS, null);
+  for (const t of rssTitles) pushTitle(t, SOURCE_RSS, null);
 
   console.log(
-    `[cron-trends] fetched id=${idRes.data?.length ?? 0} us=${usRes.data?.length ?? 0} dedupe=${videos.length}`
+    `[cron-trends] youtube=${idRes.data?.length ?? 0} gt=${gtTitles.length} rss=${rssTitles.length} dedupe=${titles.length}`
   );
 
   // ===== 3. Topic-extractor via Groq =====
-  const extracted = await extractTopicsFromTitles(videos.map((v) => v.title));
+  const extracted = await extractTopicsFromTitles(titles);
 console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.env.GROQ_API_KEY2}`);
-
   // ===== 4. Group per niche + prepare rows =====
   const byNiche: Record<string, Record<string, unknown>[]> = {};
   let skipped = 0;
@@ -70,7 +84,7 @@ console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.en
     const row: Record<string, unknown> = {
       keyword: item.topic,
       niche_slug: item.niche,
-      source: SOURCE_YOUTUBE,
+      source: sources[item.index],
       score: 0,
       score_breakdown: {},
       youtube_video_id: v?.videoId ?? null,
@@ -84,7 +98,6 @@ console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.en
     };
     byNiche[item.niche] = byNiche[item.niche] ? [...byNiche[item.niche], row] : [row];
   }
-
   // ===== 5. Insert per niche (error handling + logging per niche) =====
   const results: { niche: string; count: number; source: string }[] = [];
   let total = 0;
@@ -93,8 +106,6 @@ console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.en
     let count = 0;
     let err: string | null = null;
     try {
-      // Insert per baris agar duplikat (unique_violation 23505) bisa di-skip aman
-      // sehingga satu baris duplikat tidak menggagalkan seluruh batch. Duplikat tidak dihitung.
       for (const row of nicheRows) {
         const { error } = await supabase.from("trend_ideas").insert([row]);
         if (error) {
@@ -102,7 +113,6 @@ console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.en
             err = error.message;
             break;
           }
-          // 23505 = unique_violation → skip aman (tidak dihitung, bukan error)
         } else {
           count++;
         }
@@ -113,7 +123,7 @@ console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.en
     console.log(
       `[cron-trends] niche=${niche} rows=${count}` + (err ? ` error=${err}` : "")
     );
-    results.push({ niche, count, source: err ? "error" : "youtube" });
+    results.push({ niche, count, source: err ? "error" : "mixed" });
     total += count;
   }
 

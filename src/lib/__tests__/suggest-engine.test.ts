@@ -81,7 +81,6 @@ describe("buildPersonalizedSuggest", () => {
       loadProjectGenres: vi.fn().mockResolvedValue([]),
       loadBehavior: vi.fn().mockResolvedValue({ regen: 1, lanjut: 3, preferences: { provider: "google", duration: 30, platform: "tiktok" } } as BehaviorSignals),
       loadTrendingNow: vi.fn().mockResolvedValue([idea("topik A"), idea("topik B")]),
-      loadAkanTrending: vi.fn().mockResolvedValue([]),
       ...overrides,
     };
   }
@@ -106,31 +105,5 @@ describe("buildPersonalizedSuggest", () => {
     expect(res.ideas[0].preferences).toEqual({ provider: "google", duration: 30, platform: "tiktok" });
     // Metadata tidak mengubah urutan: keyword tetap sesuai score order dari loader.
     expect(res.ideas.map((i) => i.keyword)).toEqual(["topik A", "topik B"]);
-  });
-
-  test("fatigue → signal upcoming, ambil akan-trending niche", async () => {
-    const deps = makeDeps({
-      loadBehavior: vi.fn().mockResolvedValue({ regen: 4, lanjut: 1, preferences: {} } as BehaviorSignals),
-      loadAkanTrending: vi.fn().mockResolvedValue([idea("US A", 90)]),
-    });
-    const res = await buildPersonalizedSuggest(deps, 5);
-    expect(res.signal).toBe("upcoming");
-    expect(res.source).toBe("youtube_us");
-    expect(deps.loadAkanTrending).toHaveBeenCalledWith("edukasi");
-  });
-
-  test("niche kosong → fallback global pada sinyal yang sama", async () => {
-    const deps = makeDeps({
-      loadBehavior: vi.fn().mockResolvedValue({ regen: 4, lanjut: 1, preferences: {} } as BehaviorSignals),
-      // Niche "edukasi" kosong; global ("") punya data → fallback ke youtube_us global.
-      loadAkanTrending: vi.fn().mockImplementation((niche: string) =>
-        niche === "" ? Promise.resolve([idea("US global", 70)]) : Promise.resolve([])
-      ),
-    });
-    const res = await buildPersonalizedSuggest(deps, 5);
-    expect(res.source).toBe("global");
-    expect(res.ideas.map((i) => i.keyword)).toEqual(["US global"]);
-    // fallback global pada sinyal yang sama (upcoming) → loadAkanTrending("").
-    expect(deps.loadAkanTrending).toHaveBeenCalledWith("");
   });
 });

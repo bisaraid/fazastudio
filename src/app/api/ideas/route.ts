@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { fetchTrendingByNiche, SOURCE_YOUTUBE_US } from "@/lib/trend-youtube";
+import { fetchTrendingByNiche } from "@/lib/trend-youtube";
 import { scoreTrends, getTopTrends } from "@/lib/trend-scoring";
 import { checkRateLimit, buildBurstKey, getClientIp } from "@/lib/rate-limit";
 import { getServerIdentity } from "@/lib/identity";
@@ -20,30 +20,8 @@ export async function GET(request: NextRequest) {
   const niche = searchParams.get("niche") ?? "";
   const limit = Math.min(parseInt(searchParams.get("limit") ?? "5", 10), 10);
   // Sinyal: "now" (default, trending sekarang) | "upcoming" (akan trending dari youtube_us).
-  const signal = searchParams.get("signal") ?? "now";
 
   const supabase = createServiceRoleClient();
-
-  // ===== Mode "AKAN TRENDING" (early-signal US) =====
-  // Keyword source "youtube_us" yang belum muncul di keyword source "youtube".
-  // Backward-compatible: default "now" → perilaku lama tidak berubah.
-  if (signal === "upcoming") {
-    const { getAkanTrending } = await import("@/lib/trend-engine");
-    const ideas = await getAkanTrending(niche);
-    return NextResponse.json({
-      success: true,
-      signal,
-      source: SOURCE_YOUTUBE_US,
-      count: ideas.length,
-      ideas: ideas.slice(0, limit).map((i) => ({
-        keyword: i.keyword,
-        niche_slug: i.niche_slug,
-        score: i.score,
-        velocity: i.velocity ?? null,
-        trend_direction: i.trend_direction ?? "up",
-      })),
-    });
-  }
 
   // ===== Mode GLOBAL (tanpa niche): top 1 per niche, maks 6, urut score tertinggi =====
   // Tidak wajib niche — dipakai homepage untuk menampilkan trending lintas kategori.

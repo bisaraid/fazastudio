@@ -34,8 +34,6 @@ export interface SuggestDeps {
   loadBehavior: () => Promise<BehaviorSignals>;
   /** Trend "sekarang" untuk niche tertentu; niche "" = global. */
   loadTrendingNow: (niche: string) => Promise<TrendIdeaItem[]>;
-  /** Trend "akan" (US) untuk niche tertentu; niche "" = global. */
-  loadAkanTrending: (niche: string) => Promise<TrendIdeaItem[]>;
 }
 
 export interface SuggestResult {
@@ -136,20 +134,15 @@ export async function buildPersonalizedSuggest(
     const projectGenres = await deps.loadProjectGenres();
     const niches = getUserTopNichesFromGenres(projectGenres, profileNiche);
 
-    // 4. Pilih sinyal by behavior.
+    // 4. Sinyal trend sekarang (multi-source).
     const behavior = await deps.loadBehavior();
-    const signal = pickSuggestSignal(behavior);
+    const signal = "now";
 
-    // 5. Ambil trend untuk niche primary; kalau kosong, coba global pada sinyal yg sama.
-    let ideas = signal === "upcoming"
-      ? await deps.loadAkanTrending(profileNiche)
-      : await deps.loadTrendingNow(profileNiche);
-
-    let usedSource = signalToSource(signal);
+    // 5. Ambil trend untuk niche primary; kalau kosong, coba global.
+    let ideas = await deps.loadTrendingNow(profileNiche);
+    let usedSource = ideas?.[0]?.source ?? "youtube";
     if (!ideas || ideas.length === 0) {
-      const globalIdeas = signal === "upcoming"
-        ? await deps.loadAkanTrending("")
-        : await deps.loadTrendingNow("");
+      const globalIdeas = await deps.loadTrendingNow("");
       if (globalIdeas && globalIdeas.length > 0) {
         ideas = globalIdeas;
         usedSource = "global";

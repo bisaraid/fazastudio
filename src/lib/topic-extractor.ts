@@ -2,7 +2,7 @@
 /**
  * Topic Extractor — Faza Studio
  *
- * Menerima array judul video (max 50), mengirim ke Groq (LLM) untuk per judul
+ * Menerima array judul konten (max 50), mengirim ke Groq (LLM) untuk per judul
  * mengekstrak topik konten yang bermakna dan mengklasifikasikan ke salah satu
  * dari 12 niche. Judul yang tidak relevan → skip.
  *
@@ -110,7 +110,7 @@ async function groqClassify(
   }
 
   const system =
-    "Kamu adalah penulis konten. Ekstrak topik konten yang bermakna dari judul video YouTube " +
+    "Kamu adalah penulis konten. Ekstrak topik konten yang bermakna dari judul konten " +
     "dan klasifikasikan ke salah satu dari 12 niche: " +
     NICHE_SLUGS.join(", ") +
     ". Output berupa JSON object dengan kunci \"items\": array dari " +
