@@ -43,7 +43,8 @@ export async function fetchGoogleTrends(): Promise<string[]> {
       }
     }
     return dedupe(titles);
-  } catch {
+  } catch (e) {
+    console.error("[harvest-google-trends] fetch gagal:", e);
     return [];
   }
 }

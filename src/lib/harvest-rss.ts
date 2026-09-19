@@ -60,10 +60,14 @@ async function fetchFeed(url: string): Promise<string[]> {
         accept: "application/rss+xml, application/xml, text/xml",
       },
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.warn("[harvest-rss] feed tidak OK:", url, res.status);
+      return [];
+    }
     const xml = await res.text();
     return extractTitles(xml);
-  } catch {
+  } catch (e) {
+    console.error("[harvest-rss] feed gagal:", url, e);
     return [];
   }
 }

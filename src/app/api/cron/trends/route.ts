@@ -65,9 +65,16 @@ export async function GET(request: NextRequest) {
   for (const t of gtTitles) pushTitle(t, SOURCE_GOOGLE_TRENDS, null);
   for (const t of rssTitles) pushTitle(t, SOURCE_RSS, null);
 
-  console.log(
-    `[cron-trends] youtube=${idRes.data?.length ?? 0} gt=${gtTitles.length} rss=${rssTitles.length} dedupe=${titles.length}`
-  );
+  let keptYoutube = 0, keptGt = 0, keptRss = 0;
+  for (let i = 0; i < sources.length; i++) {
+    const s = sources[i];
+    if (s === SOURCE_YOUTUBE) keptYoutube++;
+    else if (s === SOURCE_GOOGLE_TRENDS) keptGt++;
+    else keptRss++;
+  }
+  console.log(`[cron-trends] BEFORE dedupe youtube=${idRes.data?.length ?? 0} gt=${gtTitles.length} rss=${rssTitles.length}`);
+  console.log(`[cron-trends] AFTER  dedupe youtube=${keptYoutube} gt=${keptGt} rss=${keptRss} total=${titles.length}`);
+
 
   // ===== 3. Topic-extractor via Groq =====
   const extracted = await extractTopicsFromTitles(titles);
