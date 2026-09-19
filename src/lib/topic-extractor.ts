@@ -14,7 +14,7 @@
 const GROQ_API_BASE = "https://api.groq.com/openai/v1";
 
 /** Model sama dengan yang dipakai generate script / translate. */
-const MODEL = process.env.TOPIC_EXTRACTOR_GROQ_MODEL || "llama-3.3-70b-versatile";
+const MODEL = process.env.TOPIC_EXTRACTOR_GROQ_MODEL || "llama3-8b-8192";
 
 /** Ke-12 niche yang dipakai klasifikasi (sama seperti di seluruh sistem). */
 export const NICHE_SLUGS = [
