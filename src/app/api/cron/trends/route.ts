@@ -48,6 +48,7 @@ export async function GET(request: NextRequest) {
     seen.add(key);
     videos.push(v);
   }
+console.log(`[cron-trends] fetch id=${idRes.data?.length ?? 0} us=${usRes.data?.length ?? 0} videos=${videos.length}`);
 
   console.log(
     `[cron-trends] fetched id=${idRes.data?.length ?? 0} us=${usRes.data?.length ?? 0} dedupe=${videos.length}`
@@ -55,6 +56,7 @@ export async function GET(request: NextRequest) {
 
   // ===== 3. Topic-extractor via Groq =====
   const extracted = await extractTopicsFromTitles(videos.map((v) => v.title));
+console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.env.GROQ_API_KEY2}`);
 
   // ===== 4. Group per niche + prepare rows =====
   const byNiche: Record<string, Record<string, unknown>[]> = {};
