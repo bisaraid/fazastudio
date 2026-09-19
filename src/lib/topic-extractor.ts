@@ -116,7 +116,8 @@ async function groqClassify(
     ". Output berupa JSON object dengan kunci \"items\": array dari " +
     "{ \"index\": <int posisi dalam array input>, \"topic\": string, \"niche\": string|null }. " +
     "Topic harus topik yang ringkas dan bermakna (bukan judul mentah, bukan hashtag/merk). " +
-    "Kalau suatu judul tidak relevan dengan niche apapun, set \"niche\" ke null (dilewati/skipped).";
+    "Kalau suatu judul tidak relevan dengan niche apapun, set \"niche\" ke null (dilewati/skipped). " +
+    "HARUS return hanya JSON murni — tanpa markdown, tanpa penjelasan, langsung dimulai dengan { dan diakhiri dengan }.";
 
   const user = "Judul:\n" + JSON.stringify(titles);
 
@@ -134,7 +135,6 @@ async function groqClassify(
         { role: "user", content: user },
       ] as GroqMessage[],
       max_tokens: MAX_TOKENS,
-      response_format: { type: "json_object" },
       temperature: 0.2,
     }),
   };
