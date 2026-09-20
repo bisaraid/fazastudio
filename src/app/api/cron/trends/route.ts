@@ -24,6 +24,15 @@ import { fetchRssTitles } from "@/lib/harvest-rss";
 const TOP_VIDEOS = 50;
 const SOURCE_GOOGLE_TRENDS = "google_trends";
 const SOURCE_RSS = "rss";
+
+/** Baris hasil extract yang siap di-group per niche. */
+interface ExtractRow {
+  topic: string;
+  niche: string;
+  source: string;
+  sourceTitle: string;
+  video: YouTubeVideo | null;
+}
 export async function GET(request: NextRequest) {
   // ===== Proteksi CRON_SECRET =====
   const authHeader = request.headers.get("authorization");
@@ -45,53 +54,76 @@ export async function GET(request: NextRequest) {
   ]);
   const gtTitles = gtRes.status === "fulfilled" ? gtRes.value : [];
   const rssTitles = rssRes.status === "fulfilled" ? rssRes.value : [];
-  // ===== 2. Gabung judul + dedupe (source per asal data) =====
-  const seen = new Set<string>();
-  const titles: string[] = [];
-  const sources: string[] = [];
-  const videos: Array<YouTubeVideo | null> = [];
 
-  function pushTitle(title: string, source: string, video: YouTubeVideo | null) {
-    const t = (title || "").trim();
-    if (!t) return;
-    const key = t.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    titles.push(t);
-    sources.push(source);
-    videos.push(video);
+  // ===== 2. Siapkan batch per source =====
+  const ytTitles: string[] = [];
+  const ytVideos: YouTubeVideo[] = [];
+  for (const v of idRes.data ?? []) {
+    const t = (v.title || "").trim();
+    if (!t) continue;
+    ytTitles.push(t);
+    ytVideos.push(v);
   }
-  for (const v of idRes.data ?? []) pushTitle(v.title, SOURCE_YOUTUBE, v);
-  for (const t of gtTitles) pushTitle(t, SOURCE_GOOGLE_TRENDS, null);
-  for (const t of rssTitles) pushTitle(t, SOURCE_RSS, null);
+  console.log(
+    `[cron-trends] fetched youtube=${ytTitles.length} gt=${gtTitles.length} rss=${rssTitles.length}`
+  );
 
-  let keptYoutube = 0, keptGt = 0, keptRss = 0;
-  for (let i = 0; i < sources.length; i++) {
-    const s = sources[i];
-    if (s === SOURCE_YOUTUBE) keptYoutube++;
-    else if (s === SOURCE_GOOGLE_TRENDS) keptGt++;
-    else keptRss++;
+  // ===== 3. Ekstrak topik per source (batch terpisah) =====
+  const extResults = await Promise.allSettled([
+    extractTopicsFromTitles(ytTitles),
+    extractTopicsFromTitles(gtTitles),
+    extractTopicsFromTitles(rssTitles),
+  ]);
+  const ytExtracted = extResults[0].status === "fulfilled" ? extResults[0].value : [];
+  const gtExtracted = extResults[1].status === "fulfilled" ? extResults[1].value : [];
+  const rssExtracted = extResults[2].status === "fulfilled" ? extResults[2].value : [];
+  console.log(
+    `[cron-trends] extracted youtube=${ytExtracted.length} gt=${gtExtracted.length} rss=${rssExtracted.length}`
+  );
+
+  // ===== 4. Gabung hasil extract per source =====
+  const rows: ExtractRow[] = [];
+  for (const it of ytExtracted) {
+    rows.push({
+      topic: it.topic,
+      niche: it.niche,
+      source: SOURCE_YOUTUBE,
+      sourceTitle: it.sourceTitle,
+      video: ytVideos[it.index] ?? null,
+    });
   }
-  console.log(`[cron-trends] BEFORE dedupe youtube=${idRes.data?.length ?? 0} gt=${gtTitles.length} rss=${rssTitles.length}`);
-  console.log(`[cron-trends] AFTER  dedupe youtube=${keptYoutube} gt=${keptGt} rss=${keptRss} total=${titles.length}`);
+  for (const it of gtExtracted) {
+    rows.push({
+      topic: it.topic,
+      niche: it.niche,
+      source: SOURCE_GOOGLE_TRENDS,
+      sourceTitle: it.sourceTitle,
+      video: null,
+    });
+  }
+  for (const it of rssExtracted) {
+    rows.push({
+      topic: it.topic,
+      niche: it.niche,
+      source: SOURCE_RSS,
+      sourceTitle: it.sourceTitle,
+      video: null,
+    });
+  }
 
-
-  // ===== 3. Topic-extractor via Groq =====
-  const extracted = await extractTopicsFromTitles(titles);
-console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.env.GROQ_API_KEY2}`);
-  // ===== 4. Group per niche + prepare rows =====
+  // ===== 4b. Group per niche + prepare DB rows =====
   const byNiche: Record<string, Record<string, unknown>[]> = {};
   let skipped = 0;
-  for (const item of extracted) {
+  for (const item of rows) {
     if (!item.topic || !item.niche) {
       skipped++;
       continue;
     }
-    const v = videos[item.index];
+    const v = item.video;
     const row: Record<string, unknown> = {
       keyword: item.topic,
       niche_slug: item.niche,
-      source: sources[item.index],
+      source: item.source,
       score: 0,
       score_breakdown: {},
       youtube_video_id: v?.videoId ?? null,
@@ -105,6 +137,7 @@ console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.en
     };
     byNiche[item.niche] = byNiche[item.niche] ? [...byNiche[item.niche], row] : [row];
   }
+
   // ===== 5. Insert per niche (error handling + logging per niche) =====
   const results: { niche: string; count: number; source: string }[] = [];
   let total = 0;
@@ -135,7 +168,7 @@ console.log(`[cron-trends] extracted=${extracted.length} groq_key=${!!process.en
   }
 
   console.log(
-    `[cron-trends] done extracted=${extracted.length} inserted=${total} skipped=${skipped}`
+    `[cron-trends] done rows=${rows.length} inserted=${total} skipped=${skipped}`
   );
 
   return NextResponse.json({
