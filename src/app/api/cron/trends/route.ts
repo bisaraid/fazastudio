@@ -74,9 +74,9 @@ export async function GET(request: NextRequest) {
   }
 
   const ytExtracted = await extractTopicsFromTitles(ytTitles);
-  await sleep(2000);
+  await sleep(10000);
   const rssExtracted = await extractTopicsFromTitles(rssTitles);
-  await sleep(2000);
+  await sleep(10000);
   const gtExtracted = await extractTopicsFromTitles(gtTitles);
   console.log(
     `[cron-trends] extracted youtube=${ytExtracted.length} gt=${gtExtracted.length} rss=${rssExtracted.length}`

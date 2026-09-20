@@ -63,7 +63,7 @@ async function fetchFeed(url: string): Promise<string[]> {
       return [];
     }
     const xml = await res.text();
-    return extractTitles(xml);
+    return extractTitles(xml).slice(0, 10);
   } catch (e) {
     console.error("[harvest-rss] feed gagal:", url, e);
     return [];
