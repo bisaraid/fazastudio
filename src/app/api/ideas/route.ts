@@ -13,7 +13,7 @@ import { checkRateLimit, buildBurstKey, getClientIp } from "@/lib/rate-limit";
 import { getServerIdentity } from "@/lib/identity";
 import { RATE_LIMIT_LIMITS, MINUTE_WINDOW_MS } from "@/lib/rate-limit-config";
 
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam
+const CACHE_TTL_MS = 48 * 60 * 60 * 1000; // 48 jam
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -36,7 +36,6 @@ export async function GET(request: NextRequest) {
       let query = supabase
         .from("trend_ideas")
         .select("keyword, niche_slug, score, velocity, trend_direction")
-        .eq("source", "youtube")
         .order("score", { ascending: false });
       if (requireFresh) query = query.gte("fetched_at", cutoff);
 
@@ -81,13 +80,12 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // 1. Cek cache (< 6 jam)
+  // 1. Cek cache (< 48 jam)
   const cacheCutoff = new Date(Date.now() - CACHE_TTL_MS).toISOString();
   const { data: cached } = await supabase
     .from("trend_ideas")
     .select("*")
     .eq("niche_slug", niche)
-    .eq("source", "youtube")
     .gte("fetched_at", cacheCutoff)
     .order("score", { ascending: false })
     .limit(limit);
