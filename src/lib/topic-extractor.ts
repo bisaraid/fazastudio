@@ -25,7 +25,7 @@ export const NICHE_SLUGS = [
 const VALID_NICHE = new Set<string>(NICHE_SLUGS);
 
 const MAX_INPUT = 150;
-const MAX_TOKENS = 2048;
+const MAX_TOKENS = 4096;
 
 export interface ExtractedTopic {
   topic: string;
