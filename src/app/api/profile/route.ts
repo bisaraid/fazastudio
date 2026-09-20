@@ -24,7 +24,7 @@ export async function GET() {
   const service = createServiceRoleClient();
   const { data, error } = await service
     .from("profiles")
-    .select("user_id, full_name, genre_tags, platform_tags, has_completed_onboarding, layer1_mode, niche_slug, gaya_key, cerita_key, updated_at")
+    .select("user_id, full_name, genre_tags, platform_tags, has_completed_onboarding, layer1_mode, niche_slug, gaya_key, cerita_key, avatar_url, updated_at")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
     nicheSlug?: string;
     gayaKey?: string;
     ceritaKey?: string;
+  avatarUrl?: string;
   } = {};
   try {
     body = await request.json();
@@ -72,6 +73,7 @@ export async function POST(request: NextRequest) {
       niche_slug: body.nicheSlug ?? null,
       gaya_key: body.gayaKey ?? null,
       cerita_key: body.ceritaKey ?? null,
+      avatar_url: body.avatarUrl ?? null,
       has_completed_onboarding: true,
       updated_at: new Date().toISOString(),
     },

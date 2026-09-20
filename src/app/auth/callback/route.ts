@@ -2,6 +2,25 @@ import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
+/** One-time sync metadata OAuth ke profiles (full_name + avatar_url). */
+async function syncProfileFromMetadata(user: any): Promise<void> {
+  const md = user?.user_metadata ?? {};
+  const fullName = (md.full_name as string) || (md.name as string) || "";
+  const avatarUrl = (md.avatar_url as string) || (md.picture as string) || "";
+  if (!fullName && !avatarUrl) return;
+  try {
+    const { createServiceRoleClient } = await import("@/lib/supabase/service");
+    const svc = createServiceRoleClient();
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (fullName) patch.full_name = fullName;
+    if (avatarUrl) patch.avatar_url = avatarUrl;
+    await svc.from("profiles").upsert({ user_id: user.id, ...patch }, { onConflict: "user_id" });
+  } catch (e) {
+    console.warn("[callback] sync profile gagal:", e);
+  }
+}
+
+
 /**
  * Callback Supabase Auth — menangani dua alur:
  * 1. Google OAuth  => `?code=`  → exchangeCodeForSession
@@ -68,6 +87,7 @@ export async function GET(request: Request) {
         } catch (e) {
           console.warn("[callback] claim gagal:", e);
         }
+      await syncProfileFromMetadata(user);
       }
       return NextResponse.redirect(`${origin}${next}`);
     }
@@ -84,6 +104,7 @@ export async function GET(request: Request) {
         } catch (e) {
           console.warn("[callback] claim gagal:", e);
         }
+      await syncProfileFromMetadata(user);
       }
       return NextResponse.redirect(`${origin}${next}`);
     }

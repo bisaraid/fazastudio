@@ -19,7 +19,7 @@ import {
   CreditCard,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface NavbarProps {
   onMenuToggle?: () => void;
@@ -34,6 +34,27 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
   const { plan, creditsUsed, creditsTotal, loading } = useUsage();
   const creditsRemaining = Math.max(0, (creditsTotal ? creditsTotal : 0) - (creditsUsed ? creditsUsed : 0));
   const { user: authUser, loading: authLoading } = useUser();
+  const [profile, setProfile] = useState<{ full_name?: string; avatar_url?: string } | null>(null);
+  useEffect(() => {
+    if (!authUser) return;
+    let cancelled = false;
+    fetch("/api/profile")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled && data?.success && data?.data) setProfile({ full_name: data.data.full_name, avatar_url: data.data.avatar_url });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser]);
+  const displayName =
+    (profile?.full_name as string)?.trim() ||
+    authUser?.user_metadata?.name ||
+    authUser?.email ||
+    "Akun";
+  const avatarUrl = (profile?.avatar_url as string)?.trim() || "";
+  const initial = displayName.charAt(0).toUpperCase();
 
   const handleLogout = async () => {
     if (loggingOut) return;

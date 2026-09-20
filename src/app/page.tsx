@@ -201,6 +201,21 @@ export default function LandingPage() {
   const { user, loading } = useUser();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [profile, setProfile] = useState<{ full_name?: string; avatar_url?: string } | null>(null);
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    fetch("/api/profile")
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled || !data?.success || !data?.data) return;
+        setProfile({ full_name: data.data.full_name, avatar_url: data.data.avatar_url });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   const logout = useCallback(async () => {
     if (loggingOut) return;
@@ -218,6 +233,7 @@ export default function LandingPage() {
   // Identitas akun: utamakan user_metadata (nama/avatar dari login Google/email),
   // fallback email, lalu inisial.
   const displayName =
+    (profile?.full_name as string)?.trim() ||
     (user?.user_metadata?.full_name as string)?.trim() ||
     user?.user_metadata?.name ||
     user?.email ||
@@ -225,6 +241,7 @@ export default function LandingPage() {
   // Hanya anggap avatar valid jika benar berupa URL http(s) atau data URI.
   // Mencegah URL rusak/template dari metadata tampil sebagai gambar pecah.
   const rawAvatar =
+    (profile?.avatar_url as string) ||
     (user?.user_metadata?.avatar_url as string) ||
     (user?.user_metadata?.picture as string) ||
     "";
