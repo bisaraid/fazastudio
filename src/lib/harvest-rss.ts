@@ -5,19 +5,16 @@
  * Best-effort: faalt een feed - skip, ga door met de rest.
  */
 
-const CNNINDONESIA_FEEDS = [
-  "https://www.cnnindonesia.com/rss",
+const DETIK_FEEDS = [
+  "https://wolipop.detik.com/rss", // skincare, fashion, beauty
+  "https://food.detik.com/rss", // makanan, resep
+  "https://health.detik.com/rss", // kesehatan, suplemen
+  "https://inet.detik.com/rss", // gadget, teknologi
+  "https://finance.detik.com/rss", // keuangan, bisnis
+  "https://hot.detik.com/rss", // hiburan, curhat, drama
 ];
 
-const TRIBUNNEWS_FEEDS = [
-  "https://www.tribunnews.com/rss",
-];
-
-const CNBC_FEEDS = [
-  "https://www.cnbcindonesia.com/rss",
-];
-
-const FEEDS = [...CNNINDONESIA_FEEDS, ...TRIBUNNEWS_FEEDS, ...CNBC_FEEDS];
+const FEEDS = [...DETIK_FEEDS];
 
 const USER_AGENT = "Mozilla/5.0 (compatible; Fazastudio RSS)";
 
