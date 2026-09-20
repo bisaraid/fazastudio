@@ -26,6 +26,7 @@ function MulaiForm() {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   // Animasi: `anim` = sedang slide. `dir` = +1 maju, -1 mundur.
@@ -123,7 +124,9 @@ function MulaiForm() {
       if (!res.ok || !json.success) {
         throw new Error(json?.error || "Gagal menyimpan preferensi.");
       }
-      router.push(next);
+      setSaved(true);
+      setTimeout(() => router.push(next), 1500);
+      return;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan.");
       setAnim(false);
@@ -149,7 +152,7 @@ function MulaiForm() {
     sejarah: "Sejarah, seru!",
   };
 
-  const progress = ((step - 1) / 4) * 100 + (step === 4 && !anim ? 100 : 0);
+  const progress = (step / 4) * 100;
 
   return (
     <div className="min-h-screen bg-background">
@@ -308,6 +311,12 @@ function MulaiForm() {
         {ack && !saving && (
           <div className="mt-4 text-center text-sm font-medium text-primary animate-in fade-in">
             {ack}
+          </div>
+        )}
+
+        {saved && (
+          <div className="mt-4 text-center text-sm font-medium text-primary">
+            Profil kamu siap! 🎉
           </div>
         )}
 
