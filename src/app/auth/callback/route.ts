@@ -89,7 +89,7 @@ export async function GET(request: Request) {
         }
       await syncProfileFromMetadata(user);
       }
-      return NextResponse.redirect(`${origin}${next}`);
+      return NextResponse.redirect(`${origin}/auth/confirm?next=${encodeURIComponent(next)}`);
     }
   } else if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({ type: type as any, token_hash: tokenHash });
@@ -106,7 +106,7 @@ export async function GET(request: Request) {
         }
       await syncProfileFromMetadata(user);
       }
-      return NextResponse.redirect(`${origin}${next}`);
+      return NextResponse.redirect(`${origin}/auth/confirm?next=${encodeURIComponent(next)}`);
     }
   }
 
