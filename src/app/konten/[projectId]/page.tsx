@@ -10,6 +10,7 @@ import { Navbar } from "@/components/layout/navbar";
 import { Button } from "@/components/ui/button";
 import { recordBehavior } from "@/lib/behavior";
 import { readPreferences, recordPreference } from "@/lib/preferences";
+import { GAYA_BY_NICHE, getCeritaOptions } from "@/lib/persona-data";
 import { Genre, Platform } from "@/lib/types";
 import { Sparkles, Loader2, Pencil, ChevronDown, ChevronUp } from "lucide-react";
 import { ScriptCard } from "@/components/pipeline/ScriptCard";
@@ -79,6 +80,13 @@ function defaultDurationFor(mode: string, platform: Platform): number {
   return 30;
 }
 
+function gayaLabel(niche: string, gaya: string): string {
+  return (GAYA_BY_NICHE[niche] ?? []).find((g) => g.key === gaya)?.label ?? gaya;
+}
+function ceritaLabel(niche: string, gaya: string, cerita: string): string {
+  return getCeritaOptions(niche, gaya).find((c) => c.key === cerita)?.label ?? cerita;
+}
+
 type StepName = "script" | "audio" | "video";
 
 export default function ProjectEditorPage() {
@@ -113,6 +121,9 @@ export default function ProjectEditorPage() {
   const anonGateShownRef = useRef(false);
   const [overridePlatform, setOverridePlatform] = useState<Platform | null>(null);
   const [overrideDuration, setOverrideDuration] = useState<number | null>(null);
+  const topicRef = useRef<HTMLTextAreaElement | null>(null);
+  const overridePlatformRef = useRef<Platform | null>(null);
+  const overrideDurationRef = useRef<number | null>(null);
   const [trends, setTrends] = useState<{ keyword: string; source: string }[]>([]);
   const [trendsLoading, setTrendsLoading] = useState(false);
 
@@ -196,9 +207,16 @@ export default function ProjectEditorPage() {
     hydratedFor.current = projectId;
   }, [projectId, currentProject?.id]);
 
-  useEffect(function () {
-    setEditOpen(false);
-  }, [projectId]);
+  useEffect(() => {
+    const hasTopic = !!(currentProject?.topic || "").trim();
+    if (hasTopic) {
+      setEditOpen(false);
+    } else {
+      setEditOpen(true);
+      const id = window.setTimeout(() => topicRef.current?.focus(), 80);
+      return () => window.clearTimeout(id);
+    }
+  }, [projectId, currentProject?.id]);
 
   // Restore pilihan user dari metadata (persist)
   useEffect(() => {
@@ -210,6 +228,33 @@ export default function ProjectEditorPage() {
     if (m.overridePlatform) setOverridePlatform(m.overridePlatform as Platform);
     if (typeof m.overrideDuration === "number") setOverrideDuration(m.overrideDuration);
   }, [currentProject?.id]);
+
+  // Pre-fill platform & durasi dari behavior preferences (mount + login)
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    readPreferences()
+      .then((prefs) => {
+        if (cancelled) return;
+        if (!overridePlatformRef.current && prefs.platform) {
+          setOverridePlatform(prefs.platform as Platform);
+        }
+        if (overrideDurationRef.current == null && typeof prefs.duration === "number") {
+          setOverrideDuration(prefs.duration);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
+    overridePlatformRef.current = overridePlatform;
+  }, [overridePlatform]);
+  useEffect(() => {
+    overrideDurationRef.current = overrideDuration;
+  }, [overrideDuration]);
 
   // Persist pilihan user ke metadata
   const pickAudioProvider = (v: "google" | "cartesia" | "elevenlabs") => { setAudioProvider(v); updateProjectMetadata({ audioProvider: v }); };
@@ -426,6 +471,9 @@ useEffect(()=> {
         <div className="mb-6">
           <h1 className="text-2xl font-bold tracking-tight">{greet}</h1>
           <p className="text-sm text-muted-foreground">Tulis satu hal, sisanya kami yang kerjakan.</p>
+          {user && profile?.gaya && profile?.cerita && (
+              <span>Gaya: {gayaLabel(profile.niche, profile.gaya)} | Cara: {ceritaLabel(profile.niche, profile.gaya, profile.cerita)}</span>
+          )}
         </div>
 
         {/* Panel edit topik/pengaturan — selalu tersedia */}
@@ -440,6 +488,7 @@ useEffect(()=> {
           {editOpen && (
             <div className="space-y-4 border-t p-4">
               <textarea
+                ref={topicRef}
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 placeholder={placeholder}
