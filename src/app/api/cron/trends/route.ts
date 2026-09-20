@@ -68,15 +68,16 @@ export async function GET(request: NextRequest) {
     `[cron-trends] fetched youtube=${ytTitles.length} gt=${gtTitles.length} rss=${rssTitles.length}`
   );
 
-  // ===== 3. Ekstrak topik per source (batch terpisah) =====
-  const extResults = await Promise.allSettled([
-    extractTopicsFromTitles(ytTitles),
-    extractTopicsFromTitles(gtTitles),
-    extractTopicsFromTitles(rssTitles),
-  ]);
-  const ytExtracted = extResults[0].status === "fulfilled" ? extResults[0].value : [];
-  const gtExtracted = extResults[1].status === "fulfilled" ? extResults[1].value : [];
-  const rssExtracted = extResults[2].status === "fulfilled" ? extResults[2].value : [];
+  // ===== 3. Ekstrak topik per source (sequential, 2s antar batch) =====
+  function sleep(ms: number): Promise<void> {
+    return new Promise(function (r) { setTimeout(r, ms); });
+  }
+
+  const ytExtracted = await extractTopicsFromTitles(ytTitles);
+  await sleep(2000);
+  const rssExtracted = await extractTopicsFromTitles(rssTitles);
+  await sleep(2000);
+  const gtExtracted = await extractTopicsFromTitles(gtTitles);
   console.log(
     `[cron-trends] extracted youtube=${ytExtracted.length} gt=${gtExtracted.length} rss=${rssExtracted.length}`
   );
