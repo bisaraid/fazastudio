@@ -5,25 +5,19 @@
  * Best-effort: faalt een feed - skip, ga door met de rest.
  */
 
-const DETIK_FEEDS = [
-  "https://rss.detik.com/index.php/detikhealth",
-  "https://rss.detik.com/index.php/detikfood",
-  "https://rss.detik.com/index.php/detikinet",
-  "https://rss.detik.com/index.php/detikfinance",
-  "https://rss.detik.com/index.php/detikhot",
-  "https://rss.detik.com/index.php/detikstyle",
+const CNNINDONESIA_FEEDS = [
+  "https://www.cnnindonesia.com/rss",
 ];
 
-const KOMPAS_FEEDS = [
-  "https://rss.kompas.com/mostpopular",
-  "https://rss.kompas.com/techno",
-  "https://rss.kompas.com/ekonomi",
-  "https://rss.kompas.com/lifestyle",
-  "https://rss.kompas.com/bola",
-  "https://rss.kompas.com/viral",
+const TRIBUNNEWS_FEEDS = [
+  "https://www.tribunnews.com/rss",
 ];
 
-const FEEDS = [...DETIK_FEEDS, ...KOMPAS_FEEDS];
+const CNBC_FEEDS = [
+  "https://www.cnbcindonesia.com/rss",
+];
+
+const FEEDS = [...CNNINDONESIA_FEEDS, ...TRIBUNNEWS_FEEDS, ...CNBC_FEEDS];
 
 const USER_AGENT = "Mozilla/5.0 (compatible; Fazastudio RSS)";
 
@@ -33,10 +27,11 @@ function decodeEntities(s: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
 }
-function extractTitles(xml: string): string[] {
+export function extractTitles(xml: string, skipFirst = false): string[] {
   const out: string[] = [];
   const lower = xml.toLowerCase();
   let pos = 0;
+  let firstSkipped = false;
   while (true) {
     const start = lower.indexOf("<item", pos);
     if (start === -1) break;
@@ -45,7 +40,13 @@ function extractTitles(xml: string): string[] {
     if (titlePos !== -1 && close !== -1) {
       const raw = xml.slice(titlePos + 7, close);
       const c = decodeEntities(raw.trim());
-      if (c) out.push(c.slice(0, 200));
+      if (c) {
+        if (skipFirst && !firstSkipped) {
+          firstSkipped = true;
+        } else {
+          out.push(c.slice(0, 200));
+        }
+      }
     }
     pos = start + 5;
   }
