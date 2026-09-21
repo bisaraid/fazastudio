@@ -126,6 +126,8 @@ export default function ProjectEditorPage() {
   const overrideDurationRef = useRef<number | null>(null);
   const [trends, setTrends] = useState<{ keyword: string; source: string }[]>([]);
   const [trendsLoading, setTrendsLoading] = useState(false);
+  const [deletingOldest, setDeletingOldest] = useState(false);
+  const [oldestError, setOldestError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -306,16 +308,23 @@ export default function ProjectEditorPage() {
     }
   }, [progress.limitProject]);
   const handleDeleteOldest = useCallback(async ()=> {
-    if (!limitModal) return;
+    if (!limitModal || deletingOldest) return;
     const id = limitModal.id;
-    setLimitModal(null);
+    setDeletingOldest(true);
+    setOldestError(null);
     try {
       await deleteProject(id);
-    } catch {
+    } catch (err) {
+      setOldestError(
+        err instanceof Error ? err.message : "Gagal menghapus project terlama. Coba lagi."
+      );
+      setDeletingOldest(false);
       return;
     }
+    setLimitModal(null);
+    setDeletingOldest(false);
     await handleGenerate();
-  }, [limitModal, deleteProject]);
+  }, [limitModal, deletingOldest, deleteProject]);
   const handleGenerate = useCallback(async () => {
     if (!topic.trim() || isRunning) return;
     const mode = profile?.mode || "";
@@ -569,9 +578,22 @@ useEffect(()=> {
             <div className="w-full max-w-md rounded-xl border border-primary/25 bg-card p-6 shadow-xl">
               <p className="text-base font-semibold">Batas project ber-isi tercapai</p>
               <p className="mt-2 text-sm text-muted-foreground">Hapus project terlama:<br />{limitModal.title}</p>
+              {oldestError && (
+                <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                  {oldestError}
+                </p>
+              )}
               <div className="mt-4 flex flex-col gap-2">
-                <Button onClick={handleDeleteOldest}>Hapus Project Terlama</Button>
-                <Button variant="outline" onClick={()=> setLimitModal(null)}>Batal</Button>
+                <Button onClick={handleDeleteOldest} disabled={deletingOldest} className="gap-2">
+                  {deletingOldest ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Menghapus...
+                    </>
+                  ) : (
+                    "Hapus Project Terlama"
+                  )}
+                </Button>
+                <Button variant="outline" onClick={() => setLimitModal(null)} disabled={deletingOldest}>Batal</Button>
               </div>
             </div>
           </div>

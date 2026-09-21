@@ -11,7 +11,7 @@ import {
 import { NicheOption } from "@/lib/persona-data";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sparkles, Check, ChevronLeft } from "lucide-react";
+import { Sparkles, Check, ChevronLeft, Loader2 } from "lucide-react";
 
 function MulaiForm() {
   const router = useRouter();
@@ -288,13 +288,17 @@ function MulaiForm() {
                   <button
                     key={opt.key}
                     onClick={() => selectFinal(opt.key, "Siap! 🚀")}
-                    className={`w-full rounded-lg border p-3 text-left text-sm transition-all duration-200 ${
+                    disabled={saving}
+                    className={`w-full rounded-lg border p-3 text-left text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${
                       cerita === opt.key
                         ? "scale-[1.03] border-primary bg-primary/5 ring-1 ring-primary"
                         : "border-border bg-card hover:bg-accent"
                     }`}
                   >
-                    {opt.label}
+                    <span className="flex items-center gap-2">
+                      {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {opt.label}
+                    </span>
                   </button>
                 ))}
                 {ceritaOptions.length === 0 && (
@@ -308,7 +312,7 @@ function MulaiForm() {
         </div>
 
         {/* Acknowledgment singkat */}
-        {ack && !saving && (
+        {ack && (
           <div className="mt-4 text-center text-sm font-medium text-primary animate-in fade-in">
             {ack}
           </div>

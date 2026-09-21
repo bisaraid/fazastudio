@@ -1,7 +1,7 @@
 "use client";
 import { Badge } from "@/components/ui/badge";
 import { formatDuration } from "@/lib/utils";
-import { Trash2, ArrowRight } from "lucide-react";
+import { Trash2, ArrowRight, Loader2 } from "lucide-react";
 import { Project } from "@/lib/types";
 
 const STATUS_MAP = {
@@ -10,10 +10,11 @@ const STATUS_MAP = {
   completed: { label: "Selesai", variant: "success" },
 };
 
-export function ProjectRow({ project, onOpen, onDelete }: {
+export function ProjectRow({ project, onOpen, onDelete, deleting }: {
   project: Project;
   onOpen: ()=> void;
   onDelete: ()=> void;
+  deleting?: boolean;
 }){ 
   const status = STATUS_MAP[project.status];
   const completed = ["script","audio","video"] .filter((s) => s === "done").length;
@@ -37,8 +38,8 @@ export function ProjectRow({ project, onOpen, onDelete }: {
   <div className="flex items-center gap-2 text-xs text-muted-foreground">
     <span className="tabular-nums">{completed}/3</span>
     <span>{date}</span>
-    <button type="button" onClick={(e) => {e.stopPropagation(); onDelete();}} aria-label="Hapus project" className="p-1.5 text-muted-foreground hover:text-destructive">
-     <Trash2 className="h-4 w-4" />
+    <button type="button" disabled={deleting} onClick={(e) => {e.stopPropagation(); onDelete();}} aria-label="Hapus project" className="inline-flex h-8 w-auto items-center gap-1 rounded p-1.5 text-muted-foreground hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50">
+     {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
     </button>
     <ArrowRight className="h-4 w-4" />
   </div>

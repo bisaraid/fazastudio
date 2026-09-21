@@ -102,6 +102,7 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<{ mode: string; niche: string } | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -188,10 +189,13 @@ export default function DashboardPage() {
   const handleDeleteProject = async (projectId: string) => {
     const confirmed = confirm("Hapus project ini? Tindakan tidak bisa dibatalkan.");
     if (!confirmed) return;
+    setDeletingId(projectId);
     try {
       await deleteProject(projectId);
     } catch {
       alert("Gagal menghapus project. Coba lagi.");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -236,7 +240,7 @@ export default function DashboardPage() {
                   ) : (
                     <Plus className="h-5 w-5" />
                   )}
-                  {isCreating ? "Membuat..." : "Buat Konten Baru"}
+                  {isCreating ? "Membuat project..." : "Buat Konten Baru"}
                 </Button>
                 {createError && (
                   <p className="text-sm text-destructive text-right">{createError}</p>
@@ -327,7 +331,7 @@ export default function DashboardPage() {
                   ) : (
                     <Plus className="h-4 w-4" />
                   )}
-                  {isCreating ? "Membuat..." : "Buat Project Pertama"}
+                  {isCreating ? "Membuat project..." : "Buat Project Pertama"}
                 </Button>
               </CardContent>
             </Card>
@@ -339,6 +343,7 @@ export default function DashboardPage() {
                   project={project}
                   onOpen={() => router.push(`/konten/${project.id}`)}
                   onDelete={() => handleDeleteProject(project.id)}
+                  deleting={deletingId === project.id}
                 />
               ))}
             </ul>
