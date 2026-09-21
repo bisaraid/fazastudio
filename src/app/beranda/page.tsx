@@ -37,6 +37,7 @@ import { formatDuration } from "@/lib/utils";
 import { Genre, Platform, Project } from "@/lib/types";
 import { ProjectRow } from "@/components/project-row";
 import { NICHES } from "@/lib/persona-data";
+import { track } from "@/lib/posthog";
 
 // Genre ACS default per niche (untuk createProject — bukan kosong).
 function genreForNiche(mode: string, niche: string): Genre {
@@ -192,6 +193,7 @@ export default function DashboardPage() {
     setDeletingId(projectId);
     try {
       await deleteProject(projectId);
+      track("project_deleted", { projectId });
     } catch {
       alert("Gagal menghapus project. Coba lagi.");
     } finally {

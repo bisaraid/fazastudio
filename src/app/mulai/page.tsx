@@ -12,6 +12,7 @@ import { NicheOption } from "@/lib/persona-data";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sparkles, Check, ChevronLeft, Loader2 } from "lucide-react";
+import { track } from "@/lib/posthog";
 
 function MulaiForm() {
   const router = useRouter();
@@ -125,6 +126,7 @@ function MulaiForm() {
         throw new Error(json?.error || "Gagal menyimpan preferensi.");
       }
       setSaved(true);
+      track("user_signup", { mode, niche, gaya, cerita });
       setTimeout(() => router.push(next), 1500);
       return;
     } catch (e) {

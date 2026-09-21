@@ -17,6 +17,7 @@ import { ScriptCard } from "@/components/pipeline/ScriptCard";
 import { AudioCard } from "@/components/pipeline/AudioCard";
 import { VideoCard } from "@/components/pipeline/VideoCard";
 import { CardMode } from "@/components/pipeline/PipelineCard";
+import { track } from "@/lib/posthog";
 
 // ==== Mapping niche → genre + platform + durasi default ====
 // Simple focus trap for modals: Escape sluit, Tab vancirkelt tussen eerste/laatste.
@@ -356,6 +357,7 @@ export default function ProjectEditorPage() {
     setOldestError(null);
     try {
       await deleteProject(id);
+      track("project_deleted", { projectId: id });
     } catch (err) {
       setOldestError(
         err instanceof Error ? err.message : "Gagal menghapus project terlama. Coba lagi."

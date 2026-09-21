@@ -8,6 +8,7 @@ import { useUser } from "@/hooks/useUser";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
 import { PricingPlansWithUsage } from "@/components/pricing-plans-with-usage";
+import { track } from "@/lib/posthog";
 import {
   Sparkles,
   ArrowRight,
@@ -107,6 +108,11 @@ export default function LandingPage() {
   const [error, setError] = useState<string | null>(null);
   const [topicError, setTopicError] = useState<string | null>(null);
   const [topic, setTopic] = useState("");
+
+  // Analytics: eenmalige meting van landing bezoek (funnel top).
+  useEffect(() => {
+    track("landing_visit");
+  }, []);
 
   // State & ref untuk efek focus field di hero (blur/dim pada elemen luar card).
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -271,6 +277,7 @@ export default function LandingPage() {
       return;
     }
     setTopicError(null);
+    track("coba_gratis_click", { topic: trimmed });
     setCreating(true);
     setError(null);
     try {

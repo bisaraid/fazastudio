@@ -15,6 +15,7 @@ import { CategoryId } from "@/lib/categories/types";
 import { DurationTier } from "@/lib/duration";
 import { providerLabel } from "@/lib/constants";
 import { generateId, sleep } from "@/lib/utils";
+import { track } from "@/lib/posthog";
 
 /** Timeout default per langkah pipeline (ms). */
 const FETCH_TIMEOUTS: Partial<Record<PipelineStep, number>> = {
@@ -256,6 +257,12 @@ throw new Error(json.error || "Generate script gagal");
 
             store.setScriptResult(acsScript);
             store.updateProjectMetadata({ usedClosingIds: json.data.usedClosingIds ?? [] });
+            track("script_generated", {
+              niche: project.genre || "",
+              platform: project.platform || "",
+              durasi: project.targetDuration || 0,
+              duration_tier: duration,
+            });
             break;
           }
           case "audio": {
@@ -340,6 +347,10 @@ throw new Error(json.error || "Generate script gagal");
               emotion: opts.emotion || "netral",
               fileSize: json.data.fileSize || 0,
             } as AudioResult);
+            track("audio_generated", {
+              provider: usedProvider || provider,
+              durasi: project.script?.estimatedDuration || 0,
+            });
             // ===== LOGGING VERIFIKASI (sementara) =====
             console.log(`[Pipeline] audio result URL: ${audioUrl}`);
             console.log(`[Pipeline] audio status: ${useProjectStore.getState().currentProject?.steps.audio}`);
@@ -568,6 +579,10 @@ throw new Error(json.error || "Generate script gagal");
             } as VideoResult);
             // Tandai project completed saat video selesai — bukan hanya saat export.
             store.updateProjectStatus("completed");
+            track("video_generated", {
+              resolution: "1080x1920",
+              durasi: project.targetDuration || 0,
+            });
             break;
           }
           case "export": {
