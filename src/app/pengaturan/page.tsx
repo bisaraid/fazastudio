@@ -65,7 +65,7 @@ export default function PengaturanPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
-  const { plan, creditsUsed, creditsTotal, loading: usageLoading } = useUsage();
+  const { plan, creditsUsed, creditsTotal, loading: usageLoading, failed: usageFailed } = useUsage();
 
   const [isEditing, setIsEditing] = useState(false);
   const [mode, setMode] = useState("");
@@ -350,7 +350,9 @@ return (
               </div>
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">Kredit Terpakai</p>
-                <p className="font-medium">{creditsUsed} / {creditsTotal}</p>
+                <p className="font-medium">
+                  {usageLoading || usageFailed ? "—" : `${creditsUsed} / ${creditsTotal ?? "—"}`}
+                </p>
               </div>
             </div>
 
@@ -358,12 +360,14 @@ return (
               <div
                 className="h-full rounded-full bg-primary"
                 style={{
-                  width: `${creditsTotal > 0 ? Math.min(100, (creditsUsed / creditsTotal) * 100) : 0}%`,
+                  width: `${(creditsTotal ?? 0) > 0 ? Math.min(100, (creditsUsed / (creditsTotal ?? 0)) * 100) : 0}%`,
                 }}
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              {Math.max(0, creditsTotal - creditsUsed)} kredit tersisa bulan ini.
+              {usageLoading || usageFailed
+                ? "Kredit tidak dapat dimuat. Coba muat ulang."
+                : `${Math.max(0, (creditsTotal ?? 0) - creditsUsed)} kredit tersisa bulan ini.`}
             </p>
 
             <PricingPlans currentPlan={plan as Plan["id"] | undefined} />

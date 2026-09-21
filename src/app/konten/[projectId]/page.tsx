@@ -167,7 +167,9 @@ export default function ProjectEditorPage() {
             setTrends(d.ideas.map((i: any) => ({ keyword: i.keyword, source: d.source })));
           }
         })
-        .catch(() => {})
+        .catch((e) => {
+          console.warn("[konten] fetch ideas fallback gagal:", e);
+        })
         .finally(() => !cancelled && setTrendsLoading(false));
 
     fetch("/api/suggest?limit=5")
@@ -505,24 +507,30 @@ useEffect(()=> {
                 className="w-full resize-none rounded-xl border bg-card px-4 py-4 text-lg focus:outline-none focus:ring-2 focus:ring-primary"
               />
 
-              {(trends.length > 0 || trendsLoading) && (
+              {trendsLoading ? (
                 <div className="rounded-xl border bg-card p-4">
                   <p className="text-xs font-medium text-muted-foreground mb-2">
-                    {trendsLoading ? "Mencari topik yang lagi naik..." : trends[0]?.source === "ai_fallback" ? "Topik yang lagi naik:" : trends[0]?.source === "youtube_us" ? "Akan trending (early signal):" : "Lagi banyak dicari hari ini:"}
+                    Mencari topik yang lagi naik...
                   </p>
-                  {!trendsLoading && (
-                    <>
-                      <div className="flex flex-wrap gap-2">
-                        {trends.map((t, i) => (
-                          <button key={i} onClick={() => setTopic(t.keyword)} className="rounded-full border px-3 py-1.5 text-sm transition-colors hover:border-primary hover:bg-accent">{t.keyword}</button>
-                        ))}
-                      </div>
-                      <p className="mt-2 text-[11px] text-muted-foreground">
-                        {trends[0]?.source === "ai_fallback" ? "Saran topik dari AI (sumber video belum tersedia sekarang)." : "Berdasarkan video yang sedang populer di Indonesia. Klik untuk langsung isi topik."}
-                      </p>
-                    </>
-                  )}
                 </div>
+              ) : trends.length > 0 ? (
+                <div className="rounded-xl border bg-card p-4">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">
+                    {trends[0]?.source === "ai_fallback" ? "Topik yang lagi naik:" : trends[0]?.source === "youtube_us" ? "Akan trending (early signal):" : "Lagi banyak dicari hari ini:"}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {trends.map((t, i) => (
+                      <button key={i} onClick={() => setTopic(t.keyword)} className="rounded-full border px-3 py-1.5 text-sm transition-colors hover:border-primary hover:bg-accent">{t.keyword}</button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    {trends[0]?.source === "ai_fallback" ? "Saran topik dari AI (sumber video belum tersedia sekarang)." : "Berdasarkan video yang sedang populer di Indonesia. Klik untuk langsung isi topik."}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Ketik topik atau pilih dari saran di atas
+                </p>
               )}
 
               <div className="rounded-xl border bg-card p-4 space-y-3">

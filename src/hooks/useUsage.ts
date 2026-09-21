@@ -6,19 +6,21 @@ import { useEffect, useState } from "react";
 export interface UsageData {
   plan: string;
   creditsUsed: number;
-  creditsTotal: number;
+  creditsTotal: number | null;
 }
 
 export interface UseUsageResult extends UsageData {
   loading: boolean;
   error: string | null;
+  /** true jika fetch gagal — konsumen harus tampilkan "—", bukan angka menyesatkan. */
+  failed: boolean;
 }
 
 export function useUsage(): UseUsageResult {
   const [data, setData] = useState<UsageData>({
     plan: "free",
     creditsUsed: 0,
-    creditsTotal: 0,
+    creditsTotal: null,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +39,7 @@ export function useUsage(): UseUsageResult {
           setData({
             plan: json.data.plan || "free",
             creditsUsed: Number(json.data.creditsUsed) || 0,
-            creditsTotal: Number(json.data.creditsTotal) || 0,
+            creditsTotal: json.data.creditsTotal != null ? Number(json.data.creditsTotal) : null,
           });
           setError(null);
         } else {
@@ -63,5 +65,5 @@ export function useUsage(): UseUsageResult {
     };
   }, []);
 
-  return { ...data, loading, error };
+  return { ...data, loading, error, failed: !!error };
 }  

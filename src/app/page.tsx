@@ -105,6 +105,7 @@ export default function LandingPage() {
   const { createProject } = useProjectStore();
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [topicError, setTopicError] = useState<string | null>(null);
   const [topic, setTopic] = useState("");
 
   // State & ref untuk efek focus field di hero (blur/dim pada elemen luar card).
@@ -263,15 +264,22 @@ export default function LandingPage() {
   // "Coba Gratis" → buat project anonim → langsung buka editor (alur conversion).
   const handleCobaGratis = async () => {
     if (creating) return;
+    const trimmed = topic.trim();
+    if (!trimmed) {
+      setTopicError("Ketik topik konten kamu dulu");
+      textareaRef.current?.focus();
+      return;
+    }
+    setTopicError(null);
     setCreating(true);
     setError(null);
     try {
       // Bawa topik ke halaman editor (/konten/[projectId]).
-      window.sessionStorage.setItem("initial_topic", topic.trim());
+      window.sessionStorage.setItem("initial_topic", trimmed);
       const project = await createProject({
         genre: "",
         customGenre: undefined,
-        topic: topic.trim(),
+        topic: trimmed,
         tone: "kasual",
         targetDuration: 0,
         platform: "",
@@ -418,7 +426,7 @@ export default function LandingPage() {
               ref={textareaRef}
               data-hero-input
               value={topic}
-              onChange={(e) => setTopic(e.target.value)}
+              onChange={(e) => { setTopic(e.target.value); if (topicError) setTopicError(null); }}
               onInput={resizeTextarea}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
@@ -427,6 +435,9 @@ export default function LandingPage() {
               placeholder="Mau bikin konten tentang apa hari ini?"
               className="block w-full min-h-[68px] resize-none overflow-hidden border-0 bg-transparent px-6 py-3 text-base leading-snug text-foreground outline-none placeholder:text-muted-foreground/70 focus:placeholder:text-muted-foreground/50 disabled:opacity-60"
             />
+            {topicError && (
+              <p className="px-5 pb-1 text-sm text-destructive">{topicError}</p>
+            )}
             {/* Baris bawah: saran topik (kiri) + tombol Coba Gratis (kanan) */}
             <div className="flex items-center justify-between gap-3 px-5 pb-4">
               <div className="flex flex-1 flex-col text-left">
