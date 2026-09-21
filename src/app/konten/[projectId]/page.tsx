@@ -238,6 +238,14 @@ export default function ProjectEditorPage() {
       setIsProjectLoading(true);
       projectLoadedRef.current = false;
       try {
+        // Redirect-immediate: project al optimistisch in de store (createProject)
+        // → skip de fresh fetch, anders zouden we het project kwijtraken.
+        if (useProjectStore.getState().currentProject?.id === projectId) {
+          if (cancelled) return;
+          projectLoadedRef.current = true;
+          setIsProjectLoading(false);
+          return;
+        }
         await loadProjects();
         if (cancelled) return;
         setCurrentProject(projectId);

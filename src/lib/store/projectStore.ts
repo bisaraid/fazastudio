@@ -27,7 +27,7 @@ interface ProjectState {
   // Actions
   loadProjects: () => Promise<void>;
   appendProjects: (offset: number, limit: number) => Promise<number>;
-  createProject: (formData: WizardFormData) => Promise<Project>;
+  createProject: (formData: WizardFormData, id?: string) => Promise<Project>;
   setCurrentProject: (projectId: string) => void;
   updateProjectStep: (step: PipelineStep, status: StepStatus) => void;
   setScriptResult: (result: ScriptResult) => void;
@@ -268,9 +268,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } catch (error) {      console.error("[projectStore] appendProjects error:", error);
       return 0;    }  },
 
-  createProject: async (formData: WizardFormData) => {
+  createProject: async (formData: WizardFormData, id?: string) => {
+    const clientId = id && id.trim() ? id.trim() : generateId();
     const newProject: Project = {
-      id: generateId(),
+      id: clientId,
       title: formData.topic,
       genre: formData.genre as Genre,
       customGenre: formData.customGenre,
@@ -287,13 +288,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       updatedAt: new Date().toISOString(),
     };
 
-    // Simpan ke Supabase via API
-    let persisted = false;
+    // Optimistisch: zet project DIRECT in de store (vóór de POST klaar is) zodat
+    // de editor het meteen vindt op de immediate redirect.
+    const { projects } = get();
+    set({ projects: [newProject, ...projects], currentProject: newProject });
+
+    // Simpan ke Supabase via API — client bepaalt het definitieve ID (Opsi A).
     try {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          id: clientId,
           title: formData.topic,
           topic: formData.topic,
           genre: formData.genre,
@@ -302,32 +308,35 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       });
       const json = await res.json();
       if (!res.ok || !json.success || !json.data) {
-        // Gagal menyimpan di DB → lempar error agar UI (tombol "Buat Konten Baru")
-        // bisa menampilkan pesan, dan JANGAN tambahkan project palsu ke daftar.
+        // Gagal menyimpan di DB → lempar error agar UI bisa menampilkan pesan.
         throw new Error(json?.error || `Gagal menyimpan project (HTTP ${res.status})`);
       }
-      newProject.id = json.data.id;
-      newProject.createdAt = json.data.created_at;
-      newProject.updatedAt = json.data.updated_at;
-      persisted = true;
+      // ID client = server ID (server accept client-id). Adopt server timestamps.
+      const createdAt = (json.data?.created_at as string) || newProject.createdAt;
+      const updatedAt = (json.data?.updated_at as string) || newProject.updatedAt;
+      newProject.createdAt = createdAt;
+      newProject.updatedAt = updatedAt;
+      set((state) => ({
+        projects: state.projects.map((p) =>
+          p.id === clientId ? { ...p, createdAt, updatedAt } : p
+        ),
+        currentProject:
+          state.currentProject?.id === clientId
+            ? { ...state.currentProject, createdAt, updatedAt }
+            : state.currentProject,
+      }));
+      return newProject;
     } catch (error) {
       console.error("[projectStore] createProject error:", error);
+      // Rollback: hapus project optimist yang ternyata tidak ter-persist.
+      set((state) => ({
+        projects: state.projects.filter((p) => p.id !== clientId),
+        currentProject: state.currentProject?.id === clientId ? null : state.currentProject,
+      }));
       throw error instanceof Error
         ? error
         : new Error("Gagal membuat project. Coba lagi.");
     }
-
-    if (!persisted) {
-      throw new Error("Gagal membuat project. Coba lagi.");
-    }
-
-    const { projects } = get();
-    set({
-      projects: [newProject, ...projects],
-      currentProject: newProject,
-    });
-
-    return newProject;
   },
 
   setCurrentProject: (projectId: string) => {

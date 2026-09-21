@@ -33,7 +33,7 @@ import {
   Search,
   type LucideIcon,
 } from "lucide-react";
-import { formatDuration } from "@/lib/utils";
+import { formatDuration, generateId } from "@/lib/utils";
 import { Genre, Platform, Project } from "@/lib/types";
 import { ProjectRow } from "@/components/project-row";
 import { NICHES } from "@/lib/persona-data";
@@ -157,23 +157,29 @@ export default function DashboardPage() {
   const handleCreateNew = async () => {
     const niche = profile?.niche ?? "";
     const mode = profile?.mode ?? "";
-    const project = await createProject({
-      genre: genreForNiche(mode, niche),
-      customGenre: undefined,
-      topic: "",
-      tone: "kasual",
-      targetDuration: 30,
-      platform: platformForMode(mode),
-      mode: "step-by-step",
-      voiceName: "Sari",
-      voiceLanguage: "id-ID",
-      voiceSpeed: 1.0,
-      voiceEmotion: "netral",
-      visualStyle: "stock",
+    // Opsi A — redirect immediate: buat ID lokal yang stabil (UUID), redirect segera,
+    // biarkan createProject sinkron ke server di background (optimist-ke-store dulu).
+    const localId = generateId();
+    void createProject(
+      {
+        genre: genreForNiche(mode, niche),
+        customGenre: undefined,
+        topic: "",
+        tone: "kasual",
+        targetDuration: 30,
+        platform: platformForMode(mode),
+        mode: "step-by-step",
+        voiceName: "Sari",
+        voiceLanguage: "id-ID",
+        voiceSpeed: 1.0,
+        voiceEmotion: "netral",
+        visualStyle: "stock",
+      },
+      localId
+    ).catch((err: unknown) => {
+      console.warn("[beranda] createProject background errored:", err);
     });
-    if (project?.id) {
-      router.push(`/konten/${project.id}`);
-    }
+    router.push(`/konten/${localId}`);
   };
 
   // FIX 2 — bungkus handleCreateNew dengan loading + error state.

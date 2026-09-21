@@ -75,6 +75,17 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
+
+    // Client-provided project id (Opsi A — redirect immediate). Wajib UUID valid.
+    // Kalau tidak disertakan, DB default gen_random_uuid() dipakai.
+    const clientId = typeof body.id === "string" ? body.id.trim() : "";
+    if (clientId) {
+      const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+      if (!UUID_RE.test(clientId)) {
+        return NextResponse.json({ success: false, error: "Invalid project id (harus UUID)" }, { status: 400 });
+      }
+    }
+
     const identity = getServerIdentity(request);
     const identityKey = identity.identityKey;
 
@@ -101,6 +112,7 @@ export async function POST(request: NextRequest) {
     const { data, error } = await supabase
       .from("projects")
       .insert({
+        id: clientId || undefined,
         identity_key: identityKey,
         user_id: userId,
         title: body.title || body.topic || null,

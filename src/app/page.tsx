@@ -9,6 +9,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
 import { PricingPlansWithUsage } from "@/components/pricing-plans-with-usage";
 import { track } from "@/lib/posthog";
+import { generateId } from "@/lib/utils";
 import {
   Sparkles,
   ArrowRight,
@@ -280,10 +281,11 @@ export default function LandingPage() {
     track("coba_gratis_click", { topic: trimmed });
     setCreating(true);
     setError(null);
-    try {
-      // Bawa topik ke halaman editor (/konten/[projectId]).
-      window.sessionStorage.setItem("initial_topic", trimmed);
-      const project = await createProject({
+    // Opsi A — redirect immediate: buat ID lokal (UUID), redirect segera, sync di background.
+    const localId = generateId();
+    window.sessionStorage.setItem("initial_topic", trimmed);
+    void createProject(
+      {
         genre: "",
         customGenre: undefined,
         topic: trimmed,
@@ -296,16 +298,15 @@ export default function LandingPage() {
         voiceSpeed: 1.0,
         voiceEmotion: "netral",
         visualStyle: "stock",
-      });
-      if (project?.id) {
-        // Tandai agar editor langsung auto-generate script untuk project ini.
-        window.sessionStorage.setItem("auto_generate", project.id);
-        router.push(`/konten/${project.id}`);
-      }
-    } catch {
+      },
+      localId
+    ).catch(() => {
       setError("Gagal membuat sesi. Coba lagi.");
       setCreating(false);
-    }
+    });
+    // Tandai agar editor langsung auto-generate script untuk project ini.
+    window.sessionStorage.setItem("auto_generate", localId);
+    router.push(`/konten/${localId}`);
   };
 
   return (
