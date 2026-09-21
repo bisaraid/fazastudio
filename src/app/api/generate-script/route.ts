@@ -13,7 +13,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { validateApiKey } from "@/lib/api-auth";
 import { checkRateLimit, getClientIp, buildBurstKey } from "@/lib/rate-limit";
 import { RATE_LIMIT_LIMITS, DAILY_WINDOW_MS } from "@/lib/rate-limit-config";
-import { decrementCredit, decrementCreditForUser } from "@/lib/usage";
+import { decrementCredit, decrementCreditForUser, getUsageForUser } from "@/lib/usage";
 import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 import { MAX_FREE_CONTENT_PROJECTS } from "@/lib/constants";
@@ -115,6 +115,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (isLoggedIn && user) {
+      // Pastikan row user_usage sudah ada (ensure_usage_row_by_user dieksekusi) sebelum
+      // decrement. decrement_credit_by_user hanya UPDATE (TIDAK INSERT), sehingga user baru
+      // login yang rownya belum ter-create tidak salah dianggap "kredit habis" (false 402).
+      await getUsageForUser(user.id);
       const hasCredit = await decrementCreditForUser(user.id);
       if (!hasCredit) {
         return NextResponse.json(
