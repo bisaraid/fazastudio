@@ -182,20 +182,15 @@ export default function DashboardPage() {
     router.push(`/konten/${localId}`);
   };
 
-  // FIX 2 — bungkus handleCreateNew dengan loading + error state.
-  const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  // handleCreateNew redirect-immediate (fire-and-forget) → tidak perlu loading state.
   const handleCreateClick = async () => {
-    if (isCreating) return;
-    setIsCreating(true);
     setCreateError(null);
     try {
       await handleCreateNew();
     } catch {
       setCreateError("Gagal membuat konten. Coba lagi.");
-    } finally {
-      setIsCreating(false);
     }
   };
 
@@ -227,27 +222,6 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Top progress indicator bij create — transisie naar editor voelt smooth (GitHub/Linear stijl) */}
-      <style>{`
-        @keyframes acs-progress {
-          0%   { left: 0%;   width: 0%; }
-          60%  { left: 0%;   width: 45%; }
-          100% { left: 100%; width: 0%; }
-        }
-      `}</style>
-      {isCreating && (
-        <div
-          className="pointer-events-none fixed inset-x-0 top-0 z-[60] h-0.5 overflow-hidden bg-primary/20"
-          role="progressbar"
-          aria-label="Memuat project"
-          aria-valuetext="Membuat project..."
-        >
-          <div
-            className="absolute top-0 h-0.5 rounded-full bg-primary"
-            style={{ animation: "acs-progress 1.1s ease-in-out infinite" }}
-          />
-        </div>
-      )}
       <Navbar />
       <main className="container mx-auto px-4 py-8 lg:px-8">
         {/* Header */}
@@ -265,18 +239,8 @@ export default function DashboardPage() {
           <div className="flex flex-col items-stretch sm:items-end gap-2">
             {projects.length > 0 && (
               <>
-                <Button
-                  size="lg"
-                  className="gap-2"
-                  onClick={handleCreateClick}
-                  disabled={isCreating}
-                >
-                  {isCreating ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    <Plus className="h-5 w-5" />
-                  )}
-                  {isCreating ? "Membuat project..." : "Buat Konten Baru"}
+                <Button size="lg" className="gap-2" onClick={handleCreateClick}>
+                  <Plus className="h-5 w-5" /> Buat Konten Baru
                 </Button>
                 {createError && (
                   <p className="text-sm text-destructive text-right">{createError}</p>
@@ -388,13 +352,8 @@ export default function DashboardPage() {
                   Mulai buat konten pertamamu — pilih topik, dan Faza Studio akan
                   mengubahnya menjadi script, suara, subtitle, dan video dalam satu alur.
                 </p>
-                <Button size="lg" onClick={handleCreateClick} disabled={isCreating} className="gap-2">
-                  {isCreating ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Plus className="h-4 w-4" />
-                  )}
-                  {isCreating ? "Membuat project..." : "Buat Project Pertama"}
+                <Button size="lg" onClick={handleCreateClick} className="gap-2">
+                  <Plus className="h-4 w-4" /> Buat Project Pertama
                 </Button>
               </CardContent>
             </Card>
