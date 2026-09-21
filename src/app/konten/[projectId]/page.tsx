@@ -19,6 +19,32 @@ import { VideoCard } from "@/components/pipeline/VideoCard";
 import { CardMode } from "@/components/pipeline/PipelineCard";
 
 // ==== Mapping niche → genre + platform + durasi default ====
+// Simple focus trap for modals: Escape sluit, Tab vancirkelt tussen eerste/laatste.
+function trapModalFocus(e: { key: string; shiftKey: boolean; preventDefault: () => void; currentTarget: HTMLElement }, onClose: () => void) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    onClose();
+    return;
+  }
+  if (e.key !== "Tab") return;
+  const root = e.currentTarget;
+  const focusable = Array.from(
+    root.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  );
+  if (!focusable.length) return;
+  const first = focusable[0] as HTMLElement;
+  const last = focusable[focusable.length - 1] as HTMLElement;
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
 function genreForNiche(mode: string, niche: string): Genre {
   if (mode === "jualan") return "affiliate";
   switch (niche) {
@@ -128,6 +154,20 @@ export default function ProjectEditorPage() {
   const [trendsLoading, setTrendsLoading] = useState(false);
   const [deletingOldest, setDeletingOldest] = useState(false);
   const [oldestError, setOldestError] = useState<string | null>(null);
+  const authGateRef = useRef<HTMLDivElement | null>(null);
+  const limitModalRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (authGateOpen) {
+      (authGateRef.current?.querySelector("button:not([disabled]), a[href]") as HTMLElement | null)?.focus();
+    }
+  }, [authGateOpen]);
+
+  useEffect(() => {
+    if (limitModal) {
+      (limitModalRef.current?.querySelector("button:not([disabled]), a[href]") as HTMLElement | null)?.focus();
+    }
+  }, [limitModal]);
 
   useEffect(() => {
     let cancelled = false;
@@ -583,8 +623,15 @@ useEffect(()=> {
 
         {limitModal && !isRunning && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-md rounded-xl border border-primary/25 bg-card p-6 shadow-xl">
-              <p className="text-base font-semibold">Batas project ber-isi tercapai</p>
+            <div
+              ref={limitModalRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="limit-modal-title"
+              onKeyDown={(e) => trapModalFocus(e, () => setLimitModal(null))}
+              className="w-full max-w-md rounded-xl border border-primary/25 bg-card p-6 shadow-xl"
+            >
+              <p id="limit-modal-title" className="text-base font-semibold">Batas project ber-isi tercapai</p>
               <p className="mt-2 text-sm text-muted-foreground">Hapus project terlama:<br />{limitModal.title}</p>
               {oldestError && (
                 <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
@@ -645,10 +692,17 @@ useEffect(()=> {
               }`}
               aria-hidden={!authGateOpen}
             >
-              <div className="w-full max-w-md animate-in fade-in-0 zoom-in-95 duration-300 rounded-2xl border border-primary/25 bg-card p-6 shadow-xl">
+              <div
+                ref={authGateRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="auth-gate-title"
+                onKeyDown={(e) => trapModalFocus(e, () => setAuthGateOpen(false))}
+                className="w-full max-w-md animate-in fade-in-0 zoom-in-95 duration-300 rounded-2xl border border-primary/25 bg-card p-6 shadow-xl"
+              >
                 <div className="w-full flex flex-col gap-4">
                   <div className="space-y-1">
-                    <p className="text-sm font-semibold text-foreground sm:text-base">
+                    <p id="auth-gate-title" className="text-sm font-semibold text-foreground sm:text-base">
                       Script kamu sudah siap!
                     </p>
                     <p className="text-sm text-muted-foreground">

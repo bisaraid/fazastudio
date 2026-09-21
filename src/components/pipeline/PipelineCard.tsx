@@ -40,6 +40,7 @@ export function PipelineCard({
   children,
 }: PipelineCardProps) {
   const [open, setOpen] = useState(false);
+  const contentId = `pipeline-${stepLabel.trim().replace(/\s+/g, "-").toLowerCase()}`;
 
   const header = (icon: ReactNode, right: ReactNode) => (
     <div className="flex items-center justify-between">
@@ -115,6 +116,8 @@ export function PipelineCard({
         <button
           type="button"
           onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          aria-controls={contentId}
           className="flex w-full items-center justify-between text-left"
         >
           <span className="flex items-center gap-2">
@@ -126,7 +129,7 @@ export function PipelineCard({
             <span>{open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span>
           </span>
         </button>
-        {open && children}
+        <div id={contentId}>{open && children}</div>
       </CardContent>
     </Card>
   );

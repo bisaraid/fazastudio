@@ -47,6 +47,7 @@ export function ScriptCard(p: ScriptCardProps) {
       onClick={() => setAudioOpen(!audioOpen)}
       className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/40"
       aria-expanded={audioOpen}
+      aria-controls="script-audio-options"
     >
       <span className="flex items-center gap-2">
         <Headphones className="h-4 w-4" />
@@ -57,7 +58,7 @@ export function ScriptCard(p: ScriptCardProps) {
   );
 
   const audioOptions = p.script && audioOpen && (
-    <div className="space-y-3 rounded-lg border bg-muted/40 p-3">
+    <div id="script-audio-options" className="space-y-3 rounded-lg border bg-muted/40 p-3">
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-xs font-medium text-muted-foreground">Suara</label>
         <div className="flex flex-wrap gap-2">

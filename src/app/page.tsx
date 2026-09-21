@@ -523,12 +523,28 @@ export default function LandingPage() {
                   <div className="flex-1">
                     <p className="text-xs font-medium text-muted-foreground">Dengarkan contohnya</p>
                     <div
-                      className="mt-2 h-1.5 w-full cursor-pointer overflow-hidden rounded-full bg-border"
+                      role="slider"
+                      tabIndex={0}
+                      aria-label="Posisi audio"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={audioDuration ? Math.round((audioCurrent / audioDuration) * 100) : 0}
+                      className="mt-2 h-1.5 w-full cursor-pointer overflow-hidden rounded-full bg-border focus:outline-none focus:ring-2 focus:ring-primary"
                       onClick={(e) => {
                         const el = audioRef.current;
                         if (!el || !audioDuration) return;
                         const rect = e.currentTarget.getBoundingClientRect();
                         el.currentTime = ((e.clientX - rect.left) / rect.width) * audioDuration;
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+                        const el = audioRef.current;
+                        if (!el) return;
+                        e.preventDefault();
+                        el.currentTime = Math.max(
+                          0,
+                          Math.min(audioDuration, el.currentTime + (e.key === "ArrowRight" ? 5 : -5))
+                        );
                       }}
                     >
                       <div
