@@ -138,6 +138,7 @@ export default function ProjectEditorPage() {
   // Guard hydrate topik: hanya sekali per project (jangan timpa ketikan user).
   const hydratedFor = useRef<string | null>(null);
   const projectLoadedRef = useRef(false);
+  const [isProjectLoading, setIsProjectLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [scriptKeepExpanded, setScriptKeepExpanded] = useState(true);
   // Gate login anonim untuk step audio.
@@ -234,11 +235,18 @@ export default function ProjectEditorPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setIsProjectLoading(true);
       projectLoadedRef.current = false;
-      await loadProjects();
-      if (cancelled) return;
-      setCurrentProject(projectId);
-      projectLoadedRef.current = true;
+      try {
+        await loadProjects();
+        if (cancelled) return;
+        setCurrentProject(projectId);
+      } finally {
+        if (!cancelled) {
+          projectLoadedRef.current = true;
+          setIsProjectLoading(false);
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, [projectId, loadProjects, setCurrentProject]);
@@ -521,6 +529,43 @@ useEffect(()=> {
     <div className="min-h-screen bg-background">
       <Navbar />
       <main className="container mx-auto max-w-3xl px-4 py-8 lg:px-8">
+          {isProjectLoading ? (
+            <div className="space-y-4" aria-label="Memuat project">
+              <div className="space-y-1.5">
+                <div className="h-6 w-1/2 animate-pulse rounded bg-muted-foreground/20" />
+                <div className="h-4 w-2/3 animate-pulse rounded bg-muted-foreground/15" />
+              </div>
+              {/* Placeholder: panel edit topik */}
+              <div className="rounded-xl border bg-card p-4">
+                <div className="h-24 w-full animate-pulse rounded-lg bg-muted-foreground/15" />
+                <div className="mt-3 h-3 w-1/3 animate-pulse rounded bg-muted-foreground/20" />
+                <div className="mt-3 space-y-2">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="h-10 w-full animate-pulse rounded-lg bg-muted-foreground/10" />
+                  ))}
+                </div>
+              </div>
+              {/* Placeholder: pipeline cards */}
+              <div className="space-y-2">
+                <div className="h-16 w-full animate-pulse rounded-xl bg-muted-foreground/10" />
+                <div className="h-16 w-full animate-pulse rounded-xl bg-muted-foreground/10" />
+              </div>
+            </div>
+          ) : !currentProject || currentProject.id !== projectId ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border bg-card px-6 py-16 text-center">
+              <h2 className="text-lg font-semibold">Project tidak ditemukan</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Project ini sudah dihapus atau tidak lagi bisa diakses.
+              </p>
+              <Link
+                href="/beranda"
+                className="mt-6 inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Kembali ke Beranda
+              </Link>
+            </div>
+          ) : (
+            <>
         <div className="mb-6">
           <h1 className="text-2xl font-bold tracking-tight">{greet}</h1>
           <p className="text-sm text-muted-foreground">Tulis satu hal, sisanya kami yang kerjakan.</p>
@@ -760,6 +805,8 @@ useEffect(()=> {
             />
           </div>
         </div>
+            </>
+          )}
       </main>
     </div>
   );

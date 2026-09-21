@@ -104,10 +104,17 @@ export default function DashboardPage() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    appendProjects(0, PAGE_SIZE).then(function (n) { setHasMore(n >= PAGE_SIZE); });
+    appendProjects(0, PAGE_SIZE)
+      .then(function (n) {
+        setHasMore(n >= PAGE_SIZE);
+      })
+      .finally(function () {
+        setIsLoadingProjects(false);
+      });
   }, [appendProjects]);
 
   useEffect(() => {
@@ -214,6 +221,27 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Top progress indicator bij create — transisie naar editor voelt smooth (GitHub/Linear stijl) */}
+      <style>{`
+        @keyframes acs-progress {
+          0%   { left: 0%;   width: 0%; }
+          60%  { left: 0%;   width: 45%; }
+          100% { left: 100%; width: 0%; }
+        }
+      `}</style>
+      {isCreating && (
+        <div
+          className="pointer-events-none fixed inset-x-0 top-0 z-[60] h-0.5 overflow-hidden bg-primary/20"
+          role="progressbar"
+          aria-label="Memuat project"
+          aria-valuetext="Membuat project..."
+        >
+          <div
+            className="absolute top-0 h-0.5 rounded-full bg-primary"
+            style={{ animation: "acs-progress 1.1s ease-in-out infinite" }}
+          />
+        </div>
+      )}
       <Navbar />
       <main className="container mx-auto px-4 py-8 lg:px-8">
         {/* Header */}
@@ -281,7 +309,9 @@ export default function DashboardPage() {
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.total}</div>
+              <div className="text-2xl font-bold">
+                {isLoadingProjects ? <span className="inline-block h-6 w-10 animate-pulse rounded bg-muted-foreground/20" /> : stats.total}
+              </div>
             </CardContent>
           </Card>
           <Card>
@@ -290,7 +320,9 @@ export default function DashboardPage() {
               <TrendingUp className="h-4 w-4 text-emerald-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-emerald-500">{stats.completed}</div>
+              <div className="text-2xl font-bold text-emerald-500">
+                {isLoadingProjects ? <span className="inline-block h-6 w-10 animate-pulse rounded bg-muted-foreground/20" /> : stats.completed}
+              </div>
             </CardContent>
           </Card>
           <Card>
@@ -299,7 +331,9 @@ export default function DashboardPage() {
               <Clock className="h-4 w-4 text-amber-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-amber-500">{stats.processing}</div>
+              <div className="text-2xl font-bold text-amber-500">
+                {isLoadingProjects ? <span className="inline-block h-6 w-10 animate-pulse rounded bg-muted-foreground/20" /> : stats.processing}
+              </div>
             </CardContent>
           </Card>
           <Card>
@@ -308,7 +342,9 @@ export default function DashboardPage() {
               <FileText className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.drafts}</div>
+              <div className="text-2xl font-bold">
+                {isLoadingProjects ? <span className="inline-block h-6 w-10 animate-pulse rounded bg-muted-foreground/20" /> : stats.drafts}
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -316,7 +352,26 @@ export default function DashboardPage() {
         {/* Project List */}
         <div className="space-y-4">
           <h2 className="text-xl font-semibold">Konten terbaru</h2>
-          {projects.length === 0 ? (
+          {isLoadingProjects ? (
+            <div className="space-y-3" aria-label="Memuat project">
+              {[0, 1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="flex w-full animate-pulse items-center gap-3 rounded-xl border bg-card p-3"
+                >
+                  <div className="min-w-0 flex-1 space-y-2.5">
+                    <div className="h-3.5 w-1/3 rounded bg-muted-foreground/20" />
+                    <div className="h-3 w-3/5 rounded bg-muted-foreground/15" />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block h-4 w-14 rounded-full bg-muted-foreground/15" />
+                    <span className="inline-block h-4 w-9 rounded bg-muted-foreground/15" />
+                    <span className="inline-block h-4 w-8 rounded bg-muted-foreground/15" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : projects.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-14 px-6 text-center">
                 <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-5">
