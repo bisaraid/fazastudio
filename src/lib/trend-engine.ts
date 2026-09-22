@@ -85,7 +85,9 @@ export async function getTrendingNow(
     const { data, error } = await query.limit(50);
     if (error || !data) return [];
 
-    const rows = data as TrendRow[];
+    // Buang keyword yang kemungkinan judul mentah (bukan topik ringkas extractor).
+    // Topik yang bermakna dari topic extractor selalu singkat & ringkas — flag > 60 char.
+    const rows = (data as TrendRow[]).filter((r) => String(r.keyword ?? "").length <= 60);
     let out: TrendIdeaItem[] = [];
     if (niche) {
       // Mode per-niche: top 10 by score untuk niche tsb.
