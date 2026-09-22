@@ -31,13 +31,42 @@ import {
   Flame,
   Brain,
   Search,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { formatDuration, generateId } from "@/lib/utils";
 import { Genre, Platform, Project } from "@/lib/types";
+import { PLATFORMS, DURATION_OPTIONS } from "@/lib/constants";
+import { readPreferences } from "@/lib/preferences";
 import { ProjectRow } from "@/components/project-row";
 import { NICHES } from "@/lib/persona-data";
 import { track } from "@/lib/posthog";
+
+// Focus trap sederhana untuk modal (Escape sluit, Tab vancirkelt binnen modal).
+function trapModalFocus(e: { key: string; shiftKey: boolean; preventDefault: () => void; currentTarget: HTMLElement }, onClose: () => void) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    onClose();
+    return;
+  }
+  if (e.key !== "Tab") return;
+  const root = e.currentTarget;
+  const focusable = Array.from(
+    root.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  );
+  if (!focusable.length) return;
+  const first = focusable[0] as HTMLElement;
+  const last = focusable[focusable.length - 1] as HTMLElement;
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
 
 // Genre ACS default per niche (untuk createProject — bukan kosong).
 function genreForNiche(mode: string, niche: string): Genre {
@@ -51,10 +80,6 @@ function genreForNiche(mode: string, niche: string): Genre {
     case "sejarah": return "sejarah";
     default: return "edukasi";
   }
-}
-
-function platformForMode(mode: string): Platform {
-  return mode === "jualan" ? "tiktok" : "tiktok";
 }
 
 function nicheLabel(niche: string): string {
@@ -100,7 +125,7 @@ const PAGE_SIZE = 20;
 export default function DashboardPage() {
   const router = useRouter();
   const { projects, appendProjects, deleteProject, createProject } = useProjectStore();
-  const [profile, setProfile] = useState<{ mode: string; niche: string } | null>(null);
+  const [profile, setProfile] = useState<{ mode: string; niche: string; gaya?: string; cerita?: string } | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -126,6 +151,8 @@ export default function DashboardPage() {
         setProfile({
           mode: data.data.layer1_mode as string,
           niche: data.data.niche_slug as string,
+          gaya: data.data.gaya_key as string | undefined,
+          cerita: data.data.cerita_key as string | undefined,
         });
       })
       .catch(() => {});
@@ -154,20 +181,70 @@ export default function DashboardPage() {
     };
   }, [hasMore, loadingMore, projects, appendProjects]);
 
-  const handleCreateNew = async () => {
-    const niche = profile?.niche ?? "";
+  // ===== Modal "Buat Konten Baru" =====
+  const [modalOpen, setModalOpen] = useState(false);
+  const [topic, setTopic] = useState("");
+  const [platform, setPlatform] = useState<Platform>("tiktok");
+  const [duration, setDuration] = useState(30);
+  const [trending, setTrending] = useState<string[]>([]);
+  const [trendingLoading, setTrendingLoading] = useState(false);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const topicRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    topicRef.current?.focus();
+  }, [modalOpen]);
+
+  // Buka modal (tanpa navigasi dulu) + prefill platform/durasi dari behavior +
+  // fetch trending topics (personalisasi server pakai profile user).
+  const handleCreateClick = async () => {
+    setCreateError(null);
+    setModalOpen(true);
+    setTopic("");
+    setPlatform("tiktok");
+    setDuration(30);
+    try {
+      const prefs = await readPreferences();
+      if (prefs.platform && PLATFORMS.some((p) => p.value === prefs.platform)) {
+        setPlatform(prefs.platform as Platform);
+      }
+      if (typeof prefs.duration === "number" && DURATION_OPTIONS.some((d) => d.value === prefs.duration)) {
+        setDuration(prefs.duration);
+      }
+    } catch {
+      // tetap default
+    }
+    setTrendingLoading(true);
+    fetch("/api/suggest?limit=6")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.success && Array.isArray(data.ideas)) {
+          const kw = data.ideas
+            .map((i: { keyword?: unknown }) => String(i?.keyword ?? "").trim())
+            .filter(Boolean);
+          setTrending(kw);
+        }
+      })
+      .catch(() => setTrending([]))
+      .finally(() => setTrendingLoading(false));
+  };
+
+  // "Mulai Generate" — buat project dengan data modal + redirect-immediate.
+  const handleStartCreate = () => {
     const mode = profile?.mode ?? "";
-    // Opsi A — redirect immediate: buat ID lokal yang stabil (UUID), redirect segera,
-    // biarkan createProject sinkron ke server di background (optimist-ke-store dulu).
+    const niche = profile?.niche ?? "";
     const localId = generateId();
     void createProject(
       {
         genre: genreForNiche(mode, niche),
         customGenre: undefined,
-        topic: "",
+        topic: topic.trim(),
         tone: "kasual",
-        targetDuration: 30,
-        platform: platformForMode(mode),
+        targetDuration: duration,
+        platform,
         mode: "step-by-step",
         voiceName: "Sari",
         voiceLanguage: "id-ID",
@@ -179,19 +256,8 @@ export default function DashboardPage() {
     ).catch((err: unknown) => {
       console.warn("[beranda] createProject background errored:", err);
     });
+    setModalOpen(false);
     router.push(`/konten/${localId}`);
-  };
-
-  const [createError, setCreateError] = useState<string | null>(null);
-
-  // handleCreateNew redirect-immediate (fire-and-forget) → tidak perlu loading state.
-  const handleCreateClick = async () => {
-    setCreateError(null);
-    try {
-      await handleCreateNew();
-    } catch {
-      setCreateError("Gagal membuat konten. Coba lagi.");
-    }
   };
 
   // FIX 1 — hapus dengan konfirmasi + feedback error.
@@ -223,6 +289,119 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
+      {/* Modal "Buat Konten Baru" */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-modal-title"
+            onKeyDown={(e) => trapModalFocus(e, () => setModalOpen(false))}
+            className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id="create-modal-title" className="text-lg font-semibold">Buat Konten Baru</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Isi topik, lalu pilih platform &amp; durasi.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalOpen(false)}
+                aria-label="Tutup"
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Topik */}
+            <div className="mt-5">
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Topik</label>
+              <textarea
+                ref={topicRef}
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                rows={2}
+                placeholder="Mau bikin konten tentang apa?"
+                className="w-full resize-none rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              />
+              {/* Trending chips (skeleton saat fetch) */}
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {trendingLoading ? (
+                  [0, 1, 2, 3].map((i) => (
+                    <span key={i} className="inline-block h-7 w-24 animate-pulse rounded-full bg-muted-foreground/15" />
+                  ))
+                ) : trending.length > 0 ? (
+                  trending.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setTopic(t)}
+                      className="rounded-full border px-3 py-1 text-xs transition-colors hover:border-primary hover:bg-accent"
+                    >
+                      {t}
+                    </button>
+                  ))
+                ) : null}
+              </div>
+            </div>
+
+            {/* Platform */}
+            <div className="mt-4">
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Platform</label>
+              <div className="flex flex-wrap gap-2">
+                {PLATFORMS.map((p) => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => setPlatform(p.value)}
+                    className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                      platform === p.value ? "border-primary bg-primary/10" : "border-border hover:bg-accent"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Durasi */}
+            <div className="mt-4">
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Durasi</label>
+              <div className="flex flex-wrap gap-2">
+                {DURATION_OPTIONS.map((d) => (
+                  <button
+                    key={d.value}
+                    type="button"
+                    onClick={() => setDuration(d.value)}
+                    className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                      duration === d.value ? "border-primary bg-primary/10" : "border-border hover:bg-accent"
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {createError && (
+              <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                {createError}
+              </p>
+            )}
+
+            {/* Actions */}
+            <div className="mt-6 flex flex-col gap-2">
+              <Button onClick={handleStartCreate} className="w-full gap-2">
+                Mulai Generate
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" onClick={() => setModalOpen(false)}>Batal</Button>
+            </div>
+          </div>
+        </div>
+      )}
       <main className="container mx-auto px-4 py-8 lg:px-8">
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
