@@ -39,7 +39,7 @@ import { Genre, Platform, Project } from "@/lib/types";
 import { PLATFORMS, DURATION_OPTIONS } from "@/lib/constants";
 import { readPreferences } from "@/lib/preferences";
 import { ProjectRow } from "@/components/project-row";
-import { NICHES } from "@/lib/persona-data";
+import { NICHES, GAYA_BY_NICHE } from "@/lib/persona-data";
 import { track } from "@/lib/posthog";
 
 // Focus trap sederhana untuk modal (Escape sluit, Tab vancirkelt binnen modal).
@@ -110,6 +110,11 @@ function genreForNiche(mode: string, niche: string): Genre {
 function nicheLabel(niche: string): string {
   const all = [...NICHES.jualan, ...NICHES.konten];
   return all.find((n) => n.slug === niche)?.label ?? niche;
+}
+
+/** Label gaya ngomong yang readable (bukan slug) untuk badge konteks modal. */
+function gayaLabelFor(niche: string, gaya: string): string {
+  return (GAYA_BY_NICHE[niche] ?? []).find((g) => g.key === gaya)?.label ?? gaya;
 }
 
 const STATUS_MAP: Record<string, { label: string; variant: "secondary" | "success" | "warning" }> = {
@@ -331,6 +336,11 @@ export default function DashboardPage() {
               <div>
                 <h2 id="create-modal-title" className="text-base font-semibold">Buat Konten Baru</h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">Isi topik, lalu pilih platform &amp; durasi.</p>
+                {profile?.niche && profile?.gaya ? (
+                  <span className="mt-1.5 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
+                    ✦ {nicheLabel(profile.niche)} · {gayaLabelFor(profile.niche, profile.gaya)}
+                  </span>
+                ) : null}
               </div>
               <button
                 type="button"
