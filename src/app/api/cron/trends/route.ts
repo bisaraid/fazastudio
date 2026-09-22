@@ -68,15 +68,18 @@ export async function GET(request: NextRequest) {
     `[cron-trends] fetched youtube=${ytTitles.length} gt=${gtTitles.length} rss=${rssTitles.length}`
   );
 
-  // ===== 3. Ekstrak topik per source (sequential, 2s antar batch) =====
+  // ===== 3. Ekstrak topik per source (sequential) =====
+  // Urutan: RSS dulu (paling banyak item & paling valuable) → jeda 15s → YouTube.
+  // Kalau YouTube jalan duluan, ia sering kena 429 / boros rate-limit Groq.
+  // Google Trends tetap terakhir, dengan jeda serupa.
   function sleep(ms: number): Promise<void> {
     return new Promise(function (r) { setTimeout(r, ms); });
   }
 
-  const ytExtracted = await extractTopicsFromTitles(ytTitles);
-  await sleep(10000);
   const rssExtracted = await extractTopicsFromTitles(rssTitles);
-  await sleep(10000);
+  await sleep(15000);
+  const ytExtracted = await extractTopicsFromTitles(ytTitles);
+  await sleep(15000);
   const gtExtracted = await extractTopicsFromTitles(gtTitles);
   console.log(
     `[cron-trends] extracted youtube=${ytExtracted.length} gt=${gtExtracted.length} rss=${rssExtracted.length}`
