@@ -68,6 +68,31 @@ function trapModalFocus(e: { key: string; shiftKey: boolean; preventDefault: () 
   }
 }
 
+/** Bersihkan judul trending: buang karakter khusus di awal (emoji, [ID], simbol, spasi). */
+function cleanTrendingKey(raw: string): string {
+  let i = 0;
+  while (i < raw.length) {
+    const code = raw.codePointAt(i)!;
+    let special: boolean;
+    if (code <= 0x7f) {
+      // ASCII: apa pun selain huruf/angka (spasi, tanda baca, simbol) = karakter khusus.
+      const ch = String.fromCharCode(code);
+      special = !/[A-Za-z0-9]/.test(ch);
+    } else {
+      // Non-ASCII: rentang simbol/emoji/tanda baca — anggap karakter khusus.
+      special =
+        (code >= 0x2000 && code <= 0x2bff) ||
+        (code >= 0x2e00 && code <= 0x2e7f) ||
+        (code >= 0x3000 && code <= 0x303f) ||
+        (code >= 0xfe00 && code <= 0xfeff) ||
+        (code >= 0x1f000 && code <= 0x1faff);
+    }
+    if (!special) break;
+    i += code > 0xffff ? 2 : 1;
+  }
+  return raw.slice(i).trim();
+}
+
 // Genre ACS default per niche (untuk createProject — bukan kosong).
 function genreForNiche(mode: string, niche: string): Genre {
   if (mode === "jualan") return "affiliate";
@@ -224,6 +249,7 @@ export default function DashboardPage() {
         if (data?.success && Array.isArray(data.ideas)) {
           const kw = data.ideas
             .map((i: { keyword?: unknown }) => String(i?.keyword ?? "").trim())
+            .map(cleanTrendingKey)
             .filter(Boolean);
           setTrending(kw);
         }
@@ -298,12 +324,13 @@ export default function DashboardPage() {
             aria-modal="true"
             aria-labelledby="create-modal-title"
             onKeyDown={(e) => trapModalFocus(e, () => setModalOpen(false))}
-            className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl"
+            className="flex max-h-[85vh] w-full max-w-md flex-col rounded-2xl border bg-card shadow-xl"
           >
-            <div className="flex items-start justify-between gap-4">
+            {/* Header — pinned */}
+            <div className="flex items-start justify-between gap-4 rounded-t-2xl border-b p-5">
               <div>
-                <h2 id="create-modal-title" className="text-lg font-semibold">Buat Konten Baru</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Isi topik, lalu pilih platform &amp; durasi.</p>
+                <h2 id="create-modal-title" className="text-base font-semibold">Buat Konten Baru</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">Isi topik, lalu pilih platform &amp; durasi.</p>
               </div>
               <button
                 type="button"
@@ -311,93 +338,101 @@ export default function DashboardPage() {
                 aria-label="Tutup"
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
 
-            {/* Topik */}
-            <div className="mt-5">
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Topik</label>
-              <textarea
-                ref={topicRef}
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                rows={2}
-                placeholder="Mau bikin konten tentang apa?"
-                className="w-full resize-none rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-              />
-              {/* Trending chips (skeleton saat fetch) */}
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {trendingLoading ? (
-                  [0, 1, 2, 3].map((i) => (
-                    <span key={i} className="inline-block h-7 w-24 animate-pulse rounded-full bg-muted-foreground/15" />
-                  ))
-                ) : trending.length > 0 ? (
-                  trending.map((t) => (
+            {/* Body — scroll di dalam kalau konten panjang */}
+            <div className="flex-1 space-y-3 overflow-y-auto p-5 pt-3">
+              {/* Topik */}
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Topik</label>
+                <textarea
+                  ref={topicRef}
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  rows={2}
+                  placeholder="Mau bikin konten tentang apa?"
+                  className="w-full resize-none rounded-lg border bg-card px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                />
+                {/* Trending chips (skeleton saat fetch) */}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {trendingLoading ? (
+                    [0, 1, 2, 3].map((i) => (
+                      <span key={i} className="inline-block h-6 w-20 animate-pulse rounded-full bg-muted-foreground/15" />
+                    ))
+                  ) : trending.length > 0 ? (
+                    trending.slice(0, 4).map((t) => {
+                      const display = t.length > 25 ? `${t.slice(0, 25)}...` : t;
+                      return (
+                        <button
+                          key={t}
+                          type="button"
+                          title={t}
+                          onClick={() => setTopic(t)}
+                          className="whitespace-nowrap rounded-full border px-3 py-1 text-xs transition-colors hover:border-primary hover:bg-accent"
+                        >
+                          {display}
+                        </button>
+                      );
+                    })
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Platform — satu baris, scroll horizontal */}
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Platform</label>
+                <div className="flex gap-1.5 overflow-x-auto pb-1">
+                  {PLATFORMS.map((p) => (
                     <button
-                      key={t}
+                      key={p.value}
                       type="button"
-                      onClick={() => setTopic(t)}
-                      className="rounded-full border px-3 py-1 text-xs transition-colors hover:border-primary hover:bg-accent"
+                      onClick={() => setPlatform(p.value)}
+                      className={`shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                        platform === p.value ? "border-primary bg-primary/10" : "border-border hover:bg-accent"
+                      }`}
                     >
-                      {t}
+                      {p.label}
                     </button>
-                  ))
-                ) : null}
+                  ))}
+                </div>
+              </div>
+
+              {/* Durasi — satu baris, scroll horizontal */}
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Durasi</label>
+                <div className="flex gap-1.5 overflow-x-auto pb-1">
+                  {DURATION_OPTIONS.map((d) => (
+                    <button
+                      key={d.value}
+                      type="button"
+                      onClick={() => setDuration(d.value)}
+                      className={`shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                        duration === d.value ? "border-primary bg-primary/10" : "border-border hover:bg-accent"
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* Platform */}
-            <div className="mt-4">
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Platform</label>
-              <div className="flex flex-wrap gap-2">
-                {PLATFORMS.map((p) => (
-                  <button
-                    key={p.value}
-                    type="button"
-                    onClick={() => setPlatform(p.value)}
-                    className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                      platform === p.value ? "border-primary bg-primary/10" : "border-border hover:bg-accent"
-                    }`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
+            {/* Footer — pinned, tak ikut scroll */}
+            <div className="shrink-0 border-t p-4">
+              {createError && (
+                <p className="mb-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2.5 text-xs text-destructive">
+                  {createError}
+                </p>
+              )}
+              <div className="flex flex-col gap-1.5">
+                <Button onClick={handleStartCreate} className="w-full gap-1.5">
+                  Mulai Generate
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" onClick={() => setModalOpen(false)}>Batal</Button>
               </div>
-            </div>
-
-            {/* Durasi */}
-            <div className="mt-4">
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Durasi</label>
-              <div className="flex flex-wrap gap-2">
-                {DURATION_OPTIONS.map((d) => (
-                  <button
-                    key={d.value}
-                    type="button"
-                    onClick={() => setDuration(d.value)}
-                    className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                      duration === d.value ? "border-primary bg-primary/10" : "border-border hover:bg-accent"
-                    }`}
-                  >
-                    {d.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {createError && (
-              <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                {createError}
-              </p>
-            )}
-
-            {/* Actions */}
-            <div className="mt-6 flex flex-col gap-2">
-              <Button onClick={handleStartCreate} className="w-full gap-2">
-                Mulai Generate
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" onClick={() => setModalOpen(false)}>Batal</Button>
             </div>
           </div>
         </div>
