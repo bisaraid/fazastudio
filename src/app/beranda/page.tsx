@@ -288,6 +288,11 @@ export default function DashboardPage() {
       console.warn("[beranda] createProject background errored:", err);
     });
     setModalOpen(false);
+    // Draag pilihan modal + auto-generate over naar de editor (sessionStorage,
+    // zelfde patroon als de landing page).
+    window.sessionStorage.setItem("auto_generate", localId);
+    window.sessionStorage.setItem("override_platform", platform);
+    window.sessionStorage.setItem("override_duration", String(duration));
     router.push(`/konten/${localId}`);
   };
 

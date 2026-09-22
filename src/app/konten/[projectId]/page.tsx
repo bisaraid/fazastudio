@@ -153,6 +153,7 @@ export default function ProjectEditorPage() {
   const topicRef = useRef<HTMLTextAreaElement | null>(null);
   const overridePlatformRef = useRef<Platform | null>(null);
   const overrideDurationRef = useRef<number | null>(null);
+  const overrideFromStorageRef = useRef<string | null>(null);
   const [trends, setTrends] = useState<{ keyword: string; source: string }[]>([]);
   const [trendsLoading, setTrendsLoading] = useState(false);
   const [deletingOldest, setDeletingOldest] = useState(false);
@@ -290,6 +291,30 @@ export default function ProjectEditorPage() {
     if (m.overridePlatform) setOverridePlatform(m.overridePlatform as Platform);
     if (typeof m.overrideDuration === "number") setOverrideDuration(m.overrideDuration);
   }, [currentProject?.id]);
+
+  // Override platform/durasi uit de beranda-modal (sessionStorage) — respecteer de
+  // keuze van de user bij generate. Pas toe bij mount en wis de keys daarna.
+  useEffect(() => {
+    if (!currentProject || currentProject.id !== projectId) return;
+    if (overrideFromStorageRef.current === projectId) return;
+    overrideFromStorageRef.current = projectId;
+    const plat = window.sessionStorage.getItem("override_platform");
+    const dur = window.sessionStorage.getItem("override_duration");
+    if (plat) {
+      const p = plat as Platform;
+      setOverridePlatform(p);
+      overridePlatformRef.current = p;
+      updateProjectMetadata({ overridePlatform: p });
+    }
+    if (dur && Number.isFinite(Number(dur))) {
+      const d = Number(dur);
+      setOverrideDuration(d);
+      overrideDurationRef.current = d;
+      updateProjectMetadata({ overrideDuration: d });
+    }
+    if (plat) window.sessionStorage.removeItem("override_platform");
+    if (dur) window.sessionStorage.removeItem("override_duration");
+  }, [projectId, currentProject?.id]);
 
   // Pre-fill platform & durasi dari behavior preferences (mount + login)
   useEffect(() => {
