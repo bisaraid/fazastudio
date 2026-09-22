@@ -64,9 +64,15 @@ function parseItems(content: string, titles: string[]): ExtractedTopic[] {
     for (const it of items as RawItem[]) {
       const idx = Number(it?.index);
       if (!Number.isInteger(idx) || idx < 0 || idx >= titles.length) continue;
-      const topic = typeof it?.topic === "string" ? it.topic.trim() : "";
+      let topic = typeof it?.topic === "string" ? it.topic.trim() : "";
       const niche = typeof it?.niche === "string" ? it.niche.trim() : "";
       if (!topic || !VALID_NICHE.has(niche)) continue; // skip irrelevant/unknown
+      // Konsistensi: topik > 8 kata → potong ke 5 kata pertama (atau skip bila entitlement).
+      const words = topic.split(/\s+/).filter(Boolean);
+      if (words.length > 8) {
+        // Potong ke 5 kata pertama agar konsisten & ringkas.
+        topic = words.slice(0, 5).join(" ");
+      }
       out.push({ topic, niche, sourceTitle: titles[idx], index: idx });
     }
     return out;
@@ -116,6 +122,11 @@ async function groqClassify(
     ". Output berupa JSON object dengan kunci \"items\": array dari " +
     "{ \"index\": <int posisi dalam array input>, \"topic\": string, \"niche\": string|null }. " +
     "Topic harus topik yang ringkas dan bermakna (bukan judul mentah, bukan hashtag/merk). " +
+  "Topik harus KONSISTEN dan maksimal 5 kata. " +
+  "Fokus pada tema/konsep, bukan nama spesifik orang/event. " +
+  "Contoh BENAR: \"Outfit hijab olahraga\", \"Serum mata anti-aging\", \"Investasi reksa dana pemula\". " +
+  "Contoh SALAH: \"Kontroversi busana Leigh-Anne Pinnock di London Fashion Week\", " +
+  "\"Peluncuran label fashion baru Donatella Versace\". " +
     "Kalau suatu judul tidak relevan dengan niche apapun, set \"niche\" ke null (dilewati/skipped). " +
     "HARUS return hanya JSON murni — tanpa markdown, tanpa penjelasan, langsung dimulai dengan { dan diakhiri dengan }.";
 

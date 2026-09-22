@@ -17,6 +17,7 @@ import { ScriptCard } from "@/components/pipeline/ScriptCard";
 import { AudioCard } from "@/components/pipeline/AudioCard";
 import { VideoCard } from "@/components/pipeline/VideoCard";
 import { CardMode } from "@/components/pipeline/PipelineCard";
+import { PostingCard } from "./PostingCard";
 import { track } from "@/lib/posthog";
 
 // ==== Mapping niche → genre + platform + durasi default ====
@@ -796,6 +797,10 @@ useEffect(()=> {
               thinkActiveIndex={progress.thinkActiveIndex}
             />
           </div>
+
+          {projectAudio && (
+            <PostingCard script={currentProject?.script} />
+          )}
 
           <div ref={videoRef}>
             <VideoCard

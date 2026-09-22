@@ -130,6 +130,12 @@ export interface ScriptResult {
   fullScript: string;
   estimatedDuration: number;
   wordCount: number;
+  /** Output "Siap Posting": judul teroptimasi untuk platform (max ~60 char). */
+  optimizedTitle?: string;
+  /** Caption siap posting dengan emoji relevan (max ~150 char). */
+  caption?: string;
+  /** Hashtag relevan niche & platform (10-15). */
+  hashtags?: string[];
 }
 
 export interface AudioResult {

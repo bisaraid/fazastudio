@@ -354,6 +354,30 @@ throw new Error(json.error || "Generate script gagal");
             // ===== LOGGING VERIFIKASI (sementara) =====
             console.log(`[Pipeline] audio result URL: ${audioUrl}`);
             console.log(`[Pipeline] audio status: ${useProjectStore.getState().currentProject?.steps.audio}`);
+
+            // ===== "Siap Posting": generate judul/caption/hashtag otomatis di background =====
+            void (async () => {
+              try {
+                const postingRes = await fetch("/api/generate-posting", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ projectId }),
+                });
+                if (!postingRes.ok) return;
+                const postingJson = await postingRes.json();
+                if (!postingJson?.success || !postingJson.data) return;
+                const cur = useProjectStore.getState().currentProject;
+                if (!cur?.script) return;
+                store.setScriptResult({
+                  ...cur.script,
+                  optimizedTitle: postingJson.data.optimizedTitle,
+                  caption: postingJson.data.caption,
+                  hashtags: postingJson.data.hashtags ?? [],
+                });
+              } catch (err) {
+                console.warn("[Pipeline] generate-posting background errored:", err);
+              }
+            })();
             break;
           }
           case "subtitle": {
