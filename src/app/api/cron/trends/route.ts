@@ -151,15 +151,28 @@ export async function GET(request: NextRequest) {
     let err: string | null = null;
     try {
       for (const row of nicheRows) {
-        const { error } = await supabase.from("trend_ideas").insert([row]);
+        // Upsert-accumulate: salah satu keyword per niche per hari (lintas source)
+        // di-merge; appearances/source_count/sources_seen/evergreen diperbarui di DB.
+        const { error } = await supabase.rpc("upsert_trend_row", {
+          p_keyword: row.keyword as string,
+          p_niche_slug: row.niche_slug as string,
+          p_source: row.source as string,
+          p_score: typeof row.score === "number" ? row.score : 0,
+          p_velocity: (row.velocity as number | null | undefined) ?? null,
+          p_trend_direction: (row.trend_direction as string | null | undefined) ?? null,
+          p_youtube_video_id: (row.youtube_video_id as string | null) ?? null,
+          p_youtube_title: (row.youtube_title as string | null) ?? null,
+          p_youtube_channel: (row.youtube_channel as string | null) ?? null,
+          p_youtube_views: typeof row.youtube_views === "number" ? row.youtube_views : 0,
+          p_youtube_likes: typeof row.youtube_likes === "number" ? row.youtube_likes : 0,
+          p_youtube_uploaded_at: (row.youtube_uploaded_at as string | null) ?? null,
+          p_fetched_at: row.fetched_at as string,
+        });
         if (error) {
-          if (error.code !== "23505") {
-            err = error.message;
-            break;
-          }
-        } else {
-          count++;
+          err = error.message;
+          break;
         }
+        count++;
       }
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);

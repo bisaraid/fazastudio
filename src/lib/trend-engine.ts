@@ -76,11 +76,11 @@ export async function getTrendingNow(
     if (niche) {
       query = query.eq("niche_slug", niche);
     }
-    // Up atau velocity positif (velocity null belum punya baseline → tetap bisa muncul,
-    // tapi "sedang naik" diutamakan dengan urut direction up dulu, lalu score).
+    // Evergreen: topik dengan traction jangka panjang muncul di atas.
+    // Urut evergreen_score desc dulu, lalu appearances desc (tie-breaker).
     query = query
-      .order("trend_direction", { ascending: false })
-      .order("score", { ascending: false });
+      .order("evergreen_score", { ascending: false })
+      .order("appearances", { ascending: false });
 
     const { data, error } = await query.limit(50);
     if (error || !data) return [];
