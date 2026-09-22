@@ -103,6 +103,20 @@ export function pickSuggestSignal(behavior: BehaviorSignals): SuggestSignal {
 export function signalToSource(signal: SuggestSignal): string {
   return signal === "upcoming" ? "youtube_us" : "youtube";
 }
+
+/**
+ * Keyword yang layak ditampilkan (display-only; TIDAK mempengaruhi DB).
+ * Buang judul mentah: panjang >60, mengandung " | ", diawali "LIVE",
+ * atau mengandung "[ID]" / "[" (tag/simbol lain).
+ */
+function isDisplayableKeyword(raw: string): boolean {
+  const k = raw.trim();
+  if (k.length > 60) return false;
+  if (k.includes(" | ")) return false;
+  if (/^LIVE/i.test(k)) return false;
+  if (/\[ID\]|\[/i.test(k)) return false;
+  return true;
+}
 /**
  * Orchestrasi utama. Menerima deps (injectable) & konteks user.
  * - Tanpa profil → fallback global (loadTrendingNow("")).
@@ -126,7 +140,7 @@ export async function buildPersonalizedSuggest(
         signal: "now",
         source: "global",
         niches: [],
-        ideas: ideas.slice(0, cap).map((i) => ({ ...i })),
+        ideas: ideas.filter((i) => isDisplayableKeyword(i.keyword)).slice(0, cap).map((i) => ({ ...i })),
       };
     }
 
@@ -151,7 +165,7 @@ export async function buildPersonalizedSuggest(
 
     // 6. Tempel preferensi sebagai metadata (tidak mengubah urutan/score).
     const preferences: BehaviorPreferences = behavior.preferences ?? {};
-    const out: SuggestIdea[] = (ideas ?? []).slice(0, cap).map((i) => ({
+    const out: SuggestIdea[] = (ideas ?? []).filter((i) => isDisplayableKeyword(i.keyword)).slice(0, cap).map((i) => ({
       ...i,
       preferences,
     }));
@@ -171,7 +185,7 @@ export async function buildPersonalizedSuggest(
       signal: "now",
       source: "global",
       niches: [],
-      ideas: ideas.slice(0, cap).map((i) => ({ ...i })),
+      ideas: ideas.filter((i) => isDisplayableKeyword(i.keyword)).slice(0, cap).map((i) => ({ ...i })),
     };
   }
 }
