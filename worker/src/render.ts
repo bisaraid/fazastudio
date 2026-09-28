@@ -49,6 +49,19 @@ const PEXELS_FALLBACK_QUERIES = ["cinematic", "abstract", "nature", "city street
 // Numero max di scene usate per il rendering automatico.
 const MAX_AUTO_SCENES = 10;
 
+// Crossfade breve tra le scene (s). Applicato solo con un numero contenuto di
+// scene, per non allungare troppo il render.
+const CROSSFADE_DURATION = 0.4;
+const MAX_CROSSFADE_SCENES = 6;
+
+// Zoom (Ken Burns) sottile. Applicato solo se la durata totale è sotto questa
+// soglia, così il render non supera i tempi di build Vercel/worker.
+const ZOOM_MAX_DURATION_S = 90;
+
+// Timeout watchdog per ffmpeg (10 min): se il render supera il limite, il
+// processo viene terminato e il job fallisce (fail-loud) invece di restare appeso.
+const RENDER_TIMEOUT_MS = 10 * 60 * 1000;
+
 // File font che si bundle-ano nel worker (worker/assets/fonts) in modo che il
 // render NON dipenda dalla cartella public/fonts della radice del progetto
 // Next.js (che non esiste nel deploy del worker /worker).
@@ -451,34 +464,59 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
     let args: string[];
     if (autoSceneClipped && autoSceneClipped.length > 0) {
       const visible = autoSceneClipped.filter((s) => s.ok);
-      // Durata per scena PROPORZIONALE alla lunghezza della narrazione:
-      // una scena con testo più lungo resta in video più a lungo (e viceversa),
-      // così il ritmo visivo segue il parlato (non più divisione uguale.
+      const n = visible.length;
+      // Crossfade solo con un numero di scene contenuto (limita tempo di render).
+      const useCrossfade = n >= 2 && n <= MAX_CROSSFADE_SCENES;
+      const useZoom = totalDuration <= ZOOM_MAX_DURATION_S;
+      const OVER = CROSSFADE_DURATION;
+      // In caso di crossfade le clip si sovrappongono: la durata totale delle
+      // clip deve essere totalDuration + OVER*(n-1) così l'output resta totalDuration.
+      const needed = totalDuration + (useCrossfade ? OVER * (n - 1) : 0);
+
+      // Durata per scena PROPORZIONALE alla lunghezza della narrazione (item 2),
+      // con minimo per leggibilità.
       const totalWeight = visible.reduce((sum, s) => sum + Math.max(1, s.weight), 0);
       const MIN_SCENE_DUR = 1.2;
-      const rawDurs = visible.map((s) => totalDuration * (Math.max(1, s.weight) / totalWeight));
-      // Rialloca lo scarto dei minimi (garantisce che ogni scena sia leggibile)
+      const rawDurs = visible.map((s) => needed * (Math.max(1, s.weight) / totalWeight));
       const overRaw = rawDurs.reduce((sum, d) => sum + Math.max(0, MIN_SCENE_DUR - d), 0);
-      const underScalar = totalDuration / Math.max(1, totalDuration - overRaw);
+      const underScalar = needed / Math.max(1, needed - overRaw);
       const sceneInputs = visible.map((s, i) => {
-        const base = Math.max(MIN_SCENE_DUR, totalDuration * (Math.max(1, s.weight) / totalWeight));
-        const scaled = base * underScalar;
-        return { path: s.path, duration: Math.min(totalDuration, scaled) };
+        const base = Math.max(MIN_SCENE_DUR, needed * (Math.max(1, s.weight) / totalWeight));
+        return { path: s.path, duration: Math.min(needed, base * underScalar) };
       });
+
+      const zoomFilter = 'zoompan=z=\'min(1+0.0006*on,1.06)\':d=1:x=\'iw/2-(iw/zoom/2)\':y=\'ih/2-(ih/zoom/2)\':s=' + outW + 'x' + outH + ':fps=30';
       const parts = [];
-      const concatInputs = [];
       for (let i = 0; i < sceneInputs.length; i++) {
         const dur = sceneInputs[i].duration;
-        parts.push('[' + i + ':v]' + scalePad + ',trim=duration=' + dur + ',setpts=PTS-STARTPTS[v' + i + ']');
-        concatInputs.push('[v' + i + ']');
+        let v = '[' + i + ':v]' + scalePad;
+        if (useZoom) v += ',' + zoomFilter;
+        v += ',trim=duration=' + dur + ',setpts=PTS-STARTPTS,format=yuv420p[v' + i + ']';
+        parts.push(v);
       }
-      const filterComplex = parts.join(';') + ';' + concatInputs.join('') + 'concat=n=' + sceneInputs.length + ':v=1:a=0[base];' + subtitleFilterWm;
+      let baseLabel;
+      if (useCrossfade) {
+        let acc = sceneInputs[0].duration;
+        for (let i = 1; i < sceneInputs.length; i++) {
+          const off = Math.max(0, acc - OVER);
+          const prev = i === 1 ? 'v0' : 'vid' + (i - 1);
+          parts.push('[' + prev + '][v' + i + ']xfade=transition=fade:duration=' + OVER + ':offset=' + off + '[vid' + i + ']');
+          acc = acc + sceneInputs[i].duration - OVER;
+        }
+        baseLabel = '[vid' + (sceneInputs.length - 1) + ']';
+      } else {
+        const concatInputs = [];
+        for (let i = 0; i < sceneInputs.length; i++) concatInputs.push('[v' + i + ']');
+        parts.push(concatInputs.join('') + 'concat=n=' + sceneInputs.length + ':v=1:a=0[base]');
+        baseLabel = '[base]';
+      }
+      const filterComplex = parts.join(';') + ';' + baseLabel + subtitleFilterWm;
       args = [];
       for (const s of sceneInputs) { args.push('-stream_loop', '-1', '-i', s.path); }
       args.push('-i', inputAudio, '-filter_complex', filterComplex, '-map', '[vout]', '-map', String(sceneInputs.length) + ':a');
       args.push('-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', '-shortest', '-t', String(totalDuration), '-movflags', '+faststart', '-y', outputFile);
-      const durInfo = sceneInputs.map((s) => Math.round(s.duration * 10) / 10 + 's').join(', ');
-      console.log('[render] Render auto per-scene (proportional ' + sceneInputs.length + ' clips): ' + durInfo);
+      const annot = (useCrossfade ? 'xfade' : 'concat') + (useZoom ? '+zoom' : '');
+      console.log('[render] Render auto per-scene (' + annot + ', n=' + sceneInputs.length + ')');
     } else if (hasSceneFootage) {
       const sceneInputs = [];
       for (let i = 0; i < sceneFootage.length; i++) {
@@ -512,10 +550,23 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
       ];
     }
 
-    // 14. Spawn FFmpeg + progress
+    // 14. Spawn FFmpeg + progress (con watchdog timeout)
     await new Promise<void>((resolve, reject) => {
       const proc = spawn(ffmpegPath, args, { windowsHide: true });
       let fullErr = '';
+      let done = false;
+      const timeout = setTimeout(() => {
+        if (done) return;
+        console.error('[render] Timeout: render supera ' + (RENDER_TIMEOUT_MS / 1000) + 's, termina ffmpeg');
+        try { proc.kill(); } catch { /* ignore */ }
+        reject(new Error('FFmpeg render timeout (' + (RENDER_TIMEOUT_MS / 1000) + 's)'));
+      }, RENDER_TIMEOUT_MS);
+      const finish = (fn: () => void) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        fn();
+      };
       proc.stderr.on('data', (chunk) => {
         const text = chunk.toString();
         fullErr += text;
@@ -527,16 +578,18 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
       });
       proc.on('error', (err) => {
         console.error('[render] FFmpeg spawn error:', err);
-        reject(err);
+        finish(() => reject(err));
       });
       proc.on('close', (code) => {
         console.log('[render] FFmpeg exit code: ' + code);
-        if (code === 0) { resolve(); }
-        else {
-          console.error('[render] FFmpeg gagal (exit ' + code + ')');
-          console.error('[render] stderr:' + fullErr);
-          reject(new Error('FFmpeg render gagal (exit ' + code + ')'));
-        }
+        finish(() => {
+          if (code === 0) { resolve(); }
+          else {
+            console.error('[render] FFmpeg gagal (exit ' + code + ')');
+            console.error('[render] stderr:' + fullErr);
+            reject(new Error('FFmpeg render gagal (exit ' + code + ')'));
+          }
+        });
       });
     });
     onProgress(100);
