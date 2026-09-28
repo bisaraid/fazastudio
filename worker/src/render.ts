@@ -62,6 +62,9 @@ const ZOOM_MAX_DURATION_S = 90;
 // processo viene terminato e il job fallisce (fail-loud) invece di restare appeso.
 const RENDER_TIMEOUT_MS = 10 * 60 * 1000;
 
+// Normalizzazione volume (loudness EBU R128): livella il volume tra provider TTS.
+const LOUDNORM = 'loudnorm=I=-16:TP=-1.5:LRA=11';
+
 // File font che si bundle-ano nel worker (worker/assets/fonts) in modo che il
 // render NON dipenda dalla cartella public/fonts della radice del progetto
 // Next.js (che non esiste nel deploy del worker /worker).
@@ -514,6 +517,7 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
       args = [];
       for (const s of sceneInputs) { args.push('-stream_loop', '-1', '-i', s.path); }
       args.push('-i', inputAudio, '-filter_complex', filterComplex, '-map', '[vout]', '-map', String(sceneInputs.length) + ':a');
+      args.push('-af', LOUDNORM);
       args.push('-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', '-shortest', '-t', String(totalDuration), '-movflags', '+faststart', '-y', outputFile);
       const annot = (useCrossfade ? 'xfade' : 'concat') + (useZoom ? '+zoom' : '');
       console.log('[render] Render auto per-scene (' + annot + ', n=' + sceneInputs.length + ')');
@@ -539,12 +543,14 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
       args = [];
       for (const s of sceneInputs) { args.push('-stream_loop', '-1', '-i', s.path); }
       args.push('-i', inputAudio, '-filter_complex', filterComplex, '-map', '[vout]', '-map', String(sceneInputs.length) + ':a');
+      args.push('-af', LOUDNORM);
       args.push('-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', '-shortest', '-t', String(totalDuration), '-movflags', '+faststart', '-y', outputFile);
       console.log('[render] Render per-scene (concat ' + sceneInputs.length + ' clips)');
     } else {
       args = [
         '-stream_loop', '-1', '-i', inputVideo, '-i', inputAudio,
         '-vf', scalePad + ',' + singleSubtitleFilterWm,
+        '-af', LOUDNORM,
         '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac',
         '-shortest', '-t', String(totalDuration), '-movflags', '+faststart', '-y', outputFile,
       ];
