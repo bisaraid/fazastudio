@@ -152,6 +152,12 @@ function projectTitle(p: Project): string {
 
 const PAGE_SIZE = 20;
 
+/** Potong teks ke maks N kata untuk tampilan chip (default 4). */
+function truncateWords(text: string, n = 4): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  return words.length > n ? `${words.slice(0, n).join(" ")}…` : text;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const { projects, appendProjects, deleteProject, createProject } = useProjectStore();
@@ -377,20 +383,24 @@ export default function DashboardPage() {
                       <span key={i} className="inline-block h-6 w-20 animate-pulse rounded-full bg-muted-foreground/15" />
                     ))
                   ) : trending.length > 0 ? (
-                    trending.slice(0, 4).map((t) => {
-                      const display = t.length > 25 ? `${t.slice(0, 25)}...` : t;
-                      return (
+                    trending.slice(0, 4).map((t) => (
+                      <div key={t} className="group relative inline-block">
                         <button
-                          key={t}
                           type="button"
-                          title={t}
                           onClick={() => setTopic(t)}
+                          aria-label={t}
                           className="whitespace-nowrap rounded-full border px-3 py-1 text-xs transition-colors hover:border-primary hover:bg-accent"
                         >
-                          {display}
+                          {truncateWords(t, 4)}
                         </button>
-                      );
-                    })
+                        <div
+                          role="tooltip"
+                          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 max-w-[min(16rem,80vw)] whitespace-normal break-words rounded-md bg-neutral-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                        >
+                          {t}
+                        </div>
+                      </div>
+                    ))
                   ) : null}
                 </div>
               </div>

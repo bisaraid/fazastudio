@@ -71,9 +71,9 @@ function parseItems(content: string, titles: string[]): ExtractedTopic[] {
       if (!topic || !VALID_NICHE.has(niche)) continue; // skip irrelevant/unknown
       // Konsistensi: topik > 8 kata → potong ke 5 kata pertama (atau skip bila entitlement).
       const words = topic.split(/\s+/).filter(Boolean);
-      if (words.length > 8) {
-        // Potong ke 5 kata pertama agar konsisten & ringkas.
-        topic = words.slice(0, 5).join(" ");
+      if (words.length > 10) {
+        // Potong ke 10 kata pertama agar konsisten & ringkas.
+        topic = words.slice(0, 10).join(" ");
       }
       out.push({ topic, niche, sourceTitle: titles[idx], index: idx });
     }
@@ -123,12 +123,13 @@ async function groqClassify(
     NICHE_SLUGS.join(", ") +
     ". Output berupa JSON object dengan kunci \"items\": array dari " +
     "{ \"index\": <int posisi dalam array input>, \"topic\": string, \"niche\": string|null }. " +
-    "Topic harus topik yang ringkas dan bermakna (bukan judul mentah, bukan hashtag/merk). " +
-  "Topik harus KONSISTEN dan maksimal 5 kata. " +
-  "Fokus pada tema/konsep, bukan nama spesifik orang/event. " +
-  "Contoh BENAR: \"Outfit hijab olahraga\", \"Serum mata anti-aging\", \"Investasi reksa dana pemula\". " +
-  "Contoh SALAH: \"Kontroversi busana Leigh-Anne Pinnock di London Fashion Week\", " +
-  "\"Peluncuran label fashion baru Donatella Versace\". " +
+    "Topic harus deskriptif dan kontekstual, minimal 5 kata maksimal 10 kata. " +
+    "Jelaskan KONTEKS topiknya, bukan hanya nama. " +
+    "Contoh BENAR: - 'Cara investasi reksa dana untuk pemula 2026' - 'Review laptop gaming RTX 5090 budget terjangkau' " +
+    "- 'Tips skincare kulit berminyak untuk iklim tropis' - 'Resep makanan sehat untuk diet rendah karbohidrat'. " +
+    "Contoh SALAH: - 'Lagu Never Change' (terlalu pendek, tidak kontekstual) - 'Gameplay Upin Ipin' (tidak ada konteks manfaat) " +
+    "- 'Trailer sinetron' (terlalu generik). " +
+    "Fokus pada APA MANFAAT atau NILAI konten ini bagi penonton. " +
     "Kalau suatu judul tidak relevan dengan niche apapun, set \"niche\" ke null (dilewati/skipped). " +
     "HARUS return hanya JSON murni — tanpa markdown, tanpa penjelasan, langsung dimulai dengan { dan diakhiri dengan }.";
 

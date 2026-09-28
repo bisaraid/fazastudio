@@ -102,6 +102,12 @@ function formatTime(sec: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** Potong teks ke maks N kata untuk tampilan chip (default 4). */
+function truncateWords(text: string, n = 4): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  return words.length > n ? `${words.slice(0, n).join(" ")}…` : text;
+}
+
 export default function LandingPage() {
   const router = useRouter();
   const { createProject } = useProjectStore();
@@ -463,20 +469,27 @@ export default function LandingPage() {
                             />
                           ))
                         : trendingTopics.map((t) => (
-                            <button
-                              key={t.full}
-                              type="button"
-                              onMouseDown={(e) => e.preventDefault()}
-                              title={t.full}
-                              onClick={() => {
-                                setTopic(t.full);
-                                textareaRef.current?.focus();
-                                resizeTextarea();
-                              }}
-                              className="max-w-full truncate rounded-full border border-primary/30 bg-background px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/15 hover:text-foreground"
-                            >
-                              {t.display}
-                            </button>
+                            <div key={t.full} className="group relative inline-block">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => {
+                                  setTopic(t.full);
+                                  textareaRef.current?.focus();
+                                  resizeTextarea();
+                                }}
+                                aria-label={t.full}
+                                className="max-w-full truncate rounded-full border border-primary/30 bg-background px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/15 hover:text-foreground"
+                              >
+                                {truncateWords(t.full, 4)}
+                              </button>
+                              <div
+                                role="tooltip"
+                                className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 max-w-[min(16rem,80vw)] whitespace-normal break-words rounded-md bg-neutral-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                              >
+                                {t.full}
+                              </div>
+                            </div>
                           ))}
                     </div>
                   </>
