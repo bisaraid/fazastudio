@@ -10,8 +10,23 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping /api/cron/trends
-        run: |
-          curl -fsSL \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://fazastudio.my.id/api/cron/trends"
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        # ignore-scripts: skip ffmpeg-static/dll-abel yang tak dipakai harvest
+        run: npm ci --ignore-scripts
+
+      - name: Run trend harvest (standalone)
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          GROQ_API_KEY2: ${{ secrets.GROQ_API_KEY2 }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx tsx scripts/harvest.ts

@@ -50,9 +50,7 @@ export async function fetchYouTubeTrending(
   });
 
   try {
-    const res = await fetch(`${YOUTUBE_API_BASE}/videos?${params}`, {
-      next: { revalidate: 3600 }, // cache 1 jam di server
-    });
+    const res = await fetch(`${YOUTUBE_API_BASE}/videos?${params}`);
 
     if (!res.ok) {
       const errText = await res.text();
