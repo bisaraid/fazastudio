@@ -5,16 +5,39 @@
  * Best-effort: faalt een feed - skip, ga door met de rest.
  */
 
-const DETIK_FEEDS = [
-  "https://wolipop.detik.com/rss", // skincare, fashion, beauty
-  "https://food.detik.com/rss", // makanan, resep
-  "https://health.detik.com/rss", // kesehatan, suplemen
-  "https://inet.detik.com/rss", // gadget, teknologi
-  "https://finance.detik.com/rss", // keuangan, bisnis
-  "https://hot.detik.com/rss", // hiburan, curhat, drama
-];
+const FEEDS = [
+  // Hiburan, musik, gaming, curhat
+  "https://entertainment.kompas.com/rss",
+  "https://www.cnnindonesia.com/hiburan/rss",
 
-const FEEDS = [...DETIK_FEEDS];
+  // Kesehatan, skincare, suplemen, bayi
+  "https://health.kompas.com/rss",
+  "https://www.cnnindonesia.com/gaya-hidup/rss",
+
+  // Keuangan, bisnis, berita
+  "https://money.kompas.com/rss",
+  "https://www.cnnindonesia.com/ekonomi/rss",
+
+  // Gadget, teknologi
+  "https://tekno.kompas.com/rss",
+  "https://www.cnnindonesia.com/teknologi/rss",
+
+  // Olahraga
+  "https://bola.kompas.com/rss",
+  "https://www.cnnindonesia.com/olahraga/rss",
+
+  // Fashion, rumah, lifestyle
+  "https://lifestyle.kompas.com/rss",
+
+  // Makanan
+  "https://food.kompas.com/rss",
+
+  // Otomotif
+  "https://otomotif.kompas.com/rss",
+
+  // Edukasi, motivasi, sejarah
+  "https://edukasi.kompas.com/rss",
+];
 
 const USER_AGENT = "Mozilla/5.0 (compatible; Fazastudio RSS)";
 
