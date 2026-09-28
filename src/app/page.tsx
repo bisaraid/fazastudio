@@ -712,6 +712,12 @@ export default function LandingPage() {
             <a href="#harga" onClick={scrollToHarga} className="hover:text-foreground">Harga</a>
             <Link href="/masuk" className="hover:text-foreground">Masuk</Link>
           </div>
+          <div className="flex flex-wrap gap-3 justify-center sm:justify-end">
+            <Link href="/privasi" className="hover:text-foreground">Privacy</Link>
+            <Link href="/syarat" className="hover:text-foreground">Termini</Link>
+            <Link href="/refund" className="hover:text-foreground">Rimborsi</Link>
+            <Link href="/kontak" className="hover:text-foreground">Contatto</Link>
+          </div>
         </div>
       </footer>
     </div>
