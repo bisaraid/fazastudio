@@ -142,9 +142,13 @@ export async function POST(request: NextRequest) {
       console.log(`[TTS] Preview mode: "${truncated}..."`);
     }
 
-    // Fallback chain: coba provider yg dipilih user dulu, lalu ElevenLabs → Cartesia → Google
+    // Fallback chain: coba provider yg dipilih user dulu, lalu ElevenLabs → Cartesia → Google.
+    // Plan free (providerToUse = "google") → HANYA Google, tanpa fallback ke provider berbayar.
     const fallbackOrder: TTSProvider[] = ["elevenlabs", "cartesia", "google"];
-    const providersToTry = [providerToUse, ...fallbackOrder.filter((p) => p !== providerToUse)];
+    const providersToTry: TTSProvider[] =
+      providerToUse === "google"
+        ? ["google"]
+        : [providerToUse, ...fallbackOrder.filter((p) => p !== providerToUse)];
 
     let audioBuffer: ArrayBuffer | undefined;
     let usedProvider: TTSProvider | undefined;
@@ -176,8 +180,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (audioBuffer === undefined) {
+      const error =
+        providerToUse === "google"
+          ? "Layanan suara sedang tidak tersedia, coba lagi nanti"
+          : "Semua provider TTS gagal. Coba lagi atau pilih provider lain.";
       return NextResponse.json(
-        { success: false, error: "Semua provider TTS gagal. Coba lagi atau pilih provider lain." },
+        { success: false, error },
         { status: 500 }
       );
     }
