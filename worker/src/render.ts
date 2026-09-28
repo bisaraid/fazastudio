@@ -27,6 +27,22 @@ const BIN = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
 const SUBTITLE_FONT_NAME = "Quicksand";
 const SUBTITLE_FONT_FALLBACK = "Poppins";
 
+// File font che si bundle-ano nel worker (worker/assets/fonts) in modo che il
+// render NON dipenda dalla cartella public/fonts della radice del progetto
+// Next.js (che non esiste nel deploy del worker /worker).
+const QUICKSAND_CANDIDATES = [
+  'Quicksand_Book.otf',
+  'Quicksand_Bold.otf',
+  'Quicksand-Regular.ttf',
+  'Quicksand.otf',
+];
+const POPPINS_CANDIDATES = [
+  'Poppins-Regular.ttf',
+  'Poppins-SemiBold.ttf',
+  'Poppins-Medium.ttf',
+  'Poppins-Bold.ttf',
+];
+
 export interface RenderResult {
   videoUrl: string;
   resolution: string;
@@ -104,42 +120,80 @@ function buildSrtFromSegments(segments: SubtitleSegment[]) {
     .join('\n\n');
 }
 
+/**
+ * Posizioni candidate per la cartella font. Cercate in ordine:
+ *  1. FONT_DIR (env esplicito);
+ *  2. <cwd>/assets/fonts   (worker/assets/fonts quando worker = cwd);
+ *  3. <cwd>/public/fonts   (radice progetto, eredita legacy);
+ *  4. <__dirname>/../assets/fonts (module-relative: copre dist/ e src via ts-node).
+ */
+function fontBaseDirCandidates(): string[] {
+  const dirs: string[] = [];
+  if (process.env.FONT_DIR) dirs.push(process.env.FONT_DIR);
+  dirs.push(join(process.cwd(), 'assets', 'fonts'));
+  dirs.push(join(process.cwd(), 'public', 'fonts'));
+  dirs.push(join(dirname(__filename), '..', 'assets', 'fonts'));
+  return dirs;
+}
+
+/** Trova il primo file font esistente tra baseDir x candidati. */
+function pickFontFile(
+  baseCandidates: string[],
+  fontNames: string[]
+): { path: string; fileName: string } | null {
+  for (const base of baseCandidates) {
+    for (const fileName of fontNames) {
+      const full = join(base, fileName);
+      if (existsSync(full)) return { path: full, fileName };
+    }
+  }
+  return null;
+}
+
+/** Risolvi il font subtitle (Quicksand preferito, poi Poppins) — null se assente. */
+function resolveSubtitleFont(): { path: string; fileName: string; fontName: string } | null {
+  const baseCandidates = fontBaseDirCandidates();
+  const quicksand = pickFontFile(baseCandidates, QUICKSAND_CANDIDATES);
+  if (quicksand) return { path: quicksand.path, fileName: quicksand.fileName, fontName: SUBTITLE_FONT_NAME };
+  const poppins = pickFontFile(baseCandidates, POPPINS_CANDIDATES);
+  if (poppins) return { path: poppins.path, fileName: poppins.fileName, fontName: SUBTITLE_FONT_FALLBACK };
+  return null;
+}
+
+/** Risolvi UN qualsiasi font dai bundle (per il watermark free) — '' se assente. */
+function resolveAnyFontFile(): string {
+  const resolved = pickFontFile(
+    fontBaseDirCandidates(),
+    QUICKSAND_CANDIDATES.concat(POPPINS_CANDIDATES)
+  );
+  return resolved ? resolved.path : '';
+}
+
 async function prepareSubtitleFonts(workDir: string): Promise<{ fontsdir: string; ok: boolean; fontName: string; fontFile: string }> {
   const fontsDir = join(workDir, 'fonts');
-  try {
-    await mkdir(fontsDir, { recursive: true });
-    const quicksandCandidates = [
-      'Quicksand_Book.otf',
-      'Quicksand_Bold.otf',
-      'Quicksand-Regular.ttf',
-      'Quicksand.otf',
-    ];
-    const poppinsCandidates = [
-      'Poppins-Regular.ttf',
-      'Poppins-SemiBold.ttf',
-      'Poppins-Medium.ttf',
-      'Poppins-Bold.ttf',
-    ];
-    const baseDir = join(process.cwd(), 'public', 'fonts');
-    const pick = async (cands: string[]): Promise<string | null> => {
-      for (const c of cands) {
-        const src = join(baseDir, c);
-        if (existsSync(src)) {
-          await copyFile(src, join(fontsDir, c));
-          return c;
-        }
-      }
-      return null;
-    };
-    const quicksand = await pick(quicksandCandidates);
-    if (quicksand) return { fontsdir: fontsDir, ok: true, fontName: SUBTITLE_FONT_NAME, fontFile: join(fontsDir, quicksand) };
-    const poppins = await pick(poppinsCandidates);
-    if (poppins) return { fontsdir: fontsDir, ok: true, fontName: SUBTITLE_FONT_FALLBACK, fontFile: join(fontsDir, poppins) };
-    return { fontsdir: fontsDir, ok: false, fontName: SUBTITLE_FONT_NAME, fontFile: '' };
-  } catch (e) {
-    console.warn('[render] prepareSubtitleFonts g:', e instanceof Error ? e.message : e);
-    return { fontsdir: fontsDir, ok: false, fontName: SUBTITLE_FONT_NAME, fontFile: '' };
+  await mkdir(fontsDir, { recursive: true });
+
+  const resolved = resolveSubtitleFont();
+  // FAIL-LOUD: i caption sono parte essenziale del video. Se nessun font viene
+  // trovato NON fare un fallback silenzioso col font di ffmpeg (che produce un
+  // video brutto o senza caption) — il job deve fallire con un errore chiaro
+  // nei log. Bundle i font in worker/assets/fonts oppure setta FONT_DIR.
+  if (!resolved) {
+    const searched = fontBaseDirCandidates().join(', ');
+    throw new Error(
+      '[render] FAIL-LOUD: nessun font subtitle (Quicksand/Poppins) trovato. Cercato in: ' +
+        searched +
+        '. Bundle i font in worker/assets/fonts oppure setta FONT_DIR.'
+    );
   }
+
+  const dest = join(fontsDir, resolved.fileName);
+  try {
+    await copyFile(resolved.path, dest);
+  } catch (e) {
+    console.warn('[render] copy font fallito (uso direct path):', e instanceof Error ? e.message : e);
+  }
+  return { fontsdir: fontsDir, ok: true, fontName: resolved.fontName, fontFile: dest };
 }
 
 async function fetchPexelsBackground(query: string): Promise<string> {
@@ -293,11 +347,15 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
 
     // ===== WATERMARK (free plan) — burn-in "Faza Studio" bottom-right =====
     // Pricing janji: free plan punya "Watermark Faza Studio" (constants.ts).
-    // Premium (starter/pro) TIDAK punya watermark. Di-skip jika fontfile tidak tersedia.
+    // Premium (starter/pro) TIDAK punya watermark.
+    // Il watermark usa un font DEDICATO risolto dai bundle (resolveAnyFontFile),
+    // quindi resta renderizzato anche se il font dei caption ha problemi --
+    // non viene mai "droppato" silenziosamente insieme al font subtitle.
+    const watermarkFontFile = subtitleFont.fontFile || resolveAnyFontFile();
     const watermarkDraw =
-      isFree && subtitleFont.fontFile
+      isFree && watermarkFontFile
         ? ",drawtext=fontfile=" +
-          escapeFilterPath(subtitleFont.fontFile) +
+          escapeFilterPath(watermarkFontFile) +
           ":text='Faza Studio':x=w-tw-20:y=h-th-16:fontsize=16:" +
           "fontcolor=white@0.7:borderw=1:bordercolor=black@0.6"
         : "";
