@@ -5,7 +5,6 @@ import Link from "next/link";
 import { PLANS } from "@/lib/constants";
 import type { Plan } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { useUser } from "@/hooks/useUser";
 import { Check, Minus, ChevronDown } from "lucide-react";
 
 interface PricingPlansProps {
@@ -74,7 +73,6 @@ function CellContent({ value }: { value: Cell }) {
 /** Daftar plan reusable — dipakai di /harga (publik) dan /pengaturan. */
 export function PricingPlans({ currentPlan, ctaHref = "/daftar" }: PricingPlansProps) {
   const [compareOpen, setCompareOpen] = useState(false);
-  const { user } = useUser();
 
   return (
     <div>
@@ -128,13 +126,11 @@ export function PricingPlans({ currentPlan, ctaHref = "/daftar" }: PricingPlansP
                     </Button>
                   </Link>
                 ) : (
-                  // Paywall richiede login: lo user anon viene rimandato a /daftar
-                  // (il backend /api/checkout impone comunque la sessione).
-                  <Link href={user ? `/api/checkout?plan=${plan.id}` : (ctaHref || "/daftar")} className="block">
-                    <Button className="w-full" variant={plan.highlighted ? "default" : "outline"}>
-                      {plan.cta || "Mulai Sekarang"}
-                    </Button>
-                  </Link>
+                  // Pagamento non ancora attivo (Midtrans in fase di setup):
+                  // mostra "Presto disponibile" al posto del link di checkout.
+                  <Button className="w-full" variant={plan.highlighted ? "default" : "outline"} disabled>
+                    Presto disponibile
+                  </Button>
                 )}
               </div>
             </div>
