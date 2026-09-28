@@ -27,6 +27,28 @@ const BIN = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
 const SUBTITLE_FONT_NAME = "Quicksand";
 const SUBTITLE_FONT_FALLBACK = "Poppins";
 
+// Query di fallback per genero (usate quando la query dello scene è vuota), poi
+// query generiche provate in ordine se la query dello scene non restituisce nulla.
+const GENRE_FALLBACK_QUERY: Record<string, string> = {
+  horor: "dark horror creepy",
+  misteri: "mysterious fog dark",
+  psikologi: "mind psychology abstract",
+  romance: "romantic couple sunset",
+  motivasi: "motivation success sunrise",
+  edukasi: "education learning classroom",
+  affiliate: "product lifestyle shopping",
+  sejarah: "ancient history ruins",
+  keuangan: "finance money business",
+  custom: "cinematic abstract",
+};
+
+// Query generiche di fallback provate (con dedupe) se la query dello scene è
+// troppo specifica e non restituisce risultato.
+const PEXELS_FALLBACK_QUERIES = ["cinematic", "abstract", "nature", "city street", "technology"];
+
+// Numero max di scene usate per il rendering automatico.
+const MAX_AUTO_SCENES = 10;
+
 // File font che si bundle-ano nel worker (worker/assets/fonts) in modo che il
 // render NON dipenda dalla cartella public/fonts della radice del progetto
 // Next.js (che non esiste nel deploy del worker /worker).
@@ -196,22 +218,68 @@ async function prepareSubtitleFonts(workDir: string): Promise<{ fontsdir: string
   return { fontsdir: fontsDir, ok: true, fontName: resolved.fontName, fontFile: dest };
 }
 
-async function fetchPexelsBackground(query: string): Promise<string> {
+/**
+ * Cerca video Pexels per una query, escludendo i video già usati (dedupe).
+ * Ritorna i candidati portrait non-duplicati (link + id pexels).
+ */
+async function searchPexelsVideos(query: string, perPage: number, usedIds: Set<string>): Promise<Array<{ id: string; link: string }>> {
   const apiKey = process.env.PEXELS_API_KEY;
   if (!apiKey) throw new Error('PEXELS_API_KEY tidak tersedia di .env');
   const res = await fetch(
-    PEXELS_API_URL + '?query=' + encodeURIComponent(query) + '&per_page=1&orientation=portrait',
+    PEXELS_API_URL + '?query=' + encodeURIComponent(query) + '&per_page=' + perPage + '&orientation=portrait',
     { headers: { Authorization: apiKey } }
   );
   if (!res.ok) throw new Error('Pexels API error (' + res.status + ')');
   const json: any = await res.json();
-  const video = json.videos && json.videos[0];
-  if (!video) throw new Error('Tidak ada video Pexels ditemukan');
-  const files = video.video_files || [];
-  const best = files
-    .filter((f: any) => f.width && f.height && f.height >= f.width)
-    .sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0];
-  return best ? best.link : (files[0] ? files[0].link : '');
+  const out: Array<{ id: string; link: string }> = [];
+  for (const v of json.videos ?? []) {
+    const id = String(v.id);
+    if (usedIds.has(id)) continue; // DEDUPE: ignora clip già usato in un'altra scena
+    const files = v.video_files || [];
+    const best = files
+      .filter((f: any) => f.width && f.height && f.height >= f.width)
+      .sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0];
+    if (best) out.push({ id, link: best.link });
+  }
+  return out;
+}
+
+/**
+ * Prende UN video per scene con DEDUPE (nessun clip ripetuto tra le scene) e
+ * FALLBACK query: prova la query dello scene, poi il fallback per genero, infine
+ * le query generiche. Se è già usato, passa al candidato successivo.
+ */
+async function fetchPexelsScene(query: string, genre: string | undefined, usedIds: Set<string>): Promise<{ id: string; link: string }> {
+  const candidates: string[] = [];
+  if (query) candidates.push(query);
+  if (genre && GENRE_FALLBACK_QUERY[genre]) candidates.push(GENRE_FALLBACK_QUERY[genre]);
+  for (const q of PEXELS_FALLBACK_QUERIES) candidates.push(q);
+
+  const seenQuery = new Set<string>();
+  for (const raw of candidates) {
+    const q = (raw || '').trim();
+    if (!q) continue;
+    const key = q.toLowerCase();
+    if (seenQuery.has(key)) continue;
+    seenQuery.add(key);
+    try {
+      const videos = await searchPexelsVideos(q, 10, usedIds);
+      if (videos.length === 0) continue;
+      const pick = videos[0];
+      usedIds.add(pick.id); // marchio usato così le scene successive non lo riprendono
+      return pick;
+    } catch (e) {
+      console.warn('[render] Pexels search error (' + q + '):', e instanceof Error ? e.message : e);
+    }
+  }
+  throw new Error('Pexels: nessun video dopo fallback (dedupe) per query: ' + query);
+}
+
+/** Versione per lo sfondo singolo (1 clip) — mantiene il nome back-compat. */
+async function fetchPexelsBackground(query: string): Promise<string> {
+  const used = new Set<string>();
+  const clip = await fetchPexelsScene(query, undefined, used);
+  return clip.link;
 }
 
 function buildSceneQuery(scene: Scene | null | undefined, fallbackGenre?: string): string {
@@ -222,24 +290,33 @@ function buildSceneQuery(scene: Scene | null | undefined, fallbackGenre?: string
   return q || fallbackGenre || 'cinematic';
 }
 
-async function fetchSceneVisuals(scenes: Scene[] | undefined, workDir: string, fallbackGenre?: string): Promise<Array<{ path: string; duration: number; ok: boolean }>> {
-  const limited = scenes ? scenes.slice(0, 10) : [];
+/**
+ * Scene visuals automatiche: per OGNI scene scarica UN video Pexels diverso
+ * (DEDUPE condiviso) e prova query di fallback se il risultato è vuoto.
+ * La fetch è SEQUENZIALE (non Promise.all) perché la dedupe condivide l'insieme
+ * dei video già usati. Aggiunge `weight` = lunghezza (in char) della narrazione
+ * dello scene, usato per distribuire la durata (Tahap1, item 2).
+ */
+async function fetchSceneVisuals(scenes: Scene[] | undefined, workDir: string, fallbackGenre?: string): Promise<Array<{ path: string; duration: number; ok: boolean; weight: number }>> {
+  const limited = scenes ? scenes.slice(0, MAX_AUTO_SCENES) : [];
   if (limited.length === 0) return [];
-  const results = await Promise.all(
-    limited.map(async (scene, i) => {
-      const query = buildSceneQuery(scene, fallbackGenre);
-      try {
-        const url = await fetchPexelsBackground(query);
-        const buf = await fetchBuffer(url);
-        const fpath = join(workDir, 'auto-scene-' + i + '.mp4');
-        await writeFile(fpath, buf);
-        return { path: fpath, duration: 0, ok: true };
-      } catch (e) {
-        console.warn('[render] Gagal fetch visual scene ' + i + ' (' + query + '):', e);
-        return { path: '', duration: 0, ok: false };
-      }
-    })
-  );
+  const usedIds = new Set<string>();
+  const results: Array<{ path: string; duration: number; ok: boolean; weight: number }> = [];
+  for (let i = 0; i < limited.length; i++) {
+    const scene = limited[i];
+    const query = buildSceneQuery(scene, fallbackGenre);
+    try {
+      const clip = await fetchPexelsScene(query, fallbackGenre, usedIds);
+      const buf = await fetchBuffer(clip.link);
+      const fpath = join(workDir, 'auto-scene-' + i + '.mp4');
+      await writeFile(fpath, buf);
+      const narration = ((scene && (scene.narration || scene.content || scene.heading)) || '').toString();
+      results.push({ path: fpath, duration: 0, ok: true, weight: Math.max(1, narration.length) });
+    } catch (e) {
+      console.warn('[render] Gagal fetch visual scene ' + i + ' (' + query + '):', e);
+      results.push({ path: '', duration: 0, ok: false, weight: 1 });
+    }
+  }
   return results;
 }
 
@@ -364,7 +441,7 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
     const singleSubtitleFilterWm = singleSubtitleFilter + watermarkDraw;
     const hasSceneFootage = Array.isArray(sceneFootage) && sceneFootage.length > 0;
     const scalePad = 'scale=' + outW + ':' + outH + ':force_original_aspect_ratio=decrease,pad=' + outW + ':' + outH + ':(ow-iw)/2:(oh-ih)/2';
-    let autoSceneClipped: Array<{ path: string; duration: number; ok: boolean }> | null = null;
+    let autoSceneClipped: Array<{ path: string; duration: number; ok: boolean; weight: number }> | null = null;
     if (!hasSceneFootage && Array.isArray(scenes) && scenes.length > 0) {
       autoSceneClipped = await fetchSceneVisuals(scenes, workDir, genre);
       const valid = autoSceneClipped.filter((s) => s.ok);
