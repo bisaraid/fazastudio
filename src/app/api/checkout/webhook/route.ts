@@ -1,29 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHash } from "crypto";
 import { setPlan, PlanTier } from "@/lib/usage";
+import { createServiceRoleClient } from "@/lib/supabase/service";
+import {
+  derivePlanAndIdentity,
+  grossMatchesPlan,
+  isCapturedTransaction,
+  verifyMidtransSignature,
+} from "@/lib/midtrans";
 
 /**
  * POST /api/checkout/webhook
  *
- * Webhook Midtrans Snap. Pada `transaction_status` = "settlement" atau "capture":
- * - extract plan + identityKey dari order_id (`${plan}_${ts}_${base64url(identity)}`)
- * - panggil setPlan(identityKey, plan) → aktifkan kredit
+ * Webhook Midtrans Snap. Su `transaction_status` = "settlement" o "capture":
+ * - estrae plan + identityKey dall'order_id (`${plan}_${ts}_${base64url(identity)}`)
+ * - applica il piano SOLO se (a) e' davvero pagato, (b) l'importo corrisponde al
+ *   prezzo server, (c) l'ordine NON e' gia' stato processato (idempotency).
  *
- * Verifikasi signature:
+ * IDEMPOTENCY: la funzione `claim_webhook` (migration 025) reclama l'ordine in
+ * modo atomico. Un retry/duplicato Midtrans vede l'ordine gia' reclamato e NON
+ * riapplica il piano -> NON resetta credits_used.
+ *
+ * Verifica firma:
  *   SHA512(order_id + status_code + gross_amount + MIDTRANS_SERVER_KEY)
- * (digabung tanpa separator, lalu hex-digest) dibandingkan dgn `signature_key`
- * pada body webhook Midtrans.
- *
- * TODO (blocked on env — user must add keys):
- * - Set MIDTRANS_SERVER_KEY di .env.local
- * - Daftarkan URL ini sebagai Payment Notification URL di
- *   https://dashboard.midtrans.com > Settings > Configuration
+ * (concatenati senza separatore, poi hex-digest) confrontato con `signature_key`.
  */
 export async function POST(request: NextRequest) {
   const serverKey = process.env.MIDTRANS_SERVER_KEY;
   if (!serverKey) {
     return NextResponse.json(
-      { success: false, error: "Webhook belum di-konfigurasikan (MIDTRANS_SERVER_KEY missing). TODO: add to .env.local" },
+      { success: false, error: "Webhook belum di-konfigurasikan (MIDTRANS_SERVER_KEY missing)." },
       { status: 503 }
     );
   }
@@ -39,41 +44,63 @@ export async function POST(request: NextRequest) {
   const statusCode = body?.status_code;
   const grossAmount = body?.gross_amount;
   const receivedSignature = body?.signature_key;
+  const transactionStatus = body?.transaction_status;
 
-  if (typeof orderId !== "string" || statusCode === undefined || grossAmount === undefined || typeof receivedSignature !== "string") {
+  if (
+    typeof orderId !== "string" ||
+    statusCode === undefined ||
+    grossAmount === undefined ||
+    typeof receivedSignature !== "string"
+  ) {
     return NextResponse.json({ success: false, error: "Field webhook tidak lengkap" }, { status: 400 });
   }
 
-  // ===== Verifikasi signature =====
-  const plain = `${orderId}${statusCode}${grossAmount}${serverKey}`;
-  const expectedSignature = createHash("sha512").update(plain).digest("hex");
-
-  if (expectedSignature !== receivedSignature) {
+  // 1) Verifica firma (copre order_id + status + importo + server key)
+  if (!verifyMidtransSignature(orderId, String(statusCode), String(grossAmount), serverKey, receivedSignature)) {
     return NextResponse.json({ success: false, error: "Invalid signature" }, { status: 400 });
   }
 
-  const transactionStatus = body?.transaction_status; // settlement | capture | pending | ...
-
-  // Hanya proses pembayaran yang berhasil (lunas)
-  if (transactionStatus === "settlement" || transactionStatus === "capture") {
-    // order_id: `${plan}_${ts}_${base64url(identityKey)}`
-    const [planPart, , identityPart] = orderId.split("_");
-    let identityKey: string | null = null;
-    try {
-      identityKey = Buffer.from(identityPart, "base64url").toString("utf8");
-    } catch {
-      identityKey = null;
-    }
-
-    const plan = planPart as PlanTier;
-    if (identityKey && (plan === "starter" || plan === "pro")) {
-      const ok = await setPlan(identityKey, plan);
-      if (!ok) {
-        console.error(`[webhook] setPlan gagal for identity:${identityKey} plan:${plan}`);
-      }
-    }
+  // 2) Estrae piano + identity dall'order_id
+  const derived = derivePlanAndIdentity(orderId);
+  if (!derived) {
+    return NextResponse.json({ success: false, error: "order_id tidak valid" }, { status: 400 });
   }
 
-  // Selalu balas 200 agar Midtrans tidak retry untuk status non-settlement.
+  // 3) Solo transazioni finalizzate (settlement/capture) attivano il piano
+  if (!isCapturedTransaction(transactionStatus)) {
+    // Sempre 200 per non far retry Midtrans sugli stati non-finalizzati.
+    return NextResponse.json({ success: true });
+  }
+
+  // 4) Verifica che l'importo corrisponda al prezzo server del piano.
+  if (!grossMatchesPlan(derived.plan, grossAmount)) {
+    console.error(
+      `[webhook] gross_amount (${grossAmount}) non corrisponde al piano ${derived.plan}`
+    );
+    return NextResponse.json({ success: false, error: "gross_amount mismatch" }, { status: 400 });
+  }
+
+  // 5) IDEMPOTENCY (exactly-once): reclama l'ordine in modo atomico.
+  const service = createServiceRoleClient();
+  const claimed = await service.rpc("claim_webhook", { p_order_id: orderId }).maybeSingle();
+
+  if (claimed.error) {
+    // Errore DB transiente -> 500 cosi' Midtrans retry e non si perde il grant.
+    console.error("[webhook] claim_webhook error:", claimed.error.message);
+    return NextResponse.json({ success: false, error: "Internal error" }, { status: 500 });
+  }
+
+  if (claimed.data !== true) {
+    // Ordine gia' processato in precedenza -> risposta ok idempotente, nessuna azione
+    // (evita il reset di credits_used su replay).
+    return NextResponse.json({ success: true });
+  }
+
+  // 6) Prima (unica) volta per questo ordine -> applica il piano.
+  const ok = await setPlan(derived.identityKey, derived.plan as PlanTier);
+  if (!ok) {
+    console.error(`[webhook] setPlan gagal for identity (plan=${derived.plan})`);
+  }
+
   return NextResponse.json({ success: true });
 }
