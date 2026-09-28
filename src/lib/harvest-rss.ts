@@ -58,21 +58,35 @@ export function extractTitles(xml: string, skipFirst = false): string[] {
   return out;
 }
 
-async function fetchFeed(url: string): Promise<string[]> {
+const FEED_FETCH_TIMEOUT_MS = 15000;
+const FEED_CONCURRENCY = 3;
+
+async function fetchOne(url: string): Promise<string[]> {
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(FEED_FETCH_TIMEOUT_MS),
+    headers: {
+      "user-agent": USER_AGENT,
+      accept: "application/rss+xml, application/xml, text/xml",
+    },
+  });
+  if (!res.ok) {
+    console.warn("[harvest-rss] feed tidak OK:", url, res.status);
+    return [];
+  }
+  const xml = await res.text();
+  return extractTitles(xml).slice(0, 10);
+}
+
+async function fetchFeed(url: string, attempt = 1): Promise<string[]> {
   try {
-    const res = await fetch(url, {
-      headers: {
-        "user-agent": USER_AGENT,
-        accept: "application/rss+xml, application/xml, text/xml",
-      },
-    });
-    if (!res.ok) {
-      console.warn("[harvest-rss] feed tidak OK:", url, res.status);
-      return [];
-    }
-    const xml = await res.text();
-    return extractTitles(xml).slice(0, 10);
+    return await fetchOne(url);
   } catch (e) {
+    // Retry 1× (jeda kecil) utk menahan timeout/throttle sesaat dari sisi server.
+    if (attempt < 2) {
+      console.warn(`[harvest-rss] feed timeout/error, retry ${url}...`);
+      await new Promise((r) => setTimeout(r, 500));
+      return fetchFeed(url, attempt + 1);
+    }
     console.error("[harvest-rss] feed gagal:", url, e);
     return [];
   }
@@ -83,18 +97,36 @@ async function fetchFeed(url: string): Promise<string[]> {
  * Best-effort: faalt een feed - skip; resultaat is de som van succesvolle feeds.
  */
 export async function fetchRssTitles(): Promise<string[]> {
-  const settled = await Promise.allSettled(FEEDS.map((url) => fetchFeed(url)));
+  // Jalankan feed dengan CONCURRENCY terbatas (hindari throttle/rate-limit server)
+  // dan best-effort: feed yang gagal di-skip, hasil di-dedupe.
   const out: string[] = [];
-  const seen = new Set();
-  for (const r of settled) {
-    if (r.status !== "fulfilled") continue;
-    for (const t of r.value) {
+  const seen = new Set<string>();
+
+  const add = (titles: string[]) => {
+    for (const t of titles) {
       const k = t.toLowerCase();
       if (t && !seen.has(k)) {
         seen.add(k);
         out.push(t);
       }
     }
-  }
+  };
+
+  const queue = FEEDS.map((url) => () => fetchFeed(url).then((rows) => add(rows)));
+  const workers = Array.from(
+    { length: Math.min(FEED_CONCURRENCY, queue.length) },
+    async () => {
+      while (queue.length > 0) {
+        const job = queue.shift()!;
+        try {
+          await job();
+        } catch {
+          // best-effort — feed gagal total di-skip
+        }
+      }
+    }
+  );
+  await Promise.all(workers);
+
   return out;
 }
