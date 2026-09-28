@@ -4,6 +4,7 @@ import { type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { providerLabel, VOICE_EMOTIONS } from "@/lib/constants";
+import { useUsage } from "@/hooks/useUsage";
 import type { ScriptResult } from "@/lib/types";
 import { ArrowDown, ChevronDown, Headphones, Loader2, Play, RefreshCw } from "lucide-react";
 import { PipelineCard, CardMode } from "./PipelineCard";
@@ -34,6 +35,7 @@ export interface ScriptCardProps {
 }
 
 export function ScriptCard(p: ScriptCardProps) {
+  const { plan } = useUsage();
   const summary = p.script
     ? `${p.script.scenes?.length ?? 0} scene · ${p.script.wordCount ?? 0} kata`
     : undefined;
@@ -62,22 +64,33 @@ export function ScriptCard(p: ScriptCardProps) {
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-xs font-medium text-muted-foreground">Suara</label>
         <div className="flex flex-wrap gap-2">
-          {(["cartesia", "elevenlabs", "google"] as const).map((prov) => (
-            <button
-              key={prov}
-              type="button"
-              onClick={() => p.onAudioProvider(prov)}
-              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
-                p.audioProvider === prov
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border bg-card text-muted-foreground hover:bg-accent"
-              }`}
-            >
-              {p.audioProvider === prov && <Play className="h-3 w-3" />}
-              {providerLabel(prov)}
-            </button>
-          ))}
+          {(["cartesia", "elevenlabs", "google"] as const).map((prov) => {
+            const isPaid = prov !== "google";
+            const disabled = plan === "free" && isPaid;
+            const active = p.audioProvider === prov || (plan === "free" && prov === "google");
+            return (
+              <button
+                key={prov}
+                type="button"
+                disabled={disabled}
+                onClick={() => p.onAudioProvider(prov)}
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                  active
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border bg-card text-muted-foreground hover:bg-accent"
+                } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
+              >
+                {active && <Play className="h-3 w-3" />}
+                {providerLabel(prov)}
+              </button>
+            );
+          })}
         </div>
+        {plan === "free" && (
+          <p className="text-xs text-muted-foreground">
+            Plan Gratis hanya tersedia suara Standar. Upgrade untuk suara Premium.
+          </p>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <label className="text-xs text-muted-foreground">Kecepatan</label>
           <select

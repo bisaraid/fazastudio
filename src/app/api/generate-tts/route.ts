@@ -17,7 +17,7 @@ import { RATE_LIMIT_LIMITS, DAILY_WINDOW_MS } from "@/lib/rate-limit-config";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
-import { checkCredits, checkCreditsForUser } from "@/lib/usage";
+import { getUsage, getUsageForUser } from "@/lib/usage";
 import { isPreviewUsed, markPreviewUsed } from "@/lib/preview-guard";
 
 /**
@@ -94,6 +94,45 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ===== METERING + PROVIDER BY PLAN (hanya non-preview) =====
+    // Preview tidak kena cek kredit & bebas pakai provider apapun.
+    const ttsSession = createSupabaseServerClient();
+    const {
+      data: { user: ttsUser },
+    } = await ttsSession.auth.getUser();
+
+    let providerToUse: TTSProvider = provider as TTSProvider;
+
+    if (preview !== true) {
+      const usage = ttsUser
+        ? await getUsageForUser(ttsUser.id)
+        : await getUsage(identityKey);
+
+      if (usage.creditsRemaining <= 0) {
+        return NextResponse.json(
+          { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
+          { status: 402 }
+        );
+      }
+
+      // Plan gratis → paksa suara Standar (Google).
+      if (usage.plan === "free") {
+        providerToUse = "google";
+      }
+
+      // Batas panjang teks sebelum memanggil provider (hindari timeout/biaya).
+      const totalChars = scenes.reduce(
+        (sum: number, s: { narration?: string }) => sum + (s?.narration?.length ?? 0),
+        0
+      );
+      if (totalChars > 5000) {
+        return NextResponse.json(
+          { success: false, error: "Script terlalu panjang (maks 5000 karakter)." },
+          { status: 400 }
+        );
+      }
+    }
+
     // Jika preview: true, potong narasi scene pertama ke 7 kata
     let scenesToProcess = scenes as TTSScene[];
     if (preview === true) {
@@ -105,7 +144,7 @@ export async function POST(request: NextRequest) {
 
     // Fallback chain: coba provider yg dipilih user dulu, lalu ElevenLabs → Cartesia → Google
     const fallbackOrder: TTSProvider[] = ["elevenlabs", "cartesia", "google"];
-    const providersToTry = [provider as TTSProvider, ...fallbackOrder.filter((p) => p !== provider)];
+    const providersToTry = [providerToUse, ...fallbackOrder.filter((p) => p !== providerToUse)];
 
     let audioBuffer: ArrayBuffer | undefined;
     let usedProvider: TTSProvider | undefined;
@@ -195,22 +234,6 @@ export async function POST(request: NextRequest) {
     }
 
     // ===== NON-PREVIEW: upload ke Supabase Storage bucket `acs-audio` =====
-    // ===== CREDIT CHECK (guard only — credit already decremented at generate-script) =====
-    // identity/identityKey sudah diambil di awal (baris atas) — dipakai juga di sini.
-    // Metering: login → keyed by user_id; anon → keyed by identity_key.
-    const ttsSession = createSupabaseServerClient();
-    const {
-      data: { user: ttsUser },
-    } = await ttsSession.auth.getUser();
-    const hasCredit = ttsUser
-      ? await checkCreditsForUser(ttsUser.id)
-      : await checkCredits(identityKey);
-    if (!hasCredit) {
-      return NextResponse.json(
-        { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
-        { status: 402 }
-      );
-    }
 
     // Guard 1: projectId wajib & valid — jangan pernah buat path `undefined/audio.mp3`
     if (!projectId || typeof projectId !== "string" || projectId.trim() === "") {
