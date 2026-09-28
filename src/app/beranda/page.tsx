@@ -395,7 +395,7 @@ export default function DashboardPage() {
                         </button>
                         <div
                           role="tooltip"
-                          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 max-w-[min(16rem,80vw)] whitespace-normal break-words rounded-md bg-neutral-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                          className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 whitespace-nowrap rounded-md bg-neutral-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100 max-w-[80vw] overflow-hidden text-ellipsis"
                         >
                           {t}
                         </div>
