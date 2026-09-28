@@ -451,8 +451,20 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
     let args: string[];
     if (autoSceneClipped && autoSceneClipped.length > 0) {
       const visible = autoSceneClipped.filter((s) => s.ok);
-      const perSceneDur = totalDuration / visible.length;
-      const sceneInputs = visible.map((s) => ({ path: s.path, duration: perSceneDur }));
+      // Durata per scena PROPORZIONALE alla lunghezza della narrazione:
+      // una scena con testo più lungo resta in video più a lungo (e viceversa),
+      // così il ritmo visivo segue il parlato (non più divisione uguale.
+      const totalWeight = visible.reduce((sum, s) => sum + Math.max(1, s.weight), 0);
+      const MIN_SCENE_DUR = 1.2;
+      const rawDurs = visible.map((s) => totalDuration * (Math.max(1, s.weight) / totalWeight));
+      // Rialloca lo scarto dei minimi (garantisce che ogni scena sia leggibile)
+      const overRaw = rawDurs.reduce((sum, d) => sum + Math.max(0, MIN_SCENE_DUR - d), 0);
+      const underScalar = totalDuration / Math.max(1, totalDuration - overRaw);
+      const sceneInputs = visible.map((s, i) => {
+        const base = Math.max(MIN_SCENE_DUR, totalDuration * (Math.max(1, s.weight) / totalWeight));
+        const scaled = base * underScalar;
+        return { path: s.path, duration: Math.min(totalDuration, scaled) };
+      });
       const parts = [];
       const concatInputs = [];
       for (let i = 0; i < sceneInputs.length; i++) {
@@ -465,7 +477,8 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
       for (const s of sceneInputs) { args.push('-stream_loop', '-1', '-i', s.path); }
       args.push('-i', inputAudio, '-filter_complex', filterComplex, '-map', '[vout]', '-map', String(sceneInputs.length) + ':a');
       args.push('-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', '-shortest', '-t', String(totalDuration), '-movflags', '+faststart', '-y', outputFile);
-      console.log('[render] Render auto per-scene (concat ' + sceneInputs.length + ' clips)');
+      const durInfo = sceneInputs.map((s) => Math.round(s.duration * 10) / 10 + 's').join(', ');
+      console.log('[render] Render auto per-scene (proportional ' + sceneInputs.length + ' clips): ' + durInfo);
     } else if (hasSceneFootage) {
       const sceneInputs = [];
       for (let i = 0; i < sceneFootage.length; i++) {
