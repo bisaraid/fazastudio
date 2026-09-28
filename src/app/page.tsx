@@ -626,8 +626,8 @@ export default function LandingPage() {
 
             {/* Kanan: panel trust signal */}
             <div className="rounded-2xl border border-primary/20 bg-primary/10 p-6">
-              <p className="text-4xl font-bold text-primary">10.000+</p>
-              <p className="text-sm text-muted-foreground">script dibuat dengan Faza Studio</p>
+              <p className="text-2xl font-bold text-primary">Da ide a video</p>
+              <p className="text-sm text-muted-foreground">script → audio → subtitle → video</p>
 
               <div className="my-4 h-px w-full bg-border/60" />
 
