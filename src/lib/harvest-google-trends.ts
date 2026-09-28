@@ -7,7 +7,7 @@ import { extractTitles } from "./harvest-rss";
  * Google Trends (zonder externe library). Best-effort: bij een fout: lege array (gooit nooit).
  */
 
-const GOOGLE_TRENDS_RSS = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=ID";
+const GOOGLE_TRENDS_RSS = "https://trends.google.com/trending/rss?geo=ID";
 const USER_AGENT = "Mozilla/5.0 (compatible; Fazastudio RSS)";
 
 /**

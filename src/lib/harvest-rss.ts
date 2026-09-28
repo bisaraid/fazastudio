@@ -6,16 +6,22 @@
  */
 
 const FEEDS = [
-  // Kompas (format /feed/)
-  "https://www.kompas.com/feed/",
-  "https://tekno.kompas.com/feed/",
-  "https://money.kompas.com/feed/",
-  "https://health.kompas.com/feed/",
-  "https://bola.kompas.com/feed/",
-  "https://lifestyle.kompas.com/feed/",
-  "https://otomotif.kompas.com/feed/",
-  "https://entertainment.kompas.com/feed/",
-  "https://edukasi.kompas.com/feed/",
+  // Fashion, beauty, lifestyle
+  "https://wolipop.detik.com/rss",
+  // Hiburan, musik, seleb, curhat
+  "https://hot.detik.com/rss",
+  // Gadget, teknologi, game
+  "https://inet.detik.com/rss",
+  // Keuangan, bisnis, berita ekonomi
+  "https://finance.detik.com/rss",
+  // Kesehatan, skincare, suplemen, bayi
+  "https://health.detik.com/rss",
+  // Makanan, kuliner
+  "https://food.detik.com/rss",
+  // Olahraga
+  "https://sport.detik.com/rss",
+  // Otomotif, kendaraan
+  "https://oto.detik.com/rss",
 ];
 
 const USER_AGENT = "Mozilla/5.0 (compatible; Fazastudio RSS)";
