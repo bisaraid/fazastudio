@@ -16,10 +16,12 @@ const GROQ_API_BASE = "https://api.groq.com/openai/v1";
 /** Model sama dengan yang dipakai generate script / translate. */
 const MODEL = process.env.TOPIC_EXTRACTOR_GROQ_MODEL || "qwen/qwen3.8-27b";
 
-/** Ke-12 niche yang dipakai klasifikasi (sama seperti di seluruh sistem). */
+/** Ke-21 niche yang dipakai klasifikasi (sama seperti di seluruh sistem). */
 export const NICHE_SLUGS = [
   "skincare", "fashion", "gadget", "makanan", "suplemen", "perabot",
   "mistis", "motivasi", "edukasi", "keuangan", "curhat", "sejarah",
+  "gaming", "hiburan", "musik", "olahraga", "berita",
+  "otomotif", "kesehatan", "rumah", "bayi",
 ] as const;
 
 const VALID_NICHE = new Set<string>(NICHE_SLUGS);
@@ -117,7 +119,7 @@ async function groqClassify(
 
   const system =
     "Kamu adalah penulis konten. Ekstrak topik konten yang bermakna dari judul konten " +
-    "dan klasifikasikan ke salah satu dari 12 niche: " +
+    "dan klasifikasikan ke salah satu dari 21 niche: " +
     NICHE_SLUGS.join(", ") +
     ". Output berupa JSON object dengan kunci \"items\": array dari " +
     "{ \"index\": <int posisi dalam array input>, \"topic\": string, \"niche\": string|null }. " +

@@ -40,6 +40,10 @@ export const NICHES: Record<Layer1Mode, NicheOption[]> = {
     { slug: "makanan", label: "Makanan & Minuman", categoryId: "affiliate" },
     { slug: "suplemen", label: "Suplemen & Kesehatan", categoryId: "affiliate" },
     { slug: "perabot", label: "Perabot & Rumah", categoryId: "affiliate" },
+    { slug: "otomotif", label: "Otomotif", categoryId: "autos" },
+    { slug: "kesehatan", label: "Kesehatan", categoryId: "health" },
+    { slug: "rumah", label: "Rumah & Dekor", categoryId: "home" },
+    { slug: "bayi", label: "Bayi & Parenting", categoryId: "parenting" },
   ],
   konten: [
     { slug: "mistis", label: "Cerita Mistis & Horor", categoryId: "horror" },
@@ -48,6 +52,11 @@ export const NICHES: Record<Layer1Mode, NicheOption[]> = {
     { slug: "keuangan", label: "Uang & Investasi", categoryId: "keuangan" },
     { slug: "curhat", label: "Curhat & Relationship", categoryId: "romance" },
     { slug: "sejarah", label: "Sejarah & Fakta Seru", categoryId: "sejarah" },
+    { slug: "gaming", label: "Gaming", categoryId: "gaming" },
+    { slug: "hiburan", label: "Hiburan", categoryId: "entertainment" },
+    { slug: "musik", label: "Musik", categoryId: "music" },
+    { slug: "olahraga", label: "Olahraga", categoryId: "sports" },
+    { slug: "berita", label: "Berita & Viral", categoryId: "news" },
   ],
 };
 export interface GayaOption {
@@ -116,6 +125,51 @@ export const GAYA_BY_NICHE: Record<string, GayaOption[]> = {
     { key: "narator-dramatis", label: "Kayak narator film" },
     { key: "santai-mengalir", label: "Santai dan mengalir" },
     { key: "fakta-kaget", label: "Fakta yang bikin kaget" },
+  ],
+  gaming: [
+    { key: "gamer-malino-tips", label: "Kayak pro gamer yang king sharps dan tips" },
+    { key: "narator-quest", label: "Narator misi, bangun drama dari gameplay" },
+    { key: "comedy-ngeti", label: "Comedy dan relate yang bikin ngeti" },
+  ],
+  hiburan: [
+    { key: "reaksi-spontan", label: "Reaksi spontan dan kaget bikin bucal" },
+    { key: "dramatis-penyint", label: "Dramatis, bikin penasaran terus nonton" },
+    { key: "santai-ngobrol", label: "Santai kayak ngobrol sama teman" },
+  ],
+  musik: [
+    { key: "ritmo-lirik", label: "Energi musik, fokus lirik dan ritmo" },
+    { key: "nerd-behindscenes", label: "Facts musik dan cerita behind the scenes" },
+    { key: "vibe-estetik", label: "Vibe estetik, bahasa kalem cinematic" },
+  ],
+  olahraga: [
+    { key: "komentator-hipir", label: "Hipir komentator yang bikin degdegan" },
+    { key: "analisis-taktik", label: "Analisis mendalam taktik dan strategi" },
+    { key: "inspirasyon-atlet", label: "Inspiratif cerita atlet dan persisten" },
+  ],
+  berita: [
+    { key: "cepat-point", label: "Gampang dicerna, cepat ke point" },
+    { key: "investigatif-jelas", label: "Investigatif, fakta-fakta jelas dan objektiv" },
+    { key: "viral-narrative", label: "Narativ viral yang bikin share" },
+  ],
+  otomotif: [
+    { key: "spec-geeksus", label: "Gesus spec teknis, angka dan detail" },
+    { key: "testdrive-kagum", label: "Reaksi test drive dan first-hand" },
+    { key: "car-estetik", label: "Kalem estetik automotive" },
+  ],
+  kesehatan: [
+    { key: "jelas-pelan", label: "Jelasin pelan-pelan biar ngerti" },
+    { key: "serius-terpercaya", label: "Serius, fakta medical bisa dipercaya" },
+    { key: "ngena-empatic", label: "Emphatic dan ngena kesehatan emosional" },
+  ],
+  rumah: [
+    { key: "diari-makeover", label: "Diari makeover dan renovasi tahap-tahap" },
+    { key: "budget-hack", label: "Hack budget dan dekor murah" },
+    { key: "cozy-estetik", label: "Cozy estetik inspiratif biar bersik" },
+  ],
+  bayi: [
+    { key: "jelas-parenting", label: "Jelasin gampang tips parenting" },
+    { key: "hangat-experience", label: "Cerita pengalaman hangat dan relate" },
+    { key: "ekspert-bayi", label: "Ekspert, fakta kesehatan bayi bisa dipercaya" },
   ],
 };
 export interface CeritaOption {
@@ -334,6 +388,159 @@ export const CERITA_BY_NICHE_GAYA: Record<string, Record<string, CeritaOption[]>
       { key: "fakta-jarang", label: "Buka dengan fakta yang jarang diketahui" },
       { key: "balik-perspektif", label: "Balik perspektif yang dianggap benar" },
       { key: "relevansi-kini", label: "Tutup dengan relevansinya ke kehidupan sekarang" },
+    ],
+  },
+  gaming: {
+    "gamer-malino-tips": [
+      { key: "g-tip-open", label: "Buka dgn tip kode gamer yang bikin pro" },
+      { key: "g-clip-epic", label: "Pertenguhmid clipe epic ou clutch moment" },
+      { key: "g-tutup-komunitet", label: "Tutup dgn call audiens komuniti" },
+    ],
+    "narator-quest": [
+      { key: "g-hook-suspen", label: "Hook suspen dari misi ou momen tenk" },
+      { key: "g-bangun-cha", label: "Bangun char yang bikin relate" },
+      { key: "g-peak-climax", label: "Accel climaks saat plot twist ou boss" },
+    ],
+    "comedy-ngeti": [
+      { key: "g-joke-relate", label: "Buka dgn joke yang gamer relate" },
+      { key: "g-meme-nge", label: "Mix meme dan reaksi funny mid-game" },
+      { key: "g-signoff", label: "Signoff catchy yang kena rir" },
+    ],
+  },
+  hiburan: {
+    "reaksi-spontan": [
+      { key: "h-buka-kaget", label: "Buka dgn momen shocking yang spontan" },
+      { key: "h-reaction-combo", label: "Chain reaksi funny tanpa script" },
+      { key: "h-tutup-ques", label: "Tutup dgn pertanyaan open buat nonton" },
+    ],
+    "dramatis-penyint": [
+      { key: "h-hook-misteri", label: "Hook misteri yang bikin penasaran" },
+      { key: "h-build-degdegan", label: "Build degdegan sampai reveal" },
+      { key: "h-cliffhanger", label: "Tutup cliffhanger biar nonton wait ulang" },
+    ],
+    "santai-ngobrol": [
+      { key: "h-icebreak", label: "Buka kayak icebreaker hangat" },
+      { key: "h-ngobrol-poin", label: "Ngobrol poin per poin natural" },
+      { key: "h-tutup-sama", label: "Tutup santai sama ajak" },
+    ],
+  },
+  musik: {
+    "ritmo-lirik": [
+      { key: "m-lirik-buka", label: "Buka dgn lirik yang bikin kaget" },
+      { key: "m-analisis-beat", label: "Analisis ritmo dan beat yang terkait" },
+      { key: "m-tutup-vibe", label: "Tutup dgn vibe yang kena dengerin" },
+    ],
+    "nerd-behindscenes": [
+      { key: "m-fact-jarang", label: "Buka dgn fact musik yang jarang diketahui" },
+      { key: "m-cerita-proses", label: "Cerita proses pembuatan lagu" },
+      { key: "m-tutup-lesson", label: "Tutup dgn lesson yang bisa dinaplikasi" },
+    ],
+    "vibe-estetik": [
+      { key: "m-visual-open", label: "Buka dgn visual estetik cinematic" },
+      { key: "m-sensory", label: "Sensory dan emosional bahasa" },
+      { key: "m-close-aesthetic", label: "Close aesthetic yang lingers" },
+    ],
+  },
+  olahraga: {
+    "komentator-hipir": [
+      { key: "o-callout-open", label: "Buka dgn callout hiper momen big" },
+      { key: "o-play-by-play", label: "Play-by-play degdegan" },
+      { key: "o-tutup-energy", label: "Tutup dgn energi yang ngeti" },
+    ],
+    "analisis-taktik": [
+      { key: "o-hook-pertanyaan", label: "Hook dgn pertanyaan taktik yang penting" },
+      { key: "o-bedah-detail", label: "Bedah detail posisi dan strategi" },
+      { key: "o-tutup-insight", label: "Tutup dgn insight yang bisa dipakai" },
+    ],
+    "inspirasyon-atlet": [
+      { key: "o-cerita-start", label: "Buka dgn cerita atlet yang terduga" },
+      { key: "o-latar-difultas", label: "Latar persisten dan difultas" },
+      { key: "o-tutup-motivasi", label: "Tutup dgn poin motivasi yang kuat" },
+    ],
+  },
+  berita: {
+    "cepat-point": [
+      { key: "b-lead-solat", label: "Buka dgn solat penting yang jarang diketa" },
+      { key: "b-fakta-cepat", label: "Fakta cepat 1-2-3 gampang dicerna" },
+      { key: "b-tutup-takes", label: "Tutup dgn takeaway yang urgent" },
+    ],
+    "investigatif-jelas": [
+      { key: "b-claim-open", label: "Buka dgn claim yang jadi debat" },
+      { key: "b-evidence-walk", label: "Walk fakta dan evidencias objektiv" },
+      { key: "b-verdict-open", label: "Close verdict open-ended" },
+    ],
+    "viral-narrative": [
+      { key: "b-hook-share", label: "Hook yang bikin orang share" },
+      { key: "b-narativ-context", label: "Narativ dgn konteks yang relatable" },
+      { key: "b-call-share", label: "Tutup dgn open call share/komen" },
+    ],
+  },
+  otomotif: {
+    "spec-geeksus": [
+      { key: "t-spec-open", label: "Buka dgn spec yang bikin paham" },
+      { key: "t-banding-kan", label: "Bandingkan spec lawan kompetitor" },
+      { key: "t-tutup-value", label: "Tutup dgn value yang dipake inhen" },
+    ],
+    "testdrive-kagum": [
+      { key: "t-impression-open", label: "Buka dgn first impression test drive" },
+      { key: "t-experience-body", label: "Body cerita experience ring related" },
+      { key: "t-tutup-concl", label: "Tutup dgn conclusion hones" },
+    ],
+    "car-estetik": [
+      { key: "t-visual-open", label: "Buka dgn visual estetik auto" },
+      { key: "t-detail-craft", label: "Detail craft dan design bahasa" },
+      { key: "t-close-vibe", label: "Close dgn vibe yang memorable" },
+    ],
+  },
+  kesehatan: {
+    "jelas-pelan": [
+      { key: "k-pelan-open", label: "Buka dgn mitos yang diklar" },
+      { key: "k-step-jelas", label: "Step step jelasin tanpa jargon" },
+      { key: "k-tutup-action", label: "Tutup dgn tip yang bisa dijalani" },
+    ],
+    "serius-terpercaya": [
+      { key: "k-fakt-check", label: "Buka dgn fakta yang terpercaya" },
+      { key: "k-source-body", label: "Body dgn sumber jelas dan jujur" },
+      { key: "k-tutup-disclaimer", label: "Close dgn disclaimer responsif" },
+    ],
+    "ngena-empatic": [
+      { key: "k-empatia-open", label: "Buka dgn empatia yang ngena" },
+      { key: "k-konteks-ngenti", label: "Konteks yang bikin relate" },
+      { key: "k-support-close", label: "Tutup dgn support dan encouragement" },
+    ],
+  },
+  rumah: {
+    "diari-makeover": [
+      { key: "r-before-open", label: "Buka dgn before yang aneh" },
+      { key: "r-tahap-reveal", label: "Tahap-tahap makeover reveal" },
+      { key: "r-after-close", label: "Close after yang wau inspritif" },
+    ],
+    "budget-hack": [
+      { key: "r-problem-open", label: "Buka dgn problem budget rumah" },
+      { key: "r-hack-list", label: "Hack murah poin per poin" },
+      { key: "r-tutup-save", label: "Tutup dgn jumlah save yang mempe" },
+    ],
+    "cozy-estetik": [
+      { key: "r-cozy-open", label: "Buka dgn vibe cozy yang hangat" },
+      { key: "r-detail-dcoor", label: "Detail dekor yang bisa dicopy" },
+      { key: "r-tutup-fed", label: "Tutup satisfed dan estetik" },
+    ],
+  },
+  bayi: {
+    "jelas-parenting": [
+      { key: "p-pertanyaan-open", label: "Buka dgn pertanyaan parenting common" },
+      { key: "p-tips-jelas", label: "Tips jelasin pelan-pelan" },
+      { key: "p-tutup-reassure", label: "Tutup dgn reassurance hangat" },
+    ],
+    "hangat-experience": [
+      { key: "p-cerita-buka", label: "Buka dgn cerita pengalaman kong kretku" },
+      { key: "p-bangunan-relate", label: "Bangun relate saat fase parenting" },
+      { key: "p-tutup-ngena", label: "Tutup dgn poin yang ngena hati" },
+    ],
+    "ekspert-bayi": [
+      { key: "p-fakt-buka", label: "Buka dgn fakta health bayi terpercaya" },
+      { key: "p-source-buang", label: "Bedah jujur apa terpercaya" },
+      { key: "p-tutup-besi", label: "Tutup dgn best practice charger" },
     ],
   },
 };

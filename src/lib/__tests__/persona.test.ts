@@ -52,7 +52,7 @@ beforeEach(() => {
 // ============================================================
 test("persona-data: setiap niche punya 3 gaya & setiap gaya punya 3 cara cerita", () => {
   const allNiches = [...NICHES.jualan, ...NICHES.konten];
-  expect(allNiches.length).toBe(12);
+  expect(allNiches.length).toBe(21);
 
   for (const n of allNiches) {
     const gayaList = GAYA_BY_NICHE[n.slug];
@@ -71,7 +71,7 @@ test("persona-data: setiap niche punya 3 gaya & setiap gaya punya 3 cara cerita"
   }
 });
 
-// Total kombinasi = 12 niche × 3 gaya × 3 cerita = 108.
+// Total kombinasi = 21 niche × 3 gaya × 3 cerita = 189.
 test("persona-data: total kombinasi mencapai 108", () => {
   const allNiches = [...NICHES.jualan, ...NICHES.konten];
   let total = 0;
@@ -81,7 +81,7 @@ test("persona-data: total kombinasi mencapai 108", () => {
       total += getCeritaOptions(n.slug, g.key).length;
     }
   }
-  expect(total).toBe(108);
+  expect(total).toBe(189);
 });
 
 test("resolvePersona: mengembalikan null ketika kombinasi tak ada di DB", async () => {
@@ -107,7 +107,7 @@ test("seed SQL: setiap kombinasi persona-data hadir di 010_seed_personas.sql", (
     const m = line.trim().match(/^\('(.+?)','(.+?)','(.+?)','(.+?)',$/);
     if (m) sqlKeys.add(`${m[1]}|${m[2]}|${m[3]}|${m[4]}`);
   }
-  expect(sqlKeys.size).toBe(108);
+  expect(sqlKeys.size).toBe(189);
 
   // Build semua kombinasi yang user bisa pilih.
   const combos: string[] = [];
@@ -123,7 +123,7 @@ test("seed SQL: setiap kombinasi persona-data hadir di 010_seed_personas.sql", (
     }
   }
 
-  expect(combos.length).toBe(108);
+  expect(combos.length).toBe(189);
   for (const combo of combos) {
     expect(sqlKeys, `kombinasi tidak ada di SQL: ${combo}`).toContain(combo);
   }
