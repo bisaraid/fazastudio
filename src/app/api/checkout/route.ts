@@ -1,49 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateApiKey } from "@/lib/api-auth";
-import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
+import { createSupabaseServerClient } from "@/lib/supabase/ssr";
+import { PLAN_PRICES, VALID_PLANS } from "@/lib/midtrans";
 import Midtrans from "midtrans-client";
 
 /**
  * GET /api/checkout?plan=pro
  *
- * Membuat transaksi Midtrans Snap untuk plan berbayar (pro/team).
- * Mengembalikan { token, redirect_url } — frontend membuka popup Snap
- * dengan `window.snap.pay(token)`.
+ * Membuat transaksi Midtrans Snap per plan berbayar (starter/pro).
+ * Return { token, redirect_url } — frontend apre il popup Snap con
+ * `window.snap.pay(token)`.
  *
- * Harga (IDR):
- * - starter → 49.000
- * - pro    → 149.000
- *
- * order_id format: `${plan}_${timestamp}_${base64url(identityKey)}`
- * - Prefix plan dibaca di webhook (MIDTRANS_SERVER_KEY signature)
- * - identityKey di-encode base64url (reversible, aman untuk order_id Midtrans)
- *   sehingga webhook bisa memanggil setPlan(identityKey, plan) dengan benar.
+ * order_id format: `${plan}_${timestamp}_${base64url(userId)}`
+ * - Il piano viene legato all'ACCOUNT (user_id), NON al device cookie.
+ *   Il checkout RICHIEDE un utente autenticato: un utente anonimo riceve
+ *   401 LOGIN_REQUIRED. In questo modo il piano (e i relativi crediti)
+ *   restano legati all'account e non si perdono cambiando dispositivo.
+ * - Il prefisso plan viene letto nel webhook (firma MIDTRANS_SERVER_KEY).
  *
  * TODO (blocked on env — user must add keys):
- * - Set MIDTRANS_SERVER_KEY / MIDTRANS_CLIENT_KEY di .env.local
- * - Set NEXT_PUBLIC_MIDTRANS_CLIENT_KEY (untuk Snap.js di browser)
+ * - Set MIDTRANS_SERVER_KEY / MIDTRANS_CLIENT_KEY in .env.local
+ * - Set NEXT_PUBLIC_MIDTRANS_CLIENT_KEY (per Snap.js nel browser)
  * - Set MIDTRANS_IS_PRODUCTION (false = sandbox)
  */
 
-const PLAN_PRICES: Record<string, number> = {
-  starter: 49000,
-  pro: 149000,
-};
-
-const VALID_PLANS = Object.keys(PLAN_PRICES);
-
-/** encode base64url (aman untuk order_id Midtrans) */
+/** encode base64url (safe per order_id Midtrans) */
 function b64urlEncode(input: string): string {
   return Buffer.from(input, "utf8").toString("base64url");
 }
 
 export async function GET(request: NextRequest) {
-  // ===== AUTH CHECK =====
+  // 0) AUTH CHECK (same-origin / X-API-Key)
   const auth = validateApiKey(request);
   if (!auth.valid) {
     return NextResponse.json({ success: false, error: auth.error || "Unauthorized" }, { status: 401 });
   }
 
+  // 1) Piano valido
   const plan = request.nextUrl.searchParams.get("plan") || "";
   if (!VALID_PLANS.includes(plan)) {
     return NextResponse.json(
@@ -52,10 +45,30 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // 2) LOGIN OBBLIGATORIO — il piano va legato all'account, non al device.
+  const session = createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await session.auth.getUser();
+  if (!user || typeof user.id !== "string" || user.id.length === 0) {
+    return NextResponse.json(
+      {
+        success: false,
+        code: "LOGIN_REQUIRED",
+        error: "Daftar loggato prima di procedere con il pagamento, così il piano resta legato al tuo account.",
+      },
+      { status: 401 }
+    );
+  }
+
+  // 3) Config Midtrans
   const serverKey = process.env.MIDTRANS_SERVER_KEY;
   if (!serverKey) {
     return NextResponse.json(
-      { success: false, error: "Pembayaran belum di-konfigurasikan (MIDTRANS_SERVER_KEY missing). TODO: add to .env.local" },
+      {
+        success: false,
+        error: "Pembayaran belum di-konfigurasikan (MIDTRANS_SERVER_KEY missing). TODO: add to .env.local",
+      },
       { status: 503 }
     );
   }
@@ -64,9 +77,8 @@ export async function GET(request: NextRequest) {
   const isProduction = process.env.MIDTRANS_IS_PRODUCTION === "true";
 
   try {
-    const identity = getServerIdentity(request);
-    const identityKey = identity.identityKey;
-    const orderId = `${plan}_${Date.now()}_${b64urlEncode(identityKey)}`;
+    // 4) order_id legato all'account (user_id), non al device cookie.
+    const orderId = `${plan}_${Date.now()}_${b64urlEncode(user.id)}`;
 
     const snap = new Midtrans.Snap({
       isProduction,
@@ -87,20 +99,16 @@ export async function GET(request: NextRequest) {
           name: "Plan " + plan,
         },
       ],
-      // customer_details: optional — skip karena belum ada data profil (MVP)
+      // customer_details: optional — si può aggiungere email/nome dal profilo
     };
 
     const response = await snap.createTransaction(parameter);
 
-    const res = NextResponse.json({
+    return NextResponse.json({
       success: true,
       token: response.token,
       redirect_url: response.redirect_url || null,
     });
-    if (identity.isNew) {
-      res.cookies.set(DEVICE_ID_COOKIE, identity.deviceId, deviceCookieOptions());
-    }
-    return res;
   } catch (error) {
     console.error("[checkout] Midtrans error:", error);
     return NextResponse.json(

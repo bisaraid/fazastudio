@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   PLAN_PRICES,
   derivePlanAndIdentity,
+  derivePlanAccount,
   grossMatchesPlan,
   isCapturedTransaction,
   verifyMidtransSignature,
@@ -10,6 +11,7 @@ import {
 } from "@/lib/midtrans";
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64url");
+const USER_ID = "3f9b1c21-2e8a-4f6d-9b1c-0a1b2c3d4e5f";
 
 describe("midtrans webhook helpers", () => {
   it("derivePlanAndIdentity: decodifica plan+identity dall'order_id", () => {
@@ -66,5 +68,25 @@ describe("midtrans webhook helpers", () => {
     expect(
       shouldGrant({ alreadyClaimed: false, planValid: true, grossOk: true, captured: true })
     ).toBe(true);
+  });
+
+  describe("derivePlanAccount", () => {
+    it("rileva un user_id (UUID) -> account", () => {
+      const acc = derivePlanAccount(`pro_1710000000_${b64(USER_ID)}`);
+      expect(acc?.plan).toBe("pro");
+      expect(acc?.userId).toBe(USER_ID);
+      expect(acc?.identityKey).toBeUndefined();
+    });
+
+    it("rileva un device legacy (anon:) -> identityKey", () => {
+      const acc = derivePlanAccount(`starter_1710000000_${b64("anon:device-1")}`);
+      expect(acc?.plan).toBe("starter");
+      expect(acc?.identityKey).toBe("anon:device-1");
+      expect(acc?.userId).toBeUndefined();
+    });
+
+    it("null per payload non riconosciuto (non UUID né anon:)", () => {
+      expect(derivePlanAccount(`pro_1710000000_${b64("garbage--value")}`)).toBeNull();
+    });
   });
 });

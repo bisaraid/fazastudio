@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setPlan, PlanTier } from "@/lib/usage";
+import { setPlan, setPlanForUser, PlanTier } from "@/lib/usage";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import {
-  derivePlanAndIdentity,
+  derivePlanAccount,
   grossMatchesPlan,
   isCapturedTransaction,
   verifyMidtransSignature,
@@ -60,9 +60,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid signature" }, { status: 400 });
   }
 
-  // 2) Estrae piano + identity dall'order_id
-  const derived = derivePlanAndIdentity(orderId);
-  if (!derived) {
+  // 2) Determina piano + account (user_id) o device legacy
+  const account = derivePlanAccount(orderId);
+  if (!account) {
     return NextResponse.json({ success: false, error: "order_id tidak valid" }, { status: 400 });
   }
 
@@ -73,9 +73,9 @@ export async function POST(request: NextRequest) {
   }
 
   // 4) Verifica che l'importo corrisponda al prezzo server del piano.
-  if (!grossMatchesPlan(derived.plan, grossAmount)) {
+  if (!grossMatchesPlan(account.plan, grossAmount)) {
     console.error(
-      `[webhook] gross_amount (${grossAmount}) non corrisponde al piano ${derived.plan}`
+      `[webhook] gross_amount (${grossAmount}) non corrisponde al piano ${account.plan}`
     );
     return NextResponse.json({ success: false, error: "gross_amount mismatch" }, { status: 400 });
   }
@@ -97,9 +97,15 @@ export async function POST(request: NextRequest) {
   }
 
   // 6) Prima (unica) volta per questo ordine -> applica il piano.
-  const ok = await setPlan(derived.identityKey, derived.plan as PlanTier);
+  //    Il piano è legato all'ACCOUNT (user_id); il device è solo per ordini legacy.
+  let ok = false;
+  if (account.userId) {
+    ok = await setPlanForUser(account.userId, account.plan as PlanTier);
+  } else if (account.identityKey) {
+    ok = await setPlan(account.identityKey, account.plan as PlanTier);
+  }
   if (!ok) {
-    console.error(`[webhook] setPlan gagal for identity (plan=${derived.plan})`);
+    console.error(`[webhook] setPlan gagal (plan=${account.plan})`);
   }
 
   return NextResponse.json({ success: true });

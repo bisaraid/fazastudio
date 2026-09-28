@@ -20,7 +20,27 @@ export function isCapturedTransaction(transactionStatus: unknown): boolean {
   return transactionStatus === "settlement" || transactionStatus === "capture";
 }
 
-/** Valida che la stringa sia base64url legale (charset + padding). */
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** Account a cui applicare il piano: user_id (account) o identity_key device (legacy). */
+export type PlanAccount =
+  | { plan: string; userId: string; identityKey?: never }
+  | { plan: string; identityKey: string; userId?: never };
+
+/**
+ * Determina l'account a cui legare il piano:
+ * - se il payload dell'order_id e' un UUID -> account (user_id);
+ * - se inizia con "anon:" -> device legacy (identity_key).
+ * Torna null se non riconoscibile.
+ */
+export function derivePlanAccount(orderId: string): PlanAccount | null {
+  const decoded = derivePlanAndIdentity(orderId);
+  if (!decoded) return null;
+  const value = decoded.identityKey;
+  if (UUID_RE.test(value)) return { plan: decoded.plan, userId: value };
+  if (value.startsWith("anon:")) return { plan: decoded.plan, identityKey: value };
+  return null;
+}
 function isValidBase64Url(s: string): boolean {
   if (typeof s !== "string" || s.length === 0 || s.length % 4 === 1) return false;
   return /^[A-Za-z0-9_-]+={0,2}$/.test(s);
