@@ -6,37 +6,16 @@
  */
 
 const FEEDS = [
-  // Hiburan, musik, gaming, curhat
-  "https://entertainment.kompas.com/rss",
-  "https://www.cnnindonesia.com/hiburan/rss",
-
-  // Kesehatan, skincare, suplemen, bayi
-  "https://health.kompas.com/rss",
-  "https://www.cnnindonesia.com/gaya-hidup/rss",
-
-  // Keuangan, bisnis, berita
-  "https://money.kompas.com/rss",
-  "https://www.cnnindonesia.com/ekonomi/rss",
-
-  // Gadget, teknologi
-  "https://tekno.kompas.com/rss",
-  "https://www.cnnindonesia.com/teknologi/rss",
-
-  // Olahraga
-  "https://bola.kompas.com/rss",
-  "https://www.cnnindonesia.com/olahraga/rss",
-
-  // Fashion, rumah, lifestyle
-  "https://lifestyle.kompas.com/rss",
-
-  // Makanan
-  "https://food.kompas.com/rss",
-
-  // Otomotif
-  "https://otomotif.kompas.com/rss",
-
-  // Edukasi, motivasi, sejarah
-  "https://edukasi.kompas.com/rss",
+  // Kompas (format /feed/)
+  "https://www.kompas.com/feed/",
+  "https://tekno.kompas.com/feed/",
+  "https://money.kompas.com/feed/",
+  "https://health.kompas.com/feed/",
+  "https://bola.kompas.com/feed/",
+  "https://lifestyle.kompas.com/feed/",
+  "https://otomotif.kompas.com/feed/",
+  "https://entertainment.kompas.com/feed/",
+  "https://edukasi.kompas.com/feed/",
 ];
 
 const USER_AGENT = "Mozilla/5.0 (compatible; Fazastudio RSS)";
