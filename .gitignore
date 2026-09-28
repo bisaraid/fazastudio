@@ -32,3 +32,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# tooling temp / orphan worktrees (non tracked)
+.kilo/
+
+# local build/verification helper (remove se non serve)
+run-build-tmp.bat
+poll-build.mjs
+build-check.mjs
+
+# supabase local CLI cache/artefatti
+supabase/.temp/
+
+# worker build output
+/worker/dist/
