@@ -1,4 +1,4 @@
-import { test, expect, vi, beforeEach } from "vitest";
+import { test, expect } from "vitest";
 import fs from "fs";
 import path from "path";
 import {
@@ -8,44 +8,26 @@ import {
   categoryForNiche,
   getCeritaOptions,
 } from "@/lib/persona-data";
-
-// ============================================================
-// Mock createServiceRoleClient — semua query mengembalikan null.
-// Guna menguji perilaku exact-match tanpa akses jaringan.
-// ============================================================
-
-const { mockClientBuilders } = vi.hoisted(() => {
-  function makeFilterable() {
-    const q = {
-      eq() {
-        return this;
-      },
-      is() {
-        return this;
-      },
-      maybeSingle: async () => ({ data: null, error: null }),
-      select() {
-        return this;
-      },
-    };
-    return q as any;
-  }
-  return {
-    mockClientBuilders: {
-      from: () => makeFilterable(),
-    },
-  };
-});
-
-vi.mock("@/lib/supabase/service", () => ({
-  createServiceRoleClient: () => mockClientBuilders,
-}));
-
 import { resolvePersona } from "@/lib/persona";
 
-beforeEach(() => {
-  vi.clearAllMocks();
-});
+// ============================================================
+// CATATAN TINJAUAN (2026-09-29)
+//
+// File ini dulu memakai `vi.mock("@/lib/supabase/service", …)` untuk menguji
+// resolvePersona tanpa jaringan. Mock itu TERNYATA TIDAK AKTIF: harness vitest
+// di repo ini tidak menerapkan vi.mock untuk file project (lihat TESTING.md,
+// lengkap dengan bukti + cara verifikasi). Akibatnya:
+//
+//   - createServiceRoleClient() yang asli tetap dipanggil,
+//   - gagal karena env Supabase kosong di test,
+//   - resolvePersona menangkap error itu dan mengembalikan null,
+//   - test "lolos" karena JALUR ERROR, bukan karena "kombinasi tak ada di DB".
+//
+// Mock yang tidak berfungsi sudah dibuang supaya tidak menyesatkan, dan test
+// sekarang menguji kontrak yang benar-benar dieksekusi. Untuk menguji cabang
+// exact-match dari DB, modul perlu dibuat bisa disuntik client (dependency
+// injection) atau harness vitest perlu diperbaiki — lihat TESTING.md.
+// ============================================================
 
 // ============================================================
 // Coverage data statis
@@ -72,7 +54,7 @@ test("persona-data: setiap niche punya 3 gaya & setiap gaya punya 3 cara cerita"
 });
 
 // Total kombinasi = 21 niche × 3 gaya × 3 cerita = 189.
-test("persona-data: total kombinasi mencapai 108", () => {
+test("persona-data: total kombinasi mencapai 189", () => {
   const allNiches = [...NICHES.jualan, ...NICHES.konten];
   let total = 0;
   for (const n of allNiches) {
@@ -84,15 +66,21 @@ test("persona-data: total kombinasi mencapai 108", () => {
   expect(total).toBe(189);
 });
 
-test("resolvePersona: mengembalikan null ketika kombinasi tak ada di DB", async () => {
-  const res = await resolvePersona({
-    mode: "konten",
-    nicheSlug: "mistis",
-    gayaKey: "pendongeng-pelan",
-    ceritaKey: "bangun-suasana",
-  });
-  // Karena DB mock kosong (null) → exact tidak ketemu → return null.
-  expect(res).toBeNull();
+test("resolvePersona: tanpa env Supabase -> null dan tidak melempar error", async () => {
+  // Di lingkungan test, NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY
+  // tidak di-set (vitest tidak memuat .env), jadi createServiceRoleClient()
+  // melempar dan resolvePersona harus menelan error itu (kontrak defensif).
+  expect(process.env.NEXT_PUBLIC_SUPABASE_URL).toBeUndefined();
+  expect(process.env.SUPABASE_SERVICE_ROLE_KEY).toBeUndefined();
+
+  await expect(
+    resolvePersona({
+      mode: "konten",
+      nicheSlug: "mistis",
+      gayaKey: "pendongeng-pelan",
+      ceritaKey: "bangun-suasana",
+    })
+  ).resolves.toBeNull();
 });
 
 const SQL_PATH = path.join(process.cwd(), "supabase/migrations/010_seed_personas.sql");
