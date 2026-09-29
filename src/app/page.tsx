@@ -447,29 +447,31 @@ export default function LandingPage() {
               rows={2}
               disabled={creating}
               placeholder="Mau bikin konten tentang apa hari ini?"
-              className="block w-full min-h-[68px] resize-none overflow-hidden border-0 bg-transparent px-6 py-3 text-base leading-snug text-foreground outline-none placeholder:text-muted-foreground/70 focus:placeholder:text-muted-foreground/50 disabled:opacity-60"
+              className="block w-full min-h-[72px] resize-none overflow-hidden border-0 bg-transparent px-6 py-4 text-base leading-snug text-foreground outline-none placeholder:text-muted-foreground/70 focus:placeholder:text-muted-foreground/50 disabled:opacity-60"
             />
             {topicError && (
               <p className="px-5 pb-1 text-sm text-destructive">{topicError}</p>
             )}
-            {/* Baris bawah: saran topik (kiri) + tombol Coba Gratis (kanan) */}
-            <div className="flex flex-col items-start gap-2 pl-6 pr-6 pb-4">
+            {/* Divider tipis antara textarea dan area bawah */}
+            <div className="border-t border-primary/10" />
+            {/* Area bawah: chip trending (kiri) + tombol Coba Gratis (kanan) */}
+            <div className="flex flex-row items-end justify-between gap-3 px-4 py-3">
               <div className="flex flex-1 flex-col text-left">
                 {topic.trim().length === 0 && (
                   <>
-                    <span className="mb-2 text-[11px] text-muted-foreground">
+                    <span className="mb-1.5 text-[11px] text-muted-foreground">
                       Trending hari ini
                     </span>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="flex flex-wrap gap-1.5">
                       {trendingTopics === null
                         ? Array.from({ length: 6 }).map((_, i) => (
                             <span
                               key={i}
-                              className="h-7 w-full animate-pulse rounded-full bg-muted"
+                              className="h-6 w-20 animate-pulse rounded-full bg-muted"
                             />
                           ))
                         : trendingTopics.map((t) => (
-                            <div key={t.full} className="group relative inline-block w-[180px]">
+                            <div key={t.full} className="group relative">
                               <button
                                 type="button"
                                 onMouseDown={(e) => e.preventDefault()}
@@ -479,9 +481,9 @@ export default function LandingPage() {
                                   resizeTextarea();
                                 }}
                                 aria-label={t.full}
-                                className="block w-full truncate rounded-full border border-primary/30 bg-background px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/15 hover:text-foreground"
+                                className="rounded-full border border-primary/20 bg-background/50 px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-foreground"
                               >
-                                {truncateWords(t.full, 4)}
+                                {truncateWords(t.full, 3)}
                               </button>
                               <div
                                 role="tooltip"
@@ -496,10 +498,10 @@ export default function LandingPage() {
                 )}
               </div>
               <Button
-                size="lg"
+                size="default"
                 onClick={handleCobaGratis}
                 disabled={creating}
-                className="shrink-0 mt-4 self-center gap-2 text-white"
+                className="shrink-0 gap-2 text-white"
               >
                 {creating ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
                 {creating ? "Menyiapkan…" : "Coba Gratis"}
