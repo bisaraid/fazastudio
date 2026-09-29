@@ -66,9 +66,9 @@ async function main(): Promise<void> {
 // ===== 3. Ekstraksi topik per source — SEQUENTIAL dengan jeda 2s antar batch =====
   // Serial (hanya 1 request Groq per waktu) menghindari 429 burst rate-limit.
   const rssExtracted: Awaited<ReturnType<typeof extractTopicsFromTitles>> = [];
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, 5000));
   const ytExtracted = await extractTopicsFromTitles(ytTitles);
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, 5000));
   const gtExtracted = await extractTopicsFromTitles(gtTitles);
   console.log(
     `[harvest] extracted youtube=${ytExtracted.length} gt=${gtExtracted.length} rss=${rssExtracted.length}`
