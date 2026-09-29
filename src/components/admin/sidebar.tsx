@@ -2,37 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { LucideIcon } from "lucide-react";
-import { BarChart2, TrendingUp, Users, CreditCard, Star, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Star } from "lucide-react";
+import { ADMIN_NAV_GROUPS } from "@/components/admin/nav-items";
 import { cn } from "@/lib/utils";
-
-interface NavItem {
-  label: string;
-  href: string;
-  icon: LucideIcon;
-}
-
-interface NavGroup {
-  group: string;
-  items: NavItem[];
-}
-
-const NAV: NavGroup[] = [
-  {
-    group: "Overview",
-    items: [
-      { label: "Dashboard", href: "/admin/overview", icon: BarChart2 },
-      { label: "Trending", href: "/admin/trending", icon: TrendingUp },
-    ],
-  },
-  {
-    group: "Manajemen",
-    items: [
-      { label: "Users", href: "/admin/users", icon: Users },
-      { label: "Transaksi", href: "/admin/transaksi", icon: CreditCard },
-    ],
-  },
-];
 
 export interface SidebarProps {
   isOpen: boolean;
@@ -90,7 +62,7 @@ export function Sidebar({ isOpen, onClose, collapsed = false, onToggleCollapse }
 
         {/* Navigasi */}
         <nav className="flex-1 overflow-y-auto px-3 py-2">
-          {NAV.map((group) => (
+          {ADMIN_NAV_GROUPS.map((group) => (
             <div key={group.group}>
               <p className="mb-1 mt-4 px-3 text-[10px] uppercase tracking-widest text-muted-foreground">
                 {group.group}

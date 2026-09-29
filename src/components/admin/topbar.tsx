@@ -13,9 +13,13 @@ export interface TopbarProps {
   onMenuToggle: () => void;
   /** User admin dari useUser() di layout (tanpa request tambahan). */
   user?: Pick<User, "email" | "user_metadata"> | null;
+  /** Buka command palette (⌘K / Ctrl+K). */
+  onOpenPalette?: () => void;
+  /** Panggil saat user menunjukkan minat (hover/focus) → chunk palette dimuat lebih awal. */
+  onPrefetchPalette?: () => void;
 }
 
-export function Topbar({ onMenuToggle, user }: TopbarProps) {
+export function Topbar({ onMenuToggle, user, onOpenPalette, onPrefetchPalette }: TopbarProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -69,12 +73,22 @@ export function Topbar({ onMenuToggle, user }: TopbarProps) {
         <Menu className="h-5 w-5" />
       </button>
 
-      <div className="relative ml-auto w-full max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <input
-          placeholder="Cari user, topik..."
-          className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        />
+      <div className="ml-auto w-full max-w-md">
+        <button
+          type="button"
+          onClick={onOpenPalette}
+          onMouseEnter={onPrefetchPalette}
+          onFocus={onPrefetchPalette}
+          aria-label="Buka pencarian cepat halaman admin"
+          aria-keyshortcuts="Meta+K Control+K"
+          className="flex h-9 w-full items-center gap-2 rounded-lg border border-input bg-background px-3 text-sm text-muted-foreground shadow-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span className="truncate">Cari halaman admin...</span>
+          <kbd className="ml-auto hidden shrink-0 rounded border border-border bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium sm:block">
+            ⌘K
+          </kbd>
+        </button>
       </div>
 
       <div className="relative shrink-0" ref={wrapRef}>
