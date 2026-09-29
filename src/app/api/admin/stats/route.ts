@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
+import { computeAdminDeltas, type AdminDeltas } from "@/lib/admin-delta";
 import { requireAdmin } from "../_auth";
 
 /**
@@ -14,6 +15,10 @@ import { requireAdmin } from "../_auth";
  *
  * QUERY DEFENSIVE: tiap agregasi try/catch sendiri — satu tabel gagal
  * tidak merusak seluruh dashboard.
+ *
+ * `deltas` = pembanding 7 hari terakhir vs 7 hari sebelumnya untuk user/project/
+ * script baru. Kalau perhitungannya gagal, field ini null dan UI menampilkan "—"
+ * (bukan error halaman).
  */
 
 function isoDaysAgo(days: number): string {
@@ -124,6 +129,14 @@ export async function GET() {
   const scriptGenTotal = await count("script_generations");
   const scriptGen7d = await count("script_generations", { gteCol: "created_at", gteVal: since7d });
 
+  // Delta% 7d vs 7d sebelumnya — defensif: gagal → null (UI tampil "—").
+  let deltas: AdminDeltas | null = null;
+  try {
+    deltas = await computeAdminDeltas();
+  } catch (e) {
+    console.warn("[admin-stats] deltas gagal:", e instanceof Error ? e.message : e);
+  }
+
   return NextResponse.json({
     success: true,
     data: {
@@ -132,6 +145,7 @@ export async function GET() {
       profiles: { total: profilesTotal },
       trends: { total: trendsTotal, lastFetched: trendsLastFetched },
       scriptGenerations: { total: scriptGenTotal, last7d: scriptGen7d },
+      deltas,
       generatedAt: new Date().toISOString(),
     },
   });

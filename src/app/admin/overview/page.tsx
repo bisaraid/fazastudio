@@ -12,6 +12,8 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { adminCachedFetch } from "@/lib/admin-cache";
+import DeltaBadge from "@/components/admin/delta-badge";
+import type { AdminDeltas } from "@/lib/admin-delta";
 
 interface AdminStats {
   projects: { total: number; last7d: number; completed: number };
@@ -19,6 +21,8 @@ interface AdminStats {
   profiles: { total: number };
   trends: { total: number; lastFetched: string | null };
   scriptGenerations: { total: number; last7d: number };
+  /** Pembanding 7d vs 7d sebelumnya. null = perhitungan gagal → UI "—". */
+  deltas?: AdminDeltas | null;
   generatedAt: string;
 }
 
@@ -124,10 +128,10 @@ export default function OverviewPage() {
 
       {fetching && (
           <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="h-28 animate-pulse rounded-xl bg-muted/40" />
-            <div className="h-28 animate-pulse rounded-xl bg-muted/40" />
-            <div className="h-28 animate-pulse rounded-xl bg-muted/40" />
-            <div className="h-28 animate-pulse rounded-xl bg-muted/40" />
+            <div className="h-32 animate-pulse rounded-xl bg-muted/40" />
+            <div className="h-32 animate-pulse rounded-xl bg-muted/40" />
+            <div className="h-32 animate-pulse rounded-xl bg-muted/40" />
+            <div className="h-32 animate-pulse rounded-xl bg-muted/40" />
           </div>
         )}
       {error && !fetching && <p className="mt-6 text-sm text-destructive">{error}</p>}
@@ -140,16 +144,19 @@ export default function OverviewPage() {
               <UsersIcon className="absolute right-4 top-4 h-5 w-5 text-primary/50" />
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Total User</p>
               <p className="mt-2 text-2xl font-bold tabular-nums">{fmtNum(stats.profiles.total)}</p>
+              <DeltaBadge metric={stats.deltas?.newUsers} label="User baru" />
             </div>
             <div className="relative rounded-xl border bg-card p-5">
               <Folder className="absolute right-4 top-4 h-5 w-5 text-primary/50" />
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Project</p>
               <p className="mt-2 text-2xl font-bold tabular-nums">{fmtNum(stats.projects.total)}</p>
+              <DeltaBadge metric={stats.deltas?.newProjects} label="Project baru" />
             </div>
             <div className="relative rounded-xl border bg-card p-5">
               <FileText className="absolute right-4 top-4 h-5 w-5 text-primary/50" />
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Script 7 Hari</p>
               <p className="mt-2 text-2xl font-bold tabular-nums">{fmtNum(stats.scriptGenerations.last7d)}</p>
+              <DeltaBadge metric={stats.deltas?.newScripts} label="Script baru" />
             </div>
             <div className="relative rounded-xl border bg-card p-5">
               <BadgeCheck className="absolute right-4 top-4 h-5 w-5 text-primary/50" />
