@@ -453,7 +453,7 @@ export default function LandingPage() {
               <p className="px-5 pb-1 text-sm text-destructive">{topicError}</p>
             )}
             {/* Baris bawah: saran topik (kiri) + tombol Coba Gratis (kanan) */}
-            <div className="flex flex-col items-start gap-2 px-2 pb-4">
+            <div className="flex flex-col items-start gap-2 px-6 pb-4">
               <div className="flex flex-1 flex-col text-left">
                 {topic.trim().length === 0 && (
                   <>
