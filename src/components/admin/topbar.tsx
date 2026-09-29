@@ -1,14 +1,14 @@
 "use client";
 
 import { Menu, Search } from "lucide-react";
-import { useUser } from "@/hooks/useUser";
 
 export interface TopbarProps {
   onMenuToggle: () => void;
+  /** User admin (dari layout, dinan diuse useUser() dutajdu). */
+  user?: { email?: string | null } | null;
 }
 
-export function Topbar({ onMenuToggle }: TopbarProps) {
-  const { user } = useUser();
+export function Topbar({ onMenuToggle, user }: TopbarProps) {
   const email = user?.email;
   const initial = (email?.trim().charAt(0) ?? "?").toUpperCase();
   const shortName = email ? email.split("@")[0] : "Admin";

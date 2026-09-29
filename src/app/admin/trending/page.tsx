@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { TrendingUp, RefreshCw, Loader2, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { adminCachedFetch } from "@/lib/admin-cache";
 
 interface TrendTopic {
   id: string;
@@ -53,10 +54,13 @@ export default function TrendingPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/trends");
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        setError(json.error || `HTTP ${res.status}`);
+      const json = await adminCachedFetch<{
+        success?: boolean;
+        error?: string;
+        data?: TrendsData;
+      }>("admin:trending:data", "/api/admin/trends");
+      if (!json?.success) {
+        setError(json?.error || "Gagal memuat data tren");
         setData(null);
         return;
       }
@@ -118,7 +122,13 @@ export default function TrendingPage() {
         </p>
       )}
 
-      {loading && <p className="mt-6 text-sm text-muted-foreground">Memuat data tren...</p>}
+      {loading && (
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="h-28 animate-pulse rounded-xl bg-muted/40" />
+            ))}
+          </div>
+        )}
       {error && <p className="mt-6 text-sm text-destructive">{error}</p>}
 
       {data && !error && (

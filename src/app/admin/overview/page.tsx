@@ -11,6 +11,7 @@ import {
   TrendingUp,
   ArrowRight,
 } from "lucide-react";
+import { adminCachedFetch } from "@/lib/admin-cache";
 
 interface AdminStats {
   projects: { total: number; last7d: number; completed: number };
@@ -70,10 +71,13 @@ export default function OverviewPage() {
     setFetching(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/stats");
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        setError(json.error || `HTTP ${res.status}`);
+      const json = await adminCachedFetch<{
+        success?: boolean;
+        error?: string;
+        data?: AdminStats;
+      }>("admin:overview:stats", "/api/admin/stats");
+      if (!json?.success) {
+        setError(json?.error || "Gagal memuat statistik");
         setStats(null);
         return;
       }
@@ -88,9 +92,11 @@ export default function OverviewPage() {
 
   const loadUsers = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/users");
-      const json = await res.json();
-      if (res.ok && json.success) setUsers(json.data as AdminUserRow[]);
+      const json = await adminCachedFetch<{
+        success?: boolean;
+        data?: AdminUserRow[];
+      }>("admin:overview:users", "/api/admin/users");
+      if (json?.success) setUsers(json.data as AdminUserRow[]);
     } catch {
       /* abaikan */
     }
@@ -116,7 +122,14 @@ export default function OverviewPage() {
         Gambaran umum platform Anda.
       </p>
 
-      {fetching && <p className="mt-6 text-sm text-muted-foreground">Memuat data...</p>}
+      {fetching && (
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="h-28 animate-pulse rounded-xl bg-muted/40" />
+            <div className="h-28 animate-pulse rounded-xl bg-muted/40" />
+            <div className="h-28 animate-pulse rounded-xl bg-muted/40" />
+            <div className="h-28 animate-pulse rounded-xl bg-muted/40" />
+          </div>
+        )}
       {error && !fetching && <p className="mt-6 text-sm text-destructive">{error}</p>}
 
       {stats && !error && (

@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2, Users as UsersIcon, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Dialog } from "@/components/ui/dialog";
+import { adminCachedFetch } from "@/lib/admin-cache";
 
 type PlanTierClient = "free" | "starter" | "pro";
 
@@ -148,6 +149,9 @@ function UserRow({ user, onApply, isSuperAdmin, isSelf, onSetAdmin }: UserRowPro
 export default function UsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [search, setSearch] = useState("");
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -165,29 +169,50 @@ export default function UsersPage() {
   const [savingAdmin, setSavingAdmin] = useState(false);
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
 
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/admin/users");
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        setError(json.error || `HTTP ${res.status}`);
+  const loadUsers = useCallback(
+    async (targetPage: number, q: string) => {
+      setLoading(true);
+      setError(null);
+      const params = new URLSearchParams({
+        page: String(targetPage),
+        perPage: String(perPage),
+      });
+      if (q) params.set("q", q);
+      try {
+        const json = await adminCachedFetch<{
+          success?: boolean;
+          error?: string;
+          data?: AdminUser[];
+          total?: number;
+        }>(
+          `admin:users:${targetPage}:${q}`,
+          `/api/admin/users?${params.toString()}`
+        );
+        if (!json?.success) {
+          setError(json?.error || "Gagal mengambil daftar user");
+          setUsers([]);
+          return;
+        }
+        setUsers(json.data ?? []);
+        setTotal(json.total ?? 0);
+        setPage(targetPage);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Terjadi kesalahan jaringan");
         setUsers([]);
-        return;
+      } finally {
+        setLoading(false);
       }
-      setUsers(json.data as AdminUser[]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Terjadi kesalahan jaringan");
-      setUsers([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [perPage, search]
+  );
 
+  // Search server-side met debounce + initial load op mount.
   useEffect(() => {
-    void loadUsers();
-  }, [loadUsers]);
+    const t = setTimeout(() => {
+      void loadUsers(1, search.trim());
+    }, 400);
+    return () => clearTimeout(t);
+  }, [search, loadUsers]);
 
   // Deteksi super admin (email di ADMIN_EMAILS) untuk kolom Admin.
   useEffect(() => {
@@ -204,12 +229,6 @@ export default function UsersPage() {
       }
     })();
   }, []);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter((u) => u.email.toLowerCase().includes(q));
-  }, [users, search]);
 
   const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -229,7 +248,7 @@ export default function UsersPage() {
       } else {
         setNotice(`Plan ${pending.user.email} diubah ke ${titleCase(pending.plan)}.`);
         setPending(null);
-        void loadUsers();
+        void loadUsers(page, search);
       }
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Terjadi kesalahan jaringan");
@@ -256,7 +275,7 @@ export default function UsersPage() {
         setAdminNotice(json.error || "Gagal mengubah status admin");
       } else {
         setAdminPending(null);
-        void loadUsers();
+        void loadUsers(page, search);
       }
     } catch (e) {
       setAdminNotice(e instanceof Error ? e.message : "Terjadi kesalahan jaringan");
@@ -317,7 +336,7 @@ export default function UsersPage() {
                 ))}
 
               {!loading &&
-                filtered.map((u) => (
+                users.map((u) => (
                   <UserRow
                     key={u.userId}
                     user={u}
@@ -331,16 +350,34 @@ export default function UsersPage() {
           </table>
         </div>
 
-        {!loading && filtered.length === 0 && (
+        {!loading && users.length === 0 && (
           <div className="flex flex-col items-center gap-2 px-4 py-16 text-center">
             <UsersIcon className="h-8 w-8 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              {users.length === 0
-                ? "Belum ada user terdaftar."
-                : "Tidak ada hasil untuk pencarian ini."}
-            </p>
+            <p className="text-sm text-muted-foreground">Belum ada user.</p>
           </div>
         )}
+      </div>
+
+      <div className="mt-4 flex items-center justify-between text-sm">
+        <p className="text-muted-foreground">{total} user · halaman {page}</p>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading || page <= 1}
+            onClick={() => void loadUsers(page - 1, search)}
+          >
+            Prev
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading || page * perPage >= total}
+            onClick={() => void loadUsers(page + 1, search)}
+          >
+            Next
+          </Button>
+        </div>
       </div>
 
       <Dialog
