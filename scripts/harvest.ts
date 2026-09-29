@@ -43,14 +43,13 @@ async function main(): Promise<void> {
   const nowIso = new Date().toISOString();
 
 // ===== 1 & 1b. Fetch YouTube + Google Trends + RSS — PARALLEL (best-effort) =====
-  const [idRes, gtRes, rssRes] = await Promise.allSettled([
+  const [idRes, gtRes] = await Promise.allSettled([
     fetchYouTubeTrending(TOP_VIDEOS, "ID"),
     fetchGoogleTrends(),
-    fetchRssTitles(),
   ]);
   const ytTop = idRes.status === "fulfilled" ? idRes.value : { success: false, data: [] };
   const gtTitles = gtRes.status === "fulfilled" ? gtRes.value : [];
-  const rssTitles = rssRes.status === "fulfilled" ? rssRes.value : [];
+  const rssTitles: string[] = []; // RSS di-skip sementara
 
   // ===== 2. Siapkan batch per source =====
   const ytTitles: string[] = [];
@@ -64,13 +63,13 @@ async function main(): Promise<void> {
   console.log(
     `[harvest] fetched youtube=${ytTitles.length} gt=${gtTitles.length} rss=${rssTitles.length}`
   );
-// ===== 3. Ekstraksi topik per source — PARALLEL (Groq, best-effort) =====
-  // extractTopicsFromTitles selalu return array (tidak pernah throw), jadi Promise.all aman.
-  const [rssExtracted, ytExtracted, gtExtracted] = await Promise.all([
-    extractTopicsFromTitles(rssTitles),
-    extractTopicsFromTitles(ytTitles),
-    extractTopicsFromTitles(gtTitles),
-  ]);
+// ===== 3. Ekstraksi topik per source — SEQUENTIAL dengan jeda 2s antar batch =====
+  // Serial (hanya 1 request Groq per waktu) menghindari 429 burst rate-limit.
+  const rssExtracted: Awaited<ReturnType<typeof extractTopicsFromTitles>> = [];
+  await new Promise((r) => setTimeout(r, 2000));
+  const ytExtracted = await extractTopicsFromTitles(ytTitles);
+  await new Promise((r) => setTimeout(r, 2000));
+  const gtExtracted = await extractTopicsFromTitles(gtTitles);
   console.log(
     `[harvest] extracted youtube=${ytExtracted.length} gt=${gtExtracted.length} rss=${rssExtracted.length}`
   );
