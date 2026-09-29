@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { adminCachedFetch } from "@/lib/admin-cache";
 import DeltaBadge from "@/components/admin/delta-badge";
+import { timeAgo } from "@/lib/relative-time";
 import dynamic from "next/dynamic";
 import type { AdminDeltas } from "@/lib/admin-delta";
 
@@ -23,6 +24,21 @@ import type { AdminDeltas } from "@/lib/admin-delta";
 const GrowthChart = dynamic(() => import("@/components/admin/growth-chart"), {
   ssr: false,
   loading: () => <div className="mt-6 h-[280px] animate-pulse rounded-xl bg-muted/40" />,
+});
+
+/**
+ * Activity feed juga lazy (ssr:false). Ikon-ikonnya (lucide) cukup berat untuk
+ * masuk eager bundle halaman, jadi lebih baik diunduh setelah paint awal.
+ */
+const ActivityFeed = dynamic(() => import("@/components/admin/activity-feed"), {
+  ssr: false,
+  loading: () => (
+    <div className="mt-6 space-y-2 rounded-xl border bg-card p-4">
+      <div className="h-10 animate-pulse rounded-lg bg-muted/40" />
+      <div className="h-10 animate-pulse rounded-lg bg-muted/40" />
+      <div className="h-10 animate-pulse rounded-lg bg-muted/40" />
+    </div>
+  ),
 });
 
 interface AdminStats {
@@ -56,20 +72,7 @@ function fmtDate(iso: string | null): string {
   });
 }
 
-/** Waktu relatif pendek, mis. "14 menit lalu". */
-function timeAgo(iso: string | null): string {
-  if (!iso) return "—";
-  const diffSec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (diffSec < 60) return `${diffSec} detik lalu`;
-  const min = Math.floor(diffSec / 60);
-  if (min < 60) return `${min} menit lalu`;
-  const hrs = Math.floor(min / 60);
-  if (hrs < 24) return `${hrs} jam lalu`;
-  const days = Math.floor(hrs / 24);
-  return `${days} hari lalu`;
-}
-
-/** Normal jika harvest terakhir < 7 jam lalu. */
+/** Harvest normal jika terakhir < 7 jam lalu. */
 function harvestOk(lastFetched: string | null): boolean {
   if (!lastFetched) return false;
   return Date.now() - new Date(lastFetched).getTime() < 7 * 60 * 60 * 1000;
@@ -258,6 +261,8 @@ export default function OverviewPage() {
               </div>
             </div>
           </div>
+
+          <ActivityFeed limit={10} />
 
           <div className="mt-6 overflow-hidden rounded-xl border bg-card">
             <div className="px-4 py-3">
