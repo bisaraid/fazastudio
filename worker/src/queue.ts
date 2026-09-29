@@ -7,18 +7,25 @@
  *   - Worker  : getRenderQueue() + Worker di index.ts
  *
  * Pastikan REDIS_URL sama di kedua sisi.
+ *
+ * CATATAN: validasi REDIS_URL bersifat LAZY (di getRedisConnection()), supaya
+ * modul ini aman di-import saat `next build` walau env Redis belum di-set.
  */
 
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
 
 // ============================================================
-// Env
+// Env — VALIDASI LAZY (bukan saat import)
 // ============================================================
-const REDIS_URL = process.env.REDIS_URL;
-if (!REDIS_URL) {
-  throw new Error("[queue] REDIS_URL wajib di-set di environment");
-}
+// Modul ini ikut ter-bundle ke route Next (/api/generate-video) yang meng-import
+// addRenderJob. Kalau REDIS_URL divalidasi di top-level, `next build` gagal saat
+// collect page data hanya karena env Redis belum ada — padahal route itu tidak
+// menyentuh Redis sampai ada request.
+//
+// Karena itu validasi dipindah ke getRedisConnection(): error tetap muncul,
+// tapi di titik pemakaian. Perilaku production TIDAK berubah — REDIS_URL tetap
+// wajib, dan pesan error-nya sama.
 
 // ============================================================
 // Konstanta queue / channel
@@ -100,7 +107,9 @@ let _connection: IORedis | null = null;
 export function getRedisConnection(): IORedis {
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) {
-    throw new Error("[queue] REDIS_URL wajib di-set di environment");
+    throw new Error(
+      "[queue] REDIS_URL wajib di-set di environment (validasi saat koneksi dibuat, bukan saat import)"
+    );
   }
   if (!_connection) {
     _connection = new IORedis(redisUrl, {
