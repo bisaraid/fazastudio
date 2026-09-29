@@ -13,7 +13,17 @@ import {
 } from "lucide-react";
 import { adminCachedFetch } from "@/lib/admin-cache";
 import DeltaBadge from "@/components/admin/delta-badge";
+import dynamic from "next/dynamic";
 import type { AdminDeltas } from "@/lib/admin-delta";
+
+/**
+ * Chart hanya dipakai halaman overview dan dimuat LAZY (ssr:false), jadi
+ * kodenya jadi chunk terpisah dan tidak menambah bundle awal halaman admin.
+ */
+const GrowthChart = dynamic(() => import("@/components/admin/growth-chart"), {
+  ssr: false,
+  loading: () => <div className="mt-6 h-[280px] animate-pulse rounded-xl bg-muted/40" />,
+});
 
 interface AdminStats {
   projects: { total: number; last7d: number; completed: number };
@@ -164,6 +174,9 @@ export default function OverviewPage() {
               <p className="mt-2 text-2xl font-bold tabular-nums">{fmtNum(paid)}</p>
             </div>
           </div>
+          <GrowthChart days={30} />
+
+
 
           <div className="mt-6 grid gap-6 lg:grid-cols-5">
             <div className="rounded-xl border bg-card p-5 lg:col-span-3">
