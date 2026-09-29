@@ -182,11 +182,14 @@ async function bucketAuthUsers(): Promise<Map<string, number>> {
 }
 
 /** Backfill idempoten: upsert baris 30 day (is_estimated=true) dari created_at. */
-export async function backfillAdminMetrics(opts?: { days?: number }): Promise<{
+export async function backfillAdminMetrics(opts?: { days?: number; dryRun?: boolean }): Promise<{
+  dryRun: boolean;
   written: number;
+  plannedRows: number;
   from: string;
   to: string;
 }> {
+  const dryRun = Boolean(opts?.dryRun);
   const days = Math.max(1, opts?.days ?? 30);
   const to = todayKey();
   const from = new Date(Date.now() - (days - 1) * 86400000)
@@ -198,7 +201,7 @@ export async function backfillAdminMetrics(opts?: { days?: number }): Promise<{
   const scriptB = await bucketTableDate("script_generations", "created_at");
   const trendB = await bucketTableDate("trend_ideas", "fetched_at");
 
-  const supabase = createServiceRoleClient();
+  let plannedRows = 0;
   let written = 0;
   for (let d = from; d <= to; d = nextDayKey(d)) {
     let totalUsers = 0;
@@ -210,6 +213,10 @@ export async function backfillAdminMetrics(opts?: { days?: number }): Promise<{
     for (const [k, v] of Array.from(scriptB.entries())) if (k <= d) totalScripts += v;
     for (const [k, v] of Array.from(trendB.entries())) if (k <= d) totalTrends += v;
 
+    plannedRows++;
+    if (dryRun) continue;
+
+    const supabase = createServiceRoleClient();
     const { error } = await supabase.from("admin_metrics_daily").upsert(
       {
         date: d,
@@ -226,5 +233,5 @@ export async function backfillAdminMetrics(opts?: { days?: number }): Promise<{
     if (!error) written++;
   }
 
-  return { written, from, to };
+  return { dryRun, written, plannedRows, from, to };
 }

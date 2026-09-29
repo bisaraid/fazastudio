@@ -13,5 +13,12 @@ create table if not exists admin_metrics_daily (
   updated_at timestamptz not null default now()
 );
 
-alter table admin_metrics_daily enable row level security;
+do $$
+begin
+  if not exists (
+    select 1 from pg_class where relname = 'admin_metrics_daily' and relrowsecurity
+  ) then
+    alter table admin_metrics_daily enable row level security;
+  end if;
+end $$;
 -- service role bypass auto; tidak ada policy public → hanya server-side/core route

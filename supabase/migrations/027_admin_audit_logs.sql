@@ -12,5 +12,12 @@ create table if not exists admin_audit_logs (
   created_at timestamptz default now()
 );
 
-alter table admin_audit_logs enable row level security;
+do $$
+begin
+  if not exists (
+    select 1 from pg_class where relname = 'admin_audit_logs' and relrowsecurity
+  ) then
+    alter table admin_audit_logs enable row level security;
+  end if;
+end $$;
 create index if not exists idx_admin_audit_created on admin_audit_logs (created_at desc);
