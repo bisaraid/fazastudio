@@ -2,10 +2,10 @@
  * Admin metrics — snapshot harian + backfill (historis).
  * Hanya server-side (service role). Migration 026.
  *
- * - recordAdminMetricsDay(): upsert baris "today" (real-time counts).
- * - backfillAdminMetrics(): once-script, idempoten, bikin riwayat 30 day
- *   dari created_at. Baris hasil di-mark is_estimated=true karena data yang
- *   sudah dihapus tidak terhitung (perkiraan).
+ * - recordAdminMetricsDay(): upsert baris hari ini (hitungan real-time).
+ * - backfillAdminMetrics(): dijalankan sekali, idempoten, membuat riwayat 30 hari
+ *   dari created_at. Baris hasil ditandai is_estimated=true karena data yang
+ *   sudah dihapus tidak terhitung (nilai perkiraan).
  */
 
 import { createServiceRoleClient } from "./supabase/service";
@@ -117,7 +117,7 @@ async function getTodayCounts(): Promise<DailyCounts> {
   };
 }
 
-/** Snapshot "today" real-time. Idempoten (upsert onConflict: date). */
+/** Snapshot hari ini, real-time. Idempoten (upsert onConflict: date). */
 export async function recordAdminMetricsDay(): Promise<boolean> {
   try {
     const counts = await getTodayCounts();
@@ -181,7 +181,7 @@ async function bucketAuthUsers(): Promise<Map<string, number>> {
   return map;
 }
 
-/** Backfill idempoten: upsert baris 30 day (is_estimated=true) dari created_at. */
+/** Backfill idempoten: upsert baris 30 hari (is_estimated=true) dari created_at. */
 export async function backfillAdminMetrics(opts?: { days?: number; dryRun?: boolean }): Promise<{
   dryRun: boolean;
   written: number;

@@ -1,6 +1,6 @@
--- Faza Studio — Migration 026: Admin metrics snapdaily (history untuk chart & delta%)
--- No backfill di SQL — backfill jalankan sekali viea skrip (scripts/backfill-admin-metrics.ts).
--- is_estimated=true tanja baris hasil backfill (data yang sudah dihapus tidak terhitung).
+-- Faza Studio — Migration 026: Snapshot harian metrik admin (untuk chart & delta%).
+-- Backfill TIDAK dijalankan di SQL — dijalankan sekali via skrip (scripts/backfill-admin-metrics.ts).
+-- Baris hasil backfill ditandai is_estimated=true (data yang sudah dihapus tidak terhitung).
 
 create table if not exists admin_metrics_daily (
   date date primary key,
@@ -21,4 +21,4 @@ begin
     alter table admin_metrics_daily enable row level security;
   end if;
 end $$;
--- service role bypass auto; tidak ada policy public → hanya server-side/core route
+-- service role bypass otomatis; tidak ada policy publik → hanya diakses server-side.

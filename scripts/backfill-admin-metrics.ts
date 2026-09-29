@@ -1,14 +1,14 @@
 /**
- * Backfill historis admin_metrics_daily — jalankan ONCE (idempoten).
- * Perkiraan: data yang sudah dihapus tidak terhitung (is_estimated=true)
- * disimpan di kolom is_estimated.
+ * Backfill riwayat admin_metrics_daily — jalankan SEKALI (idempoten).
+ * Nilai bersifat perkiraan: data yang sudah dihapus tidak terhitung
+ * (baris ditandai is_estimated=true).
  *
- * Jalankan:
- *   npx tsx scripts/backfill-admin-metrics.ts            → menulis
- *   npx tsx scripts/backfill-admin-metrics.ts --dry-run  → hanya hitung/rentang, tanpa menulis
+ * Cara jalankan:
+ *   npx tsx scripts/backfill-admin-metrics.ts            → menulis ke tabel
+ *   npx tsx scripts/backfill-admin-metrics.ts --dry-run  → hanya menghitung & menampilkan rentang, tanpa menulis
  *
- * Hinweis: skrip HANYA menulis ke tabel admin_metrics_daily. Jalankan manual oleh owner,
- * bukan dari GitHub Actions (production akses manual).
+ * Catatan: skrip HANYA menulis ke tabel admin_metrics_daily. Dijalankan manual oleh owner,
+ * tidak dipanggil dari GitHub Actions.
  */
 import { backfillAdminMetrics } from "../src/lib/admin-snapshot";
 import { createServiceRoleClient } from "../src/lib/supabase/service";
@@ -16,7 +16,7 @@ import { createServiceRoleClient } from "../src/lib/supabase/service";
 async function assertReady(): Promise<void> {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     console.error(
-      "[backfill] ERR: env NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY belum diset (set env dulu)."
+      "[backfill] ERROR: env NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY belum diisi. Isi env dulu."
     );
     process.exit(1);
   }
@@ -27,9 +27,9 @@ async function assertReady(): Promise<void> {
     .select("date", { count: "exact", head: true });
   if (error) {
     console.error(
-      "[backfill] ERR: tabel admin_metrics_daily belum ada / acesso disposito: " +
+      "[backfill] ERROR: tabel admin_metrics_daily belum ada atau tidak bisa diakses: " +
         error.message +
-        "\n→ Jalankan migration 026 dulu (isi dal file supabase/migrations/026_admin_metrics_daily.sql)."
+        "\n→ Jalankan migration 026 dulu (file supabase/migrations/026_admin_metrics_daily.sql)."
     );
     process.exit(1);
   }
@@ -43,12 +43,12 @@ async function main(): Promise<void> {
 
   if (dryRun) {
     console.log(
-      `[backfill] DRY-RUN ok — rentang ${res.from}..${res.to}, jalan dariart ${res.plannedRows} baris (baca-only, belum ada tinta menulis).`
+      `[backfill] DRY-RUN selesai — rentang ${res.from}..${res.to}, akan menulis ${res.plannedRows} baris (mode baca saja, tidak ada data ditulis).`
     );
     return;
   }
 
-  console.log("[backfill] ok", JSON.stringify(res));
+  console.log("[backfill] selesai", JSON.stringify(res));
 }
 
 main();
