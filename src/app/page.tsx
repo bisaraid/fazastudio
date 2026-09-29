@@ -453,7 +453,7 @@ export default function LandingPage() {
               <p className="px-5 pb-1 text-sm text-destructive">{topicError}</p>
             )}
             {/* Baris bawah: saran topik (kiri) + tombol Coba Gratis (kanan) */}
-            <div className="flex flex-col items-center gap-2 px-5 pb-4">
+            <div className="flex flex-col items-start gap-2 px-2 pb-4">
               <div className="flex flex-1 flex-col text-left">
                 {topic.trim().length === 0 && (
                   <>
@@ -499,7 +499,7 @@ export default function LandingPage() {
                 size="lg"
                 onClick={handleCobaGratis}
                 disabled={creating}
-                className="shrink-0 mt-4 gap-2 text-white"
+                className="shrink-0 mt-4 self-center gap-2 text-white"
               >
                 {creating ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
                 {creating ? "Menyiapkan…" : "Coba Gratis"}
