@@ -1,30 +1,45 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { TrendingUp, RefreshCw, Loader2 } from "lucide-react";
+import { TrendingUp, RefreshCw, Loader2, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-interface TrendingTopic {
+interface TrendTopic {
   id: string;
   keyword: string;
   niche_slug: string;
-  score: number;
-  fetched_at: string;
+}
+
+interface NicheCount {
+  niche: string;
+  count: number;
 }
 
 interface TrendsData {
   total: number;
   lastFetched: string | null;
-  latest: TrendingTopic[];
+  byNiche: NicheCount[];
+  latest: TrendTopic[];
 }
 
 function fmtNum(n: number): string {
   return (n ?? 0).toLocaleString("id-ID");
 }
 
-function fmtDate(iso: string | null): string {
+function timeAgo(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString("id-ID");
+  const diffSec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (diffSec < 60) return `${diffSec} detik lalu`;
+  const min = Math.floor(diffSec / 60);
+  if (min < 60) return `${min} menit lalu`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `${hrs} jam lalu`;
+  return `${Math.floor(hrs / 24)} hari lalu`;
+}
+
+function harvestOk(lastFetched: string | null): boolean {
+  if (!lastFetched) return false;
+  return Date.now() - new Date(lastFetched).getTime() < 7 * 60 * 60 * 1000;
 }
 
 export default function TrendingPage() {
@@ -81,24 +96,14 @@ export default function TrendingPage() {
     }
   };
 
+  const ok = harvestOk(data?.lastFetched ?? null);
+
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Trending</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Monitor hasil harvest ide konten.
-          </p>
-        </div>
-        <Button onClick={triggerHarvest} disabled={triggering}>
-          {triggering ? (
-            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="mr-1 h-4 w-4" />
-          )}
-          Trigger Harvest Manual
-        </Button>
-      </div>
+      <h1 className="text-2xl font-bold tracking-tight">Trending</h1>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Dashboard ide konten dari harvest.
+      </p>
 
       {result && (
         <p
@@ -118,69 +123,97 @@ export default function TrendingPage() {
 
       {data && !error && (
         <>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-xl border bg-card p-5">
+          {/* HEADER — 3 stat card */}
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            <div className="relative rounded-xl border bg-card p-5">
+              <TrendingUp className="absolute right-4 top-4 h-5 w-5 text-primary/50" />
               <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                Total Trend Ideas
+                Total Topik Aktif
+              </p>
+              <p className="mt-2 text-2xl font-bold tabular-nums">{fmtNum(data.total)}</p>
+            </div>
+            <div className="relative rounded-xl border bg-card p-5">
+              <Activity className="absolute right-4 top-4 h-5 w-5 text-primary/50" />
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                Harvest Terakhir
               </p>
               <p className="mt-2 text-2xl font-bold tabular-nums">
-                {fmtNum(data.total)}
+                {timeAgo(data.lastFetched)}
               </p>
             </div>
-            <div className="rounded-xl border bg-card p-5">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                Terakhir di-harvest
-              </p>
-              <p className="mt-2 text-2xl font-bold tabular-nums">
-                {fmtDate(data.lastFetched)}
+            <div className="relative rounded-xl border bg-card p-5">
+              <Loader2 className="absolute right-4 top-4 h-5 w-5 text-primary/50" />
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Status</p>
+              <p
+                className={`mt-2 text-lg font-bold ${ok ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}
+              >
+                {ok ? "✅ Berjalan normal" : "⚠️ Terlambat"}
               </p>
             </div>
           </div>
 
-          <div className="mt-6 overflow-hidden rounded-xl border bg-card">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[600px] text-left">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-4 py-3 font-medium">Keyword</th>
-                    <th className="px-4 py-3 font-medium">Niche</th>
-                    <th className="px-4 py-3 font-medium">Score</th>
-                    <th className="px-4 py-3 font-medium">Fetched At</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.latest.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={4}
-                        className="px-4 py-12 text-center text-sm text-muted-foreground"
-                      >
-                        Belum ada data tren.
-                      </td>
-                    </tr>
-                  )}
-                  {data.latest.map((t) => (
-                    <tr
-                      key={t.id}
-                      className="border-b border-border transition-colors duration-200 last:border-b-0 hover:bg-muted/30"
-                    >
-                      <td className="px-4 py-3 text-sm">
-                        <span className="flex items-center gap-2">
-                          <TrendingUp className="h-4 w-4 shrink-0 text-primary/50" />
-                          {t.keyword}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-muted-foreground">
-                        {t.niche_slug}
-                      </td>
-                      <td className="px-4 py-3 text-sm tabular-nums">{t.score}</td>
-                      <td className="px-4 py-3 text-sm text-muted-foreground">
-                        {fmtDate(t.fetched_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div className="rounded-xl border bg-card p-5">
+              <h2 className="text-sm font-semibold tracking-tight">Topik per Niche</h2>
+              {data.byNiche.length === 0 && (
+                <p className="mt-4 text-sm text-muted-foreground">Belum ada data per niche.</p>
+              )}
+              <ul className="mt-4 space-y-2.5 text-sm">
+                {data.byNiche.map((item) => {
+                  const pct = data.total > 0
+                    ? Math.round((item.count / data.total) * 100)
+                    : 0;
+                  return (
+                    <li key={item.niche}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">{item.niche}</span>
+                        <span className="font-semibold tabular-nums">{item.count}</span>
+                      </div>
+                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-border">
+                        <div
+                          className="h-full rounded-full bg-primary/25"
+                          style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            <div className="rounded-xl border bg-card p-5">
+              <h2 className="text-sm font-semibold tracking-tight">10 Topik Terbaru</h2>
+              {data.latest.length === 0 && (
+                <p className="mt-4 text-sm text-muted-foreground">Belum ada topik.</p>
+              )}
+              <ul className="mt-4 space-y-2 text-sm">
+                {data.latest.map((t) => (
+                  <li key={t.id} className="flex items-center gap-2">
+                    <TrendingUp className="h-3.5 w-3.5 shrink-0 text-primary/50" />
+                    <span className="min-w-0 flex-1 truncate">{t.keyword}</span>
+                    <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                      {t.niche_slug}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          {/* Bawah — Trigger trigger subtle */}
+          <div className="mt-6 rounded-xl border bg-card p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Harvest otomatis berjalan setiap 6 jam.
+              </p>
+              <Button variant="outline" size="sm" onClick={triggerHarvest} disabled={triggering}>
+                {triggering ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1 h-4 w-4" />
+                )}
+                Trigger Harvest Manual
+              </Button>
             </div>
           </div>
         </>

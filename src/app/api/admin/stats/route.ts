@@ -21,6 +21,31 @@ function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
+/** Hitung jumlah user terdaftar (non-anonymous) dari auth.users via listUsers. */
+async function countAuthUsers(): Promise<number> {
+  try {
+    const supabase = createServiceRoleClient();
+    let page = 1;
+    let total = 0;
+    while (true) {
+      const { data, error } = await supabase.auth.admin.listUsers({
+        page,
+        perPage: 1000,
+      });
+      if (error) throw error;
+      const users = data?.users ?? [];
+      if (users.length === 0) break;
+      total += users.filter((u) => !u.is_anonymous).length;
+      if (users.length < 1000) break;
+      page++;
+    }
+    return total;
+  } catch (e) {
+    console.warn("[admin-stats] countAuthUsers gagal:", e instanceof Error ? e.message : e);
+    return 0;
+  }
+}
+
 /** Baca user dari sesi cookie; null jika tidak login. */
 async function getSessionUser() {
   try {
@@ -131,7 +156,7 @@ export async function GET() {
     usageByPlan("pro"),
   ]);
 
-  const profilesTotal = await count("profiles");
+  const profilesTotal = await countAuthUsers();
   const trendsTotal = await count("trend_ideas");
 
   let trendsLastFetched: string | null = null;

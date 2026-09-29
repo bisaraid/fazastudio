@@ -33,16 +33,32 @@ export async function GET() {
 
     const { data: latest, error: latestErr } = await supabase
       .from("trend_ideas")
-      .select("id, keyword, niche_slug, score, fetched_at")
+      .select("id, keyword, niche_slug")
       .order("fetched_at", { ascending: false })
-      .limit(20);
+      .limit(10);
     if (latestErr) throw latestErr;
+
+    // Agregat per niche (ambi semua niche_slug e hitungi).
+    const { data: nicheRows, error: nicheErr } = await supabase
+      .from("trend_ideas")
+      .select("niche_slug");
+    if (nicheErr) throw nicheErr;
+
+    const byNicheMap = new Map<string, number>();
+    for (const r of nicheRows ?? []) {
+      const n = typeof r.niche_slug === "string" ? r.niche_slug : "unknown";
+      byNicheMap.set(n, (byNicheMap.get(n) ?? 0) + 1);
+    }
+    const byNiche = Array.from(byNicheMap.entries())
+      .map(([niche, count]) => ({ niche, count }))
+      .sort((a, b) => b.count - a.count);
 
     return NextResponse.json({
       success: true,
       data: {
         total: total ?? 0,
         lastFetched,
+        byNiche,
         latest: latest ?? [],
       },
     });
