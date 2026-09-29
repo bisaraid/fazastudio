@@ -12,6 +12,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
   // 1) Autentikasi: jika tidak login → redirect "/".
@@ -59,10 +60,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+      />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar onMenuToggle={() => setSidebarOpen(true)} user={user} />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main
+          key={pathname}
+          className="admin-page-enter flex-1 overflow-y-auto p-6"
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

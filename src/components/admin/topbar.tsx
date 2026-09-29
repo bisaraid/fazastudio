@@ -14,7 +14,7 @@ export function Topbar({ onMenuToggle, user }: TopbarProps) {
   const shortName = email ? email.split("@")[0] : "Admin";
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur">
+    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur">
       <button
         type="button"
         onClick={onMenuToggle}

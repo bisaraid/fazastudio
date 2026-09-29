@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
-import { BarChart2, TrendingUp, Users, CreditCard, Star } from "lucide-react";
+import { BarChart2, TrendingUp, Users, CreditCard, Star, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -37,10 +37,17 @@ const NAV: NavGroup[] = [
 export interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-export function Sidebar({ isOpen, onClose }: SidebarProps) {
+export function Sidebar({ isOpen, onClose, collapsed = false, onToggleCollapse }: SidebarProps) {
   const pathname = usePathname();
+
+  const asideWidth = cn(
+    "fixed inset-y-0 left-0 z-50 flex w-[220px] shrink-0 flex-col border-r border-border bg-background transition-all duration-300 ease-in-out lg:static lg:translate-x-0",
+    collapsed ? "lg:w-[68px]" : ""
+  );
 
   return (
     <>
@@ -56,14 +63,26 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[220px] shrink-0 flex-col border-r border-border bg-background transition-transform duration-300 ease-in-out lg:static lg:translate-x-0",
+          asideWidth,
           isOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
-        {/* Logo area */}
-        <div className="flex items-center gap-2.5 px-5 py-4">
+        {/* Logo area + toggle (desktop) */}
+        <div className="flex items-center gap-2 px-4 py-4">
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="hidden rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 lg:flex"
+            aria-label={collapsed ? "Ubah sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? (
+              <ChevronRight className="h-4 w-4" />
+            ) : (
+              <ChevronLeft className="h-4 w-4" />
+            )}
+          </button>
           <Star className="h-5 w-5 shrink-0 text-primary" />
-          <div className="min-w-0">
+          <div className={cn("min-w-0", collapsed && "lg:hidden")}>
             <p className="truncate text-sm font-semibold leading-tight">Faza Studio</p>
             <p className="text-xs text-muted-foreground">Admin Panel</p>
           </div>
@@ -84,6 +103,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                     <Link
                       key={item.href}
                       href={item.href}
+                      title={collapsed ? item.label : undefined}
                       className={cn(
                         "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors duration-200",
                         active
@@ -92,7 +112,9 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                       )}
                     >
                       <Icon className="h-4 w-4 shrink-0" />
-                      <span className="truncate">{item.label}</span>
+                      <span className={cn("truncate", collapsed && "lg:hidden")}>
+                        {item.label}
+                      </span>
                     </Link>
                   );
                 })}
