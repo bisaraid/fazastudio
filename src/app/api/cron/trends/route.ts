@@ -20,6 +20,7 @@ import {
 import { extractTopicsFromTitles } from "@/lib/topic-extractor";
 import { fetchGoogleTrends } from "@/lib/harvest-google-trends";
 import { fetchRssTitles } from "@/lib/harvest-rss";
+import { recordAdminMetricsDay } from "@/lib/admin-snapshot";
 
 const TOP_VIDEOS = 50;
 const SOURCE_GOOGLE_TRENDS = "google_trends";
@@ -187,6 +188,12 @@ export async function GET(request: NextRequest) {
   console.log(
     `[cron-trends] done rows=${rows.length} inserted=${total} skipped=${skipped}`
   );
+
+  try {
+    await recordAdminMetricsDay();
+  } catch (e) {
+    console.warn("[cron-trends] snapshot gagal:", e instanceof Error ? e.message : e);
+  }
 
   return NextResponse.json({
     success: true,

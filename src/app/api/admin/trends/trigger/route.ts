@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "../../_auth";
+import { recordAdminMetricsDay } from "@/lib/admin-snapshot";
 
 /**
  * POST /api/admin/trends/trigger — Trigger harvest manual.
@@ -25,7 +26,17 @@ export async function POST(request: NextRequest) {
       headers: { Authorization: `Bearer ${secret}` },
     });
     const json = await res.json().catch(() => ({}));
-    return NextResponse.json(json, { status: res.status });
+      if (res.ok) {
+        try {
+          await recordAdminMetricsDay();
+        } catch (e) {
+          console.warn(
+            "[admin-trends-trigger] snapshot gagal:",
+            e instanceof Error ? e.message : e
+          );
+        }
+      }
+      return NextResponse.json(json, { status: res.status });
   } catch (e) {
     console.warn("[admin-trends-trigger] gagal:", e instanceof Error ? e.message : e);
     return NextResponse.json(
