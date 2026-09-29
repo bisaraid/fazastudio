@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { requireAdmin } from "../_auth";
+import { recordAudit } from "@/lib/admin-audit";
 
 /**
  * POST /api/admin/set-admin — promote/demote admin di tabel profiles.
@@ -54,6 +55,15 @@ export async function POST(request: NextRequest) {
       { success: false, error: "Gagal memperbarui status admin" },
       { status: 500 }
     );
+  }
+
+  if (user?.id) {
+    await recordAudit({
+      actorUserId: user.id,
+      action: "set_admin",
+      subjectUserId: userId,
+      payload: { isAdmin },
+    });
   }
 
   return NextResponse.json({ success: true, userId, isAdmin });

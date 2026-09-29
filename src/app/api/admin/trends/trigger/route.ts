@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "../../_auth";
 import { recordAdminMetricsDay } from "@/lib/admin-snapshot";
+import { recordAudit } from "@/lib/admin-audit";
 
 /**
  * POST /api/admin/trends/trigger — Trigger harvest manual.
@@ -8,7 +9,7 @@ import { recordAdminMetricsDay } from "@/lib/admin-snapshot";
  * Authorization: Bearer CRON_SECRET lalu memanggil /api/cron/trends (GET).
  */
 export async function POST(request: NextRequest) {
-  const { response: unauthorized } = await requireAdmin();
+  const { user, response: unauthorized } = await requireAdmin();
   if (unauthorized) return unauthorized;
 
   const secret = process.env.CRON_SECRET;
@@ -34,6 +35,13 @@ export async function POST(request: NextRequest) {
             "[admin-trends-trigger] snapshot gagal:",
             e instanceof Error ? e.message : e
           );
+        }
+        if (user?.id) {
+          await recordAudit({
+            actorUserId: user.id,
+            action: "trigger_trends",
+            payload: { status: res.status },
+          });
         }
       }
       return NextResponse.json(json, { status: res.status });

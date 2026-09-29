@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { setPlanForUser, type PlanTier } from "@/lib/usage";
 import { requireAdmin } from "../_auth";
+import { recordAudit } from "@/lib/admin-audit";
 
 const VALID_PLANS: PlanTier[] = ["free", "starter", "pro"];
 
@@ -25,7 +26,7 @@ async function findUserIdByEmail(email: string): Promise<string | null> {
  * Menerima userId ATAU email (untuk aktivasi manual via email di halaman Transaksi).
  */
 export async function POST(request: NextRequest) {
-  const { response: unauthorized } = await requireAdmin();
+  const { user, response: unauthorized } = await requireAdmin();
   if (unauthorized) return unauthorized;
 
   let body: Record<string, unknown>;
@@ -66,6 +67,16 @@ export async function POST(request: NextRequest) {
       { success: false, error: "Gagal memperbarui plan" },
       { status: 500 }
     );
+  }
+
+  if (user?.id) {
+    await recordAudit({
+      actorUserId: user.id,
+      action: "set_plan",
+      subjectUserId: userId,
+      subjectEmail: email || undefined,
+      payload: { plan },
+    });
   }
 
   return NextResponse.json({ success: true, plan });

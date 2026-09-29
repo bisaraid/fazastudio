@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { createSupabaseServerClient } from "@/lib/supabase/ssr";
-import { getAdminEmails } from "@/lib/admin-auth";
+import { requireAdmin } from "../_auth";
 
 /**
  * GET /api/admin/stats — Admin dashboard aggregate stats.
@@ -46,61 +45,11 @@ async function countAuthUsers(): Promise<number> {
   }
 }
 
-/** Baca user dari sesi cookie; null jika tidak login. */
-async function getSessionUser() {
-  try {
-    const supabase = createSupabaseServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    return user ?? null;
-  } catch (e) {
-    console.warn("[admin-stats] getSessionUser gagal:", e instanceof Error ? e.message : e);
-    return null;
-  }
-}
-
-/** Cek admin dari DB (is_admin) atau bootstrap env ADMIN_EMAILS + auto-promote. */
-async function isAdminUser(userId: string, email?: string | null): Promise<boolean> {
-  const service = createServiceRoleClient();
-
-  // 1) Cek flag is_admin di DB.
-  const { data: profile } = await service
-    .from("profiles")
-    .select("is_admin")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (profile?.is_admin) return true;
-
-  // 2) Bootstrap: email di ADMIN_EMAILS → auto-promote (idempoten).
-  const emailLower = (email || "").trim().toLowerCase();
-  if (emailLower && getAdminEmails().includes(emailLower)) {
-    try {
-      await service
-        .from("profiles")
-        .upsert(
-          { user_id: userId, is_admin: true, updated_at: new Date().toISOString() },
-          { onConflict: "user_id" }
-        );
-    } catch (e) {
-      console.warn("[admin-stats] auto-promote gagal:", e instanceof Error ? e.message : e);
-    }
-    return true;
-  }
-
-  return false;
-}
+/** Auth admin (dedupe) — getSessionUser + isAdminUser/auto-promote centralizzaa di _auth.ts. */
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!user) {
-    return NextResponse.json({ success: false, error: "Silakan masuk terlebih dahulu" }, { status: 401 });
-  }
-
-  const admin = await isAdminUser(user.id, user.email);
-  if (!admin) {
-    return NextResponse.json({ success: false, error: "Akun ini tidak memiliki akses admin" }, { status: 403 });
-  }
+  const { response } = await requireAdmin();
+  if (response) return response;
 
   const supabase = createServiceRoleClient();
   const since7d = isoDaysAgo(7);
