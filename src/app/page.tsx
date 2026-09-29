@@ -460,16 +460,16 @@ export default function LandingPage() {
                     <span className="mb-2 text-[11px] text-muted-foreground">
                       Trending hari ini
                     </span>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       {trendingTopics === null
                         ? Array.from({ length: 6 }).map((_, i) => (
                             <span
                               key={i}
-                              className="h-7 w-28 animate-pulse rounded-full bg-muted"
+                              className="h-7 w-full animate-pulse rounded-full bg-muted"
                             />
                           ))
                         : trendingTopics.map((t) => (
-                            <div key={t.full} className="group relative inline-block">
+                            <div key={t.full} className="group relative inline-block w-[180px]">
                               <button
                                 type="button"
                                 onMouseDown={(e) => e.preventDefault()}
@@ -479,7 +479,7 @@ export default function LandingPage() {
                                   resizeTextarea();
                                 }}
                                 aria-label={t.full}
-                                className="max-w-full truncate rounded-full border border-primary/30 bg-background px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/15 hover:text-foreground"
+                                className="block w-full truncate rounded-full border border-primary/30 bg-background px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/15 hover:text-foreground"
                               >
                                 {truncateWords(t.full, 4)}
                               </button>
