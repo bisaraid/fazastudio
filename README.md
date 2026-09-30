@@ -93,3 +93,46 @@ ini untuk menyesuaikan output script (aturan ringan, non-ML).
 Profil 4 layer (tujuan → niche → gaya → cara cerita) disimpan di tabel `profiles`. Halaman
 buat konten membaca profil untuk menyesuaikan sapaan, placeholder, genre, platform & durasi
 default. User yang belum menyelesaikan onboarding diarahkan ke `/mulai`.
+
+## Proyek Admin (ringkasan)
+
+Panel di `/admin` — akses butuh role admin (migration `015_admin_role.sql`).
+
+### Fitur
+- **Overview** (`/admin/overview`): chart pertumbuhan harian (users, projects, scripts,
+  trends, paid), badge delta% real-time, dan activity feed gabungan (audit log + proyek
+  terbaru).
+- **Users**: cari user, ubah plan (`set_plan`) dan akses admin (`set_admin`).
+- **Transaksi**: monitor pembayaran & atur plan user.
+- **Trending**: picu harvest tren manual (`trigger_trends`).
+- Aksi sensitif dicatat ke audit log via `src/lib/admin-audit.ts` (email subjek
+  di-redaksi dari sisi lib). API: `/api/admin/metrics` (defensif: tabel belum ada →
+  tetap 200 + `tableReady:false`) dan `/api/admin/activity`.
+
+### Tabel baru
+- **`admin_metrics_daily`** — migration `026_admin_metrics_daily.sql`: snapshot harian
+  metrik (PK `date`; `total_users`, `total_projects`, `total_scripts`, `total_trends`,
+  `paid_users`, `is_estimated`). RLS aktif tanpa policy → hanya service role (server-side).
+  Snapshot hari ini di-upsert oleh `recordAdminMetricsDay()` (`src/lib/admin-snapshot.ts`).
+- **`admin_audit_logs`** — migration `027_admin_audit_logs.sql`: aksi admin
+  (`set_plan` | `set_admin` | `trigger_trends`), `payload` jsonb, index
+  `(created_at desc)`. RLS aktif tanpa policy.
+
+### Backfill (sekali, idempoten)
+Jalankan migration 026 & 027 dulu (SQL editor Supabase / `supabase db push`), lalu:
+
+```bash
+npx tsx scripts/backfill-admin-metrics.ts --dry-run   # cek rentang, tanpa tulis
+npx tsx scripts/backfill-admin-metrics.ts             # tulis 30 hari (is_estimated=true)
+```
+
+Butuh env `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`. Baris hasil backfill
+ditandai `is_estimated` (data yang sudah dihapus tidak terhitung → digambar putus-putus
+di chart).
+
+### Menjalankan test
+```bash
+npx vitest run        # seluruh suite (admin-*, claim, midtrans, persona, …)
+npx tsc --noEmit      # type-check
+```
+Detail harness (Vitest 3, `vi.mock`, fix drive-letter Windows) ada di `TESTING.md`.
