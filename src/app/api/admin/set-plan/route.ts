@@ -3,21 +3,34 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { setPlanForUser, type PlanTier } from "@/lib/usage";
 import { requireAdmin } from "../_auth";
 import { recordAudit } from "@/lib/admin-audit";
+import {
+  AUTH_MAX_PAGES,
+  AuthLookupError,
+  findAuthUserByEmail,
+  type AuthUserMatch,
+} from "@/lib/admin-user-lookup";
 
 const VALID_PLANS: PlanTier[] = ["free", "starter", "pro"];
 
-/** Cari userId dari email via auth.admin.listUsers (service role). */
-async function findUserIdByEmail(email: string): Promise<string | null> {
+/**
+ * Cari userId dari email via auth.admin.listUsers (service role).
+ * Menyisir SEMUA halaman (bukan hanya halaman 1) dan melempar AuthLookupError
+ * bila Auth API gagal, supaya route bisa membalas 500 + log — bukan 404 palsu.
+ * Detail: src/lib/admin-user-lookup.ts
+ */
+async function findUserIdByEmail(email: string): Promise<AuthUserMatch> {
   const supabase = createServiceRoleClient();
-  const { data, error } = await supabase.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
-  if (error) return null;
-  const target = (data?.users ?? []).find(
-    (u) => (u.email ?? "").trim().toLowerCase() === email.trim().toLowerCase()
-  );
-  return target?.id ?? null;
+  return findAuthUserByEmail(async ({ page, perPage }) => {
+    const { data, error } = await supabase.auth.admin.listUsers({
+      page,
+      perPage,
+    });
+    if (error) {
+      // JANGAN di-filter jadi "tidak ditemukan" — hilangkan bukti penyebabnya.
+      throw new AuthLookupError(error.message || "Auth API gagal");
+    }
+    return data?.users ?? [];
+  }, email);
 }
 
 /**
@@ -34,7 +47,7 @@ export async function POST(request: NextRequest) {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
     return NextResponse.json(
-      { success: false, error: "Body tidak valid" },
+      { success: false, code: "invalid_body", error: "Body tidak valid" },
       { status: 400 }
     );
   }
@@ -42,29 +55,86 @@ export async function POST(request: NextRequest) {
   const plan = body.plan as PlanTier;
   if (!VALID_PLANS.includes(plan)) {
     return NextResponse.json(
-      { success: false, error: "Plan tidak valid" },
+      { success: false, code: "invalid_plan", error: "Plan tidak valid" },
       { status: 400 }
     );
   }
 
-  let userId = typeof body.userId === "string" ? body.userId : "";
+  let userId = typeof body.userId === "string" ? body.userId.trim() : "";
   const email = typeof body.email === "string" ? body.email.trim() : "";
 
   if (!userId && email) {
-    userId = (await findUserIdByEmail(email)) ?? "";
+    let match: AuthUserMatch;
+    try {
+      match = await findUserIdByEmail(email);
+    } catch (e) {
+      // Kegagalan Auth API BUKAN "user tidak ditemukan" → 500 + log penyebab.
+      console.warn(
+        "[admin-set-plan] lookup email gagal (Auth API):",
+        e instanceof Error ? e.message : e
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: "auth_lookup_failed",
+          error:
+            "Gagal menghubungi layanan Auth untuk mencari user. Coba lagi sebentar lagi.",
+        },
+        { status: 500 }
+      );
+    }
+
+    if (match.truncated) {
+      console.warn(
+        `[admin-set-plan] lookup email berhenti di batas ${AUTH_MAX_PAGES} halaman ` +
+          `(${match.scanned} user diperiksa) — hasil belum tentu lengkap.`
+      );
+    }
+
+    userId = match.userId ?? "";
+
+    if (!userId) {
+      const hint = match.suggestions.length
+        ? ` Mungkin maksud Anda: ${match.suggestions.join(", ")}.`
+        : "";
+      console.warn(
+        `[admin-set-plan] email belum terdaftar (halaman=${match.pages}, ` +
+          `user diperiksa=${match.scanned}, saran=${match.suggestions.length})`
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          code: "user_not_found",
+          error: `Email ${email} belum terdaftar sebagai user. Pastikan user sudah mendaftar.${hint}`,
+          suggestions: match.suggestions,
+        },
+        { status: 404 }
+      );
+    }
   }
 
   if (!userId) {
     return NextResponse.json(
-      { success: false, error: "User tidak ditemukan. Periksa userId/email." },
+      {
+        success: false,
+        code: "user_not_found",
+        error: "User tidak ditemukan. Periksa userId/email.",
+      },
       { status: 404 }
     );
   }
 
   const ok = await setPlanForUser(userId, plan);
   if (!ok) {
+    console.warn(
+      `[admin-set-plan] setPlanForUser gagal (userId=${userId}, plan=${plan})`
+    );
     return NextResponse.json(
-      { success: false, error: "Gagal memperbarui plan" },
+      {
+        success: false,
+        code: "plan_update_failed",
+        error: "Gagal memperbarui plan",
+      },
       { status: 500 }
     );
   }

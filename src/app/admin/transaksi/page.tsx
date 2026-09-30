@@ -6,8 +6,18 @@ import { Loader2, CreditCard, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import {
+  NETWORK_ERROR_MESSAGE,
+  setPlanErrorMessage,
+  type SetPlanErrorBody,
+} from "@/lib/set-plan-error";
 
 type PlanTierClient = "starter" | "pro";
+
+interface SetPlanResponse extends SetPlanErrorBody {
+  success?: boolean;
+  plan?: string;
+}
 
 interface HistoryEntry {
   email: string;
@@ -49,9 +59,11 @@ export default function TransaksiPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), plan }),
       });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        setStatus({ ok: false, message: json.error || "Aktivasi gagal." });
+      // Respons bukan JSON (mis. halaman error HTML) → diperlakukan sebagai
+      // gangguan server, bukan "email belum terdaftar".
+      const json = (await res.json().catch(() => null)) as SetPlanResponse | null;
+      if (!res.ok || !json?.success) {
+        setStatus({ ok: false, message: setPlanErrorMessage(json, res.status) });
         return;
       }
       const entry: HistoryEntry = {
@@ -73,11 +85,9 @@ export default function TransaksiPage() {
       });
       setEmail("");
       setNote("");
-    } catch (err) {
-      setStatus({
-        ok: false,
-        message: err instanceof Error ? err.message : "Terjadi kesalahan jaringan",
-      });
+    } catch {
+      // fetch reject = server tak terjangkau (bukan "email belum terdaftar").
+      setStatus({ ok: false, message: NETWORK_ERROR_MESSAGE });
     } finally {
       setSaving(false);
     }
