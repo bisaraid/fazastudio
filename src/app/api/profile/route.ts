@@ -10,6 +10,11 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
  * Menggunakan service-role untuk menulis agar lawan RLS (profiles belum punya
  * policy insert untuk anon). Identitas user ditentukan dari sesi cookie via
  * createSupabaseServerClient, bukan dari device_id.
+ *
+ * `is_admin` (GET) dipakai klien HANYA untuk menampilkan link "Panel Admin".
+ * Otorisasi tetap di server (`requireAdmin` di /api/admin/*). Baris yang dibaca
+ * selalu baris milik user yang sedang login (filter `user_id = user.id`), jadi
+ * flag ini tidak pernah membocorkan status admin akun lain.
  */
 export async function GET() {
   const supabase = createSupabaseServerClient();
@@ -24,7 +29,7 @@ export async function GET() {
   const service = createServiceRoleClient();
   const { data, error } = await service
     .from("profiles")
-    .select("user_id, full_name, genre_tags, platform_tags, has_completed_onboarding, layer1_mode, niche_slug, gaya_key, cerita_key, avatar_url, updated_at")
+    .select("user_id, full_name, genre_tags, platform_tags, has_completed_onboarding, layer1_mode, niche_slug, gaya_key, cerita_key, avatar_url, is_admin, updated_at")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -33,7 +38,11 @@ export async function GET() {
     return NextResponse.json({ success: false, error: "Gagal memuat profil" }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, data: data ?? null });
+  // Normalisasi flag ke boolean asli — baris lama/kolom null tetap aman dibaca
+  // klien (hanya `true` yang menampilkan link "Panel Admin").
+  const payload = data ? { ...data, is_admin: data.is_admin === true } : null;
+
+  return NextResponse.json({ success: true, data: payload });
 }
 
 export async function POST(request: NextRequest) {
