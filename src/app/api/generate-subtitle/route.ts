@@ -171,6 +171,16 @@ export async function POST(request: NextRequest) {
     const {
       data: { user: subUser },
     } = await subSession.auth.getUser();
+
+    // 5D: subtitle (Groq Whisper) = biaya nyata → wajib login. 401 ditangkap
+    // klien sebagai sinyal membuka gate daftar (bukan error merah).
+    if (!subUser) {
+      return NextResponse.json(
+        { success: false, code: "AUTH_REQUIRED", error: "Daftar gratis untuk melanjutkan." },
+        { status: 401 }
+      );
+    }
+
     const hasCredit = subUser
       ? await checkCreditsForUser(subUser.id)
       : await checkCredits(identityKey);

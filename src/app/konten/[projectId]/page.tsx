@@ -11,12 +11,34 @@ import { Button } from "@/components/ui/button";
 import { recordBehavior } from "@/lib/behavior";
 import { readPreferences, recordPreference } from "@/lib/preferences";
 import { GAYA_BY_NICHE, getCeritaOptions } from "@/lib/persona-data";
-import { Genre, Platform } from "@/lib/types";
-import { Sparkles, Loader2, Pencil, ChevronDown, ChevronUp } from "lucide-react";
+import { Genre, PipelineStep, Platform, StepStatus } from "@/lib/types";
+import {
+  Sparkles,
+  Loader2,
+  Pencil,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Headphones,
+  RefreshCw,
+  AlertTriangle,
+  CheckCircle2,
+  Circle,
+  Lock,
+} from "lucide-react";
 import { ScriptCard } from "@/components/pipeline/ScriptCard";
 import { AudioCard } from "@/components/pipeline/AudioCard";
 import { VideoCard } from "@/components/pipeline/VideoCard";
-import { CardMode } from "@/components/pipeline/PipelineCard";
+import {
+  getStepViewState,
+  normalizeStep,
+  STEP_ORDER,
+  type StepKey,
+  type StepViewState,
+  type StepViewStatus,
+} from "@/lib/pipeline/step-view-state";
+import { pickResumeAction, UPGRADE_HREF } from "@/lib/pipeline/resume-action";
+import { providerLabel } from "@/lib/constants";
 import { PostingCard } from "./PostingCard";
 import { track } from "@/lib/posthog";
 
@@ -115,14 +137,83 @@ function ceritaLabel(niche: string, gaya: string, cerita: string): string {
   return getCeritaOptions(niche, gaya).find((c) => c.key === cerita)?.label ?? cerita;
 }
 
-type StepName = "script" | "audio" | "video";
+/** Fallback bila project belum ter-hidrasi (dipakai sebelum currentProject ada). */
+const EMPTY_STEPS: Record<PipelineStep, StepStatus> = {
+  script: "pending",
+  audio: "pending",
+  subtitle: "pending",
+  video: "pending",
+  export: "pending",
+};
+
+const STEP_LABEL: Record<StepKey, string> = { script: "Script", audio: "Audio", video: "Video" };
+
+const STEP_STATUS_TEXT: Record<StepViewStatus, string> = {
+  locked: "belum bisa dikerjakan",
+  ready: "siap dikerjakan",
+  running: "sedang diproses",
+  done: "selesai",
+  error: "gagal",
+};
+
+/**
+ * D4: stepper ringkas satu baris ("1 Script · 2 Audio · 3 Video").
+ * Sumbernya sama dengan kartu (getStepViewState) — subtitle tetap bagian Audio.
+ */
+function PipelineStepper({ state }: { state: StepViewState }) {
+  return (
+    <ol
+      aria-label="Tahapan konten"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+    >
+      {STEP_ORDER.map((key, i) => {
+        const view = state.steps[key];
+        const tone =
+          view.status === "error"
+            ? "font-medium text-destructive"
+            : view.current || view.status === "running"
+              ? "font-medium text-primary"
+              : view.status === "done"
+                ? "text-foreground"
+                : "text-muted-foreground";
+        return (
+          <li key={key} className="flex items-center gap-1.5">
+            {i > 0 && (
+              <span aria-hidden className="text-muted-foreground/40">
+                ·
+              </span>
+            )}
+            <span
+              className={`inline-flex items-center gap-1 ${tone}`}
+              aria-current={view.current ? "step" : undefined}
+            >
+              {view.status === "done" ? (
+                <CheckCircle2 aria-hidden className="h-3.5 w-3.5 text-emerald-500" />
+              ) : view.status === "running" ? (
+                <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+              ) : view.status === "error" ? (
+                <AlertTriangle aria-hidden className="h-3.5 w-3.5" />
+              ) : view.status === "locked" ? (
+                <Lock aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <Circle aria-hidden className="h-3.5 w-3.5 text-muted-foreground/60" />
+              )}
+              {`${i + 1} ${STEP_LABEL[key]}`}
+              <span className="sr-only">: {STEP_STATUS_TEXT[view.status]}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 export default function ProjectEditorPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const { currentProject, loadProjects, setCurrentProject, updateProjectSetup, updateProjectMetadata, deleteProject } =
     useProjectStore();
-  const { progress, generateStep, runAutoChain, previewAudio } = usePipeline();
+  const { progress, generateStep, runAutoChain, previewAudio, resetAuthSignal } = usePipeline();
   const { user } = useUser();
 
   // ==== Pilihan audio + preview ====
@@ -141,7 +232,6 @@ export default function ProjectEditorPage() {
   const projectLoadedRef = useRef(false);
   const [isProjectLoading, setIsProjectLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
-  const [scriptKeepExpanded, setScriptKeepExpanded] = useState(true);
   // Gate login anonim untuk step audio.
   const [authGateOpen, setAuthGateOpen] = useState(false);
   const [limitModal, setLimitModal] = useState<any>(null);
@@ -364,25 +454,34 @@ export default function ProjectEditorPage() {
   const scriptHas = !!projectScript?.scenes?.length;
   const audioHas = !!projectAudio?.url;
   const videoHas = !!projectVideo?.url;
-  const runningStep: StepName | null = progress.isRunning ? (progress.currentStep as StepName) : null;
-  const frontier: StepName | null = videoHas ? "video" : audioHas ? "audio" : scriptHas ? "script" : null;
   const isAnon = !user;
-  const scriptMode: CardMode = isAnon ? "active" : runningStep === "script" ? "active" : frontier === "video" ? "done" : frontier === "audio" ? "done" : frontier === "script" ? (scriptKeepExpanded ? "active" : "done") : "active";
-  const audioMode: CardMode = isAnon ? "idle" : runningStep === "audio" ? "active" : frontier === "video" ? "done" : frontier === "audio" ? "done" : frontier === "script" ? "active" : "idle";
-  const videoMode: CardMode = isAnon ? "idle" : runningStep === "video" ? "active" : frontier === "video" ? "done" : frontier === "audio" ? "active" : "idle";
 
-  // Auto-scroll ke card aktif saat step berubah
+  // D1: satu sumber state untuk seluruh UI pipeline (script → audio → video).
+  const stepState = getStepViewState({
+    steps: currentProject?.steps ?? EMPTY_STEPS,
+    isRunning,
+    currentStep: progress.currentStep,
+    hasScript: scriptHas,
+    hasAudio: audioHas,
+    hasVideo: videoHas,
+  });
+  const stepOf = (key: StepKey) => stepState.steps[key];
+  // Anonim: script yang sudah jadi tetap terbuka selama user belum
+  // "melanjutkan" (ia berhenti di gerbang daftar) supaya hasil gratis tidak
+  // terlipat di balik accordion.
+  const scriptCardOpen = stepOf("script").current || (isAnon && scriptHas);
+
+  // D10: auto-scroll hanya saat step berpindah (bukan tiap perubahan state).
   const scriptRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLDivElement | null>(null);
+  const runningKey = isRunning ? normalizeStep(progress.currentStep) : null;
+  const focusStep: StepKey | null = runningKey ?? stepState.current;
   useEffect(() => {
     const ref =
-      runningStep === "script" || (runningStep === null && frontier === "script") ? scriptRef
-      : runningStep === "audio" || (runningStep === null && frontier === "audio") ? audioRef
-      : runningStep === "video" || (runningStep === null && frontier === "video") ? videoRef
-      : null;
+      focusStep === "script" ? scriptRef : focusStep === "audio" ? audioRef : focusStep === "video" ? videoRef : null;
     ref?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [runningStep, frontier]);
+  }, [focusStep]);
 
   useEffect(()=> {
     const lp = progress.limitProject;
@@ -480,18 +579,6 @@ export default function ProjectEditorPage() {
   }, [currentProject, projectId, topic, user, profile, handleAutoRun]);
 
 useEffect(()=> {
-  if (isAnon) return;
-  if (runningStep === "script") {
-    setScriptKeepExpanded(true);
-    return;
-  }
-  if (frontier === "script"&&scriptHas&&scriptKeepExpanded) {
-    const t = setTimeout(()=> setScriptKeepExpanded(false),1600);
-    return ()=> clearTimeout(t);
-  }
-  }, [isAnon, runningStep, frontier, scriptHas, scriptKeepExpanded]);
-
-useEffect(()=> {
   if (!isAnon) return;
   if (!scriptHas) return;
   if (anonGateShownRef.current) return;
@@ -499,15 +586,29 @@ useEffect(()=> {
   setAuthGateOpen(true);
   }, [isAnon, scriptHas]);
 
+// 5D: endpoint mahal (TTS/subtitle/video) menolak anon dengan 401 → bukan error
+// merah, cukup buka gate daftar lalu bersihkan sinyalnya.
+useEffect(() => {
+  if (!progress.requiresAuth) return;
+  setAuthGateOpen(true);
+  resetAuthSignal();
+}, [progress.requiresAuth, resetAuthSignal]);
+
   const handleRegenScript = useCallback(async () => {
     if (isRunning) return;
     recordBehavior("regen_script", projectId);
     await generateStep("script", projectId);
   }, [isRunning, projectId, generateStep]);
 
-  const handleContinueAudio = useCallback(async () => {
+  // Fase 4B (D11): SATU jalur untuk audio → subtitle → video.
+  // `runAutoChain` kini resume-aware (step yang sudah selesai di-skip), jadi
+  // fungsi ini melayani tiga aksi tanpa percabangan lama:
+  //   - "Buat Audio & Video" (script sudah selesai)
+  //   - "Coba Lagi" setelah gagal di audio/subtitle/video (lanjut dari errorStep)
+  //   - "Sambungkan ke Render" saat job render lama masih hidup di server
+  const handleRunChain = useCallback(async () => {
     if (isRunning) return;
-    // Login wall anonim: bukan login → tampilkan gate, jangan generate audio dulu.
+    // Login wall anonim: bukan login → tampilkan gate, jangan generate apa pun.
     if (!user) {
       setAuthGateOpen(true);
       return;
@@ -520,8 +621,15 @@ useEffect(()=> {
       platform: activePlatform,
       duration: activeDuration,
     });
-    await generateStep("audio", projectId, { provider: audioProvider, speed: audioSpeed, emotion: audioProvider === "cartesia" ? audioEmotion : undefined });
-  }, [isRunning, user, projectId, generateStep, audioProvider, audioSpeed, audioEmotion, activePlatform, activeDuration]);
+    recordPreference("provider", audioProvider);
+    await runAutoChain(projectId, {
+      audioOptions: {
+        provider: audioProvider,
+        speed: audioSpeed,
+        emotion: audioProvider === "cartesia" ? audioEmotion : undefined,
+      },
+    });
+  }, [isRunning, user, projectId, runAutoChain, audioProvider, audioSpeed, audioEmotion, activePlatform, activeDuration]);
 
   const handleRegenAudio = useCallback(async () => {
     if (isRunning) return;
@@ -531,9 +639,20 @@ useEffect(()=> {
     await generateStep("audio", projectId, { provider: audioProvider, speed: audioSpeed, emotion: audioProvider === "cartesia" ? audioEmotion : undefined });
   }, [isRunning, projectId, generateStep, audioProvider, audioSpeed, audioEmotion]);
 
-  const handleContinueVideo = useCallback(async () => {
+  // Fase 4B (D11): pengaturan audio (accordion di kartu Script) dapat dibuka
+  // dari hint "Suara: ..." di sticky bar → state dikendalikan halaman.
+  const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
+  const openAudioSettings = useCallback(() => {
+    setAudioSettingsOpen(true);
+    scriptRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+  // Hint 1 baris: pengaturan suara terlihat SEBELUM user menekan tombol utama.
+  const audioHintLabel = `Suara: ${providerLabel(audioProvider)} · ${audioSpeed.toFixed(1)}×`;
+
+  // D7: subtitle gagal → user punya aksi konkret (tanpa dead-end di step video).
+  const handleRegenSubtitle = useCallback(async () => {
     if (isRunning) return;
-    await generateStep("video", projectId);
+    await generateStep("subtitle", projectId);
   }, [isRunning, projectId, generateStep]);
 
   const handlePreviewAudio = useCallback(async () => {
@@ -554,15 +673,75 @@ useEffect(()=> {
       else setPreviewError("Preview tidak tersedia. Coba pilih kualitas Standar, atau daftar untuk jatah premium.");
     } catch (e: any) {
       setPreviewError(e?.message || "Preview gagal.");
+      // REL-05: PREVIEW_USED = jatah preview gratis habis → tawarkan daftar.
+      if (e?.code === "PREVIEW_USED") setAuthGateOpen(true);
     } finally {
       setPreviewLoading(false);
     }
   }, [previewLoading, previewAudio, projectId, audioProvider, audioSpeed, audioEmotion, previewUrl]);
 
+  // D3 + Fase 4B: satu tombol utama per saat, aksinya dipilih oleh fungsi murni
+  // `pickResumeAction` (src/lib/pipeline/resume-action.ts). Dengan begitu
+  // "Coba Lagi" selalu melanjutkan dari errorStep tanpa mengulang step yang
+  // sudah selesai, dan 402 berubah menjadi tawaran upgrade.
+  const resumeAction = pickResumeAction({
+    isRunning,
+    hasScript: scriptHas,
+    hasAudio: audioHas,
+    hasSubtitle: !!projectSubtitle,
+    hasVideo: videoHas,
+    errorStep: progress.errorStep ?? null,
+    errorCode: progress.errorCode ?? null,
+    videoJobActive: progress.videoJobActive === true,
+  });
+
+  // Hint audio hanya relevan saat aksi berikutnya melibatkan pembuatan audio.
+  const showAudioHint = !isRunning && resumeAction.kind === "chain";
+
+  const primaryAction: {
+    label: string;
+    onClick?: () => void;
+    href?: string;
+    disabled?: boolean;
+    hint?: string;
+  } | null = (() => {
+    if (isRunning) {
+      return { label: progress.statusMessage || "Mengerjakan...", disabled: true };
+    }
+    switch (resumeAction.kind) {
+      case "none":
+        return null;
+      case "download":
+        return projectVideo?.url
+          ? { label: resumeAction.label, href: projectVideo.url }
+          : null;
+      case "upgrade":
+        return { label: resumeAction.label, href: UPGRADE_HREF, hint: resumeAction.hint };
+      case "limited":
+        // 5B: batas harian/rate-limit → tombol utama DISABLED (bukan "Coba Lagi")
+        // disertai waktu tunggu dari Retry-After.
+        return { label: resumeAction.label, disabled: true, hint: resumeAction.hint };
+      case "auth":
+        // 5D: anon ditolak endpoint mahal (401) → buka gate daftar.
+        return { label: resumeAction.label, onClick: () => setAuthGateOpen(true) };
+      case "script":
+        return {
+          label: resumeAction.label,
+          onClick: handleGenerate,
+          disabled: !topic.trim(),
+          // 5A: regenerate script pada project yang sama mendebet 1 kredit lagi.
+          hint: "Memakai 1 kredit.",
+        };
+      default:
+        // "chain" | "subtitle" | "video" → satu jalur rantai yang resume-aware.
+        return { label: resumeAction.label, onClick: handleRunChain, hint: resumeAction.hint };
+    }
+  })();
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <main className="container mx-auto max-w-3xl px-4 py-8 lg:px-8">
+      <main className="container mx-auto max-w-3xl px-4 pt-8 pb-28 lg:px-8">
           {isProjectLoading ? (
             <div className="space-y-4" aria-label="Memuat project">
               <div className="space-y-1.5">
@@ -608,6 +787,11 @@ useEffect(()=> {
           )}
         </div>
 
+        {/* C (D4): stepper ringkas — user tahu posisinya tanpa scroll */}
+        <div className="mb-4">
+          <PipelineStepper state={stepState} />
+        </div>
+
         {/* Panel edit topik/pengaturan — selalu tersedia */}
         <div className="rounded-xl border bg-card">
           <button type="button" onClick={() => setEditOpen(!editOpen)} className="flex w-full items-center justify-between p-4 text-left">
@@ -623,10 +807,20 @@ useEffect(()=> {
                 ref={topicRef}
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
+                onKeyDown={(e) => {
+                  // K2: Enter = aksi yang sama dengan tombol utama di sticky bar.
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleGenerate();
+                  }
+                }}
                 placeholder={placeholder}
                 rows={4}
                 className="w-full resize-none rounded-xl border bg-card px-4 py-4 text-lg focus:outline-none focus:ring-2 focus:ring-primary"
               />
+              <p className="text-xs text-muted-foreground">
+                Tekan Enter untuk mulai · Shift+Enter untuk baris baru.
+              </p>
 
               {trendsLoading ? (
                 <div className="rounded-xl border bg-card p-4">
@@ -673,34 +867,26 @@ useEffect(()=> {
                 </div>
               </div>
 
-              <Button onClick={handleGenerate} disabled={!topic.trim() || isRunning} className="w-full h-14 rounded-xl text-base gap-2">
-                {isRunning ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
-                {isRunning ? "Mengerjakan..." : scriptHas ? "Ulangi Script" : "Generate"}
-              </Button>
+              {/* K2: aksi utama hanya di sticky bar (Enter di topik juga jalan).
+                  Di panel hanya tombol sekunder "Ulangi Script" bila script ada. */}
+              {scriptHas && (
+                <Button
+                  variant="outline"
+                  onClick={handleGenerate}
+                  disabled={!topic.trim() || isRunning}
+                  className="h-11 w-full gap-2 sm:w-auto"
+                >
+                  {isRunning ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  {isRunning ? "Mengerjakan..." : "Ulangi Script"}
+                </Button>
+              )}
             </div>
           )}
         </div>
-
-        {/* PROGRESS live */}
-        {isRunning && (
-          <div className="mt-6 space-y-2">
-            <div className="flex items-center gap-2 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              <span>{progress.statusMessage || "Mengerjakan..."}</span>
-            </div>
-            {progress.currentStep === "video" && (
-              <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${progress.progress}%` }} />
-              </div>
-            )}
-          </div>
-        )}
-
-        {progress.error && !isRunning && (
-          <div className="mt-3 space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-            <p>{progress.error}</p>
-          </div>
-        )}
 
         {limitModal && !isRunning && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -736,9 +922,9 @@ useEffect(()=> {
         )}
         {/* Kartu step pipeline */}
         <div className="mt-6 space-y-5">
-          <div ref={scriptRef}>
+          <div ref={scriptRef} className="scroll-mt-20">
             <ScriptCard
-              mode={scriptMode}
+              mode={stepOf("script").status}
               script={projectScript}
               audioProvider={audioProvider}
               onAudioProvider={pickAudioProvider}
@@ -751,19 +937,21 @@ useEffect(()=> {
               previewError={previewError}
               previewRef={previewAudioRef}
               onPreview={handlePreviewAudio}
-              onContinueAudio={handleContinueAudio}
               onRegenScript={handleRegenScript}
               disabled={isRunning}
-              running={progress.isRunning && progress.currentStep === "script"}
+              isCurrent={scriptCardOpen || audioSettingsOpen}
+              audioSettingsOpen={audioSettingsOpen}
+              onAudioSettingsToggle={setAudioSettingsOpen}
+              errorMessage={progress.errorStep === "script" ? progress.error : null}
+              lockedHint="Selesaikan script dulu."
               progress={progress.progress}
               statusMessage={progress.statusMessage}
               showPercent={false}
-              thinkSteps={progress.thinkSteps}
-              thinkActiveIndex={progress.thinkActiveIndex}
+              slow={progress.slow}
             />
           </div>
 
-          <div ref={audioRef}>
+          <div ref={audioRef} className="scroll-mt-20">
             {/* Login wall anonim: muncul di atas AudioCard saat klik "Lanjut ke Audio" */}
             <div
               className={`fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm transition-opacity duration-300 ${
@@ -809,40 +997,110 @@ useEffect(()=> {
               </div>
             </div>
             <AudioCard
-              mode={audioMode}
+              mode={stepOf("audio").status}
               audio={projectAudio}
-              onContinueVideo={handleContinueVideo}
               onRegenAudio={handleRegenAudio}
+              onRetrySubtitle={handleRegenSubtitle}
+              subtitleFailed={stepState.subtitleFailed}
+              subtitleErrorMessage={progress.subtitleError}
               disabled={isRunning}
-              running={progress.isRunning && progress.currentStep === "audio"}
+              isCurrent={stepOf("audio").current}
+              errorMessage={progress.errorStep === "audio" ? progress.error : null}
+              lockedHint="Selesaikan script dulu."
               progress={progress.progress}
               statusMessage={progress.statusMessage}
               showPercent={false}
-              thinkSteps={progress.thinkSteps}
-              thinkActiveIndex={progress.thinkActiveIndex}
+              slow={progress.slow}
             />
           </div>
 
-          {projectAudio && (
-            <PostingCard script={currentProject?.script} />
-          )}
-
-          <div ref={videoRef}>
+          <div ref={videoRef} className="scroll-mt-20">
             <VideoCard
-              mode={videoMode}
+              mode={stepOf("video").status}
               video={projectVideo}
               audioUrl={projectAudio?.url}
               srtContent={projectSubtitle?.srtContent}
               vttContent={projectSubtitle?.vttContent || projectSubtitle?.srtContent}
-              running={progress.isRunning && progress.currentStep === "video"}
+              onStartVideo={handleRunChain}
+              isCurrent={stepOf("video").current}
+              errorMessage={progress.errorStep === "video" ? progress.error : null}
+              lockedHint={
+                stepState.subtitleFailed
+                  ? "Menunggu subtitle selesai dibuat."
+                  : "Selesaikan audio dulu."
+              }
               progress={progress.progress}
               statusMessage={progress.statusMessage}
               showPercent
-              thinkSteps={progress.thinkSteps}
-              thinkActiveIndex={progress.thinkActiveIndex}
+              slow={progress.slow}
             />
           </div>
+
+          {/* D9: caption/hashtag SETELAH kartu Video supaya urutan langkah jelas */}
+          {projectAudio && <PostingCard script={currentProject?.script} />}
         </div>
+
+        {/* D3: satu tombol utama per saat — selalu terjangkau tanpa scroll */}
+        {primaryAction && (
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background shadow-[0_-2px_10px_rgba(0,0,0,0.08)]">
+            <div className="mx-auto w-full max-w-3xl px-4 pt-3 pb-[calc(0.75rem_+_env(safe-area-inset-bottom))] lg:px-8">
+              {/* Fase 4B (D11): hint 1 baris — pengaturan suara terlihat sebelum
+                  klik; tap membuka accordion "Pengaturan Audio" di kartu script. */}
+              {showAudioHint && (
+                <button
+                  type="button"
+                  onClick={openAudioSettings}
+                  className="mb-2 flex w-full items-center justify-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <Headphones className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{audioHintLabel}</span>
+                  <span className="shrink-0 underline">ubah</span>
+                </button>
+              )}
+              {primaryAction.hint && !showAudioHint && (
+                <p className="mb-2 text-center text-xs text-muted-foreground">
+                  {primaryAction.hint}
+                </p>
+              )}
+              {primaryAction.href ? (
+                primaryAction.href === UPGRADE_HREF ? (
+                  <Button asChild className="h-12 w-full gap-2 text-base">
+                    <Link href={UPGRADE_HREF}>
+                      <Sparkles className="h-5 w-5" /> {primaryAction.label}
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button asChild className="h-12 w-full gap-2 text-base">
+                    <a href={primaryAction.href} download>
+                      <Download className="h-5 w-5" /> {primaryAction.label}
+                    </a>
+                  </Button>
+                )
+              ) : (
+                <Button
+                  onClick={primaryAction.onClick}
+                  disabled={primaryAction.disabled}
+                  className="h-12 w-full gap-2 text-base"
+                >
+                  {isRunning ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : stepState.errorStep ? (
+                    <RefreshCw className="h-5 w-5" />
+                  ) : (
+                    <Sparkles className="h-5 w-5" />
+                  )}
+                  <span
+                    className="truncate"
+                    role={isRunning ? "status" : undefined}
+                    aria-live={isRunning ? "polite" : undefined}
+                  >
+                    {primaryAction.label}
+                  </span>
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
             </>
           )}
       </main>

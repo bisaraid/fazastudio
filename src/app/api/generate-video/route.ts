@@ -21,10 +21,34 @@ import { RATE_LIMIT_LIMITS, DAILY_WINDOW_MS } from "@/lib/rate-limit-config";
 import { checkCredits, checkCreditsForUser } from "@/lib/usage";
 import { requireProjectOwnership } from "@/lib/project-ownership";
 
-import { addRenderJob } from "../../../../worker/src/queue";
+import { addRenderJob, getRenderQueue } from "../../../../worker/src/queue";
 import { validatePublicUrl } from "../../../../worker/src/lib/public-url";
+import { pickReusableRenderJob, type CandidateJob } from "@/lib/pipeline/render-job-reuse";
 
 export const runtime = "nodejs";
+
+/**
+ * REL-06: ringkasan job video yang MASIH hidup (active/waiting/delayed).
+ *
+ * Fail-open: bila Redis tidak bisa diintrospeksi, kembalikan daftar kosong
+ * supaya alur normal (enqueue) tetap jalan — guard tidak boleh memblokir user.
+ */
+async function listPendingRenderJobs(): Promise<CandidateJob[]> {
+  try {
+    const queue = getRenderQueue();
+    const jobs = await queue.getJobs(["active", "waiting", "delayed"], 0, 100);
+    return jobs.map((j) => ({
+      id: String(j.id ?? ""),
+      timestamp: typeof j.timestamp === "number" ? j.timestamp : undefined,
+      projectId: j.data?.projectId,
+      audioUrl: j.data?.audioUrl,
+      subtitleUrl: j.data?.subtitleUrl,
+    }));
+  } catch (err) {
+    console.warn("[generate-video] Gagal membaca job aktif (fail-open):", err);
+    return [];
+  }
+}
 
 export async function POST(request: NextRequest) {
   // ===== AUTH CHECK =====
@@ -98,22 +122,24 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // ===== CREDIT CHECK =====
+  // ===== USER + OWNERSHIP GUARD (IDOR) =====
+  // Ownership dipindah SEBELUM cek kredit: guard job ganda (REL-06) harus
+  // berjalan sebelum cek kredit & rate-limit harian, supaya retry ke job yang
+  // sudah dibayar tidak kena 402/429 dan tidak menembak job kedua.
   const videoSession = createSupabaseServerClient();
   const {
     data: { user: videoUser },
   } = await videoSession.auth.getUser();
-  const hasCredit = videoUser
-    ? await checkCreditsForUser(videoUser.id)
-    : await checkCredits(identity.identityKey);
-  if (!hasCredit) {
+
+  // 5D: render video = biaya besar (CPU worker + kuota harian) → wajib login.
+  // 401 ditangkap klien sebagai sinyal membuka gate daftar (bukan error merah).
+  if (!videoUser) {
     return NextResponse.json(
-      { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
-      { status: 402 }
+      { success: false, code: "AUTH_REQUIRED", error: "Daftar gratis untuk melanjutkan." },
+      { status: 401 }
     );
   }
 
-  // ===== OWNERSHIP GUARD (IDOR) =====
   const ownedProject = await requireProjectOwnership({
     projectId,
     identityKey: identity.identityKey,
@@ -123,6 +149,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { success: false, error: "Project tidak ditemukan atau tidak punya akses" },
       { status: 404 }
+    );
+  }
+
+  // ===== GUARD JOB GANDA (REL-06) =====
+  // Tidak ada endpoint cancel job (worker di luar web app) ⇒ klik dobel /
+  // "Coba Lagi" setelah watchdog reject dulu selalu menembak job baru
+  // (CPU + kuota harian dobel). Bila job untuk project + media yang SAMA
+  // masih hidup (< 15 menit), pakai ulang job itu.
+  const pendingJobs = await listPendingRenderJobs();
+  const reusableJobId = pickReusableRenderJob(pendingJobs, {
+    projectId,
+    audioUrl,
+    subtitleUrl,
+    nowMs: Date.now(),
+  });
+  if (reusableJobId) {
+    console.log(`[generate-video] Pakai ulang job aktif: ${reusableJobId} project=${projectId}`);
+    const reuseResponse = NextResponse.json({
+      success: true,
+      jobId: reusableJobId,
+      projectId,
+      reused: true,
+    });
+    if (identity.isNew) {
+      reuseResponse.headers.append("Set-Cookie", buildDeviceCookieHeader(identity.deviceId));
+    }
+    return reuseResponse;
+  }
+
+  // ===== CREDIT CHECK =====
+  const hasCredit = videoUser
+    ? await checkCreditsForUser(videoUser.id)
+    : await checkCredits(identity.identityKey);
+  if (!hasCredit) {
+    return NextResponse.json(
+      { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
+      { status: 402 }
     );
   }
 

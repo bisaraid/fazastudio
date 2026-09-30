@@ -13,7 +13,8 @@ import { createServiceRoleClient } from "@/lib/supabase/service";
 import { validateApiKey } from "@/lib/api-auth";
 import { checkRateLimit, getClientIp, buildBurstKey } from "@/lib/rate-limit";
 import { RATE_LIMIT_LIMITS, DAILY_WINDOW_MS } from "@/lib/rate-limit-config";
-import { decrementCredit, decrementCreditForUser, getUsageForUser } from "@/lib/usage";
+import { decrementCredit, decrementCreditForUser, getUsageForUser, checkCredits, type DebitResult } from "@/lib/usage";
+import { refundScriptDebit } from "@/lib/credit-refund";
 import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 import { MAX_FREE_CONTENT_PROJECTS } from "@/lib/constants";
@@ -114,20 +115,74 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ===== 5C: OWNERSHIP + PROJECT_LIMIT sebelum debet & sebelum AI =====
+    // Dulu cek ini baru dijalankan SETELAH generate (setelah debet 1 kredit +
+    // panggilan LLM) sehingga user yang sudah mentok batas tetap kehilangan
+    // kredit dan kuota AI terbuang untuk request yang pasti ditolak 409.
+    if (body.projectId) {
+      const ownedEarly = await requireProjectOwnership({
+        projectId: body.projectId,
+        identityKey,
+        userId: user?.id ?? null,
+      });
+      if (!ownedEarly) {
+        return NextResponse.json(
+          { success: false, error: "Project tidak ditemukan of geen toegang" },
+          { status: 404 }
+        );
+      }
+
+      const quarantineEarly = createServiceRoleClient();
+      let hasContentEarly = false;
+      const { data: projEarly } = await quarantineEarly
+        .from("projects")
+        .select("script,audio_url,video_url")
+        .eq("id", body.projectId)
+        .maybeSingle();
+      if (projEarly) {
+        if (projEarly.script) hasContentEarly = true;
+        if (projEarly.audio_url) hasContentEarly = true;
+        if (projEarly.video_url) hasContentEarly = true;
+      }
+      if (hasContentEarly === false) {
+        const column = user?.id ? "user_id" : "identity_key";
+        const scope = user?.id ?? identityKey;
+        const count = await countContentProjects(column, scope);
+        if (count >= MAX_FREE_CONTENT_PROJECTS) {
+          const oldest = await oldestContentProject(column, scope);
+          return NextResponse.json(
+            { success: false, code: "PROJECT_LIMIT", oldest, error: "Batas project ber-isi tercapai." },
+            { status: 409 },
+          );
+        }
+      }
+    }
+
+    // Fase 4A: requestId dibuat SEKALI di awal request. Kunci idempotensi refund
+    // memakai requestId INI (`script:<projectId>:<requestId>`) sehingga satu
+    // percobaan tidak mungkin di-refund dua kali, dan dua percobaan berbeda tidak
+    // saling memblokir.
+    const requestId = globalThis.crypto.randomUUID();
+    // Debet pada request ini (null = tidak ada debet ⇒ tidak ada yang di-refund).
+    let debit: DebitResult | null = null;
+
     if (isLoggedIn && user) {
       // Pastikan row user_usage sudah ada (ensure_usage_row_by_user dieksekusi) sebelum
       // decrement. decrement_credit_by_user hanya UPDATE (TIDAK INSERT), sehingga user baru
       // login yang rownya belum ter-create tidak salah dianggap "kredit habis" (false 402).
       await getUsageForUser(user.id);
-      const hasCredit = await decrementCreditForUser(user.id);
-      if (!hasCredit) {
+      debit = await decrementCreditForUser(user.id);
+      if (debit.status === "exhausted") {
         return NextResponse.json(
           { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
           { status: 402 }
         );
       }
     } else {
-      const hasCredit = await decrementCredit(identityKey);
+      // Anon: urutan guard harus cek kredit (READ-ONLY) → cek trial → baru
+      // debet. Dulu debet dijalankan lebih dulu sehingga request yang ditolak
+      // (TRIAL_SCRIPT_LIMIT) tetap memakan 1 kredit tanpa menghasilkan script.
+      const hasCredit = await checkCredits(identityKey);
       if (!hasCredit) {
         return NextResponse.json(
           { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
@@ -146,6 +201,17 @@ export async function POST(request: NextRequest) {
             code: "TRIAL_SCRIPT_LIMIT",
           },
           { status: 429 }
+        );
+      }
+
+      // Debet sebagai langkah TERAKHIR: RPC `decrement_credit` sekaligus
+      // penjaga kuota (WHERE credits_used < credits_total) ⇒ dua request
+      // paralel tidak bisa overspend.
+      debit = await decrementCredit(identityKey);
+      if (debit.status === "exhausted") {
+        return NextResponse.json(
+          { success: false, error: "Kredit kamu habis! Upgrade untuk melanjutkan." },
+          { status: 402 }
         );
       }
     }
@@ -186,7 +252,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Generate script via engine ACS
+    // Generate script via engine ACS.
+    // Fase 4A: bila engine GAGAL setelah debet berhasil, kredit dikembalikan
+    // lebih dulu (idempoten; tahan bila RPC refund belum deploy) lalu error
+    // asli diteruskan ke client (tetap 500). Tidak ada refund untuk penolakan
+    // validasi/limit karena semuanya terjadi SEBELUM debet.
     const script = await generateScriptWithAI(
       {
         topic: body.topic,
@@ -202,7 +272,17 @@ export async function POST(request: NextRequest) {
       },
       undefined,
       undefined
-    );
+    ).catch(async (genError) => {
+      await refundScriptDebit({
+        charge: debit,
+        projectId: body.projectId ?? null,
+        identityKey,
+        userId: user?.id ?? null,
+        requestId,
+        reason: "generateScriptWithAI gagal",
+      });
+      throw genError;
+    });
 
     // Simpan ke script_generations (fire-and-forget — non-kritikal)
     try {
@@ -229,39 +309,8 @@ export async function POST(request: NextRequest) {
     // Jika projectId tersedia, update projects.script + updated_at.
     // Kegagalan persistence dianggap GAGAL generate — jangan return success.
     if (body.projectId) {
-      // ===== OWNERSHIP GUARD (IDOR): project moet eigendom caller zijn =====
-      const owned = await requireProjectOwnership({
-        projectId: body.projectId,
-        identityKey,
-        userId: user?.id ?? null,
-      });
-      if (!owned) {
-        return NextResponse.json(
-          { success: false, error: "Project tidak ditemukan of geen toegang" },
-          { status: 404 }
-        );
-      }
-
-      const quarantine = createServiceRoleClient();
-      let hasContent = false;
-      const { data: proj } = await quarantine.from("projects").select("script,audio_url,video_url").eq("id",body.projectId).maybeSingle();
-      if (proj) {
-        if (proj.script) hasContent = true;
-        if (proj.audio_url) hasContent = true;
-        if (proj.video_url) hasContent = true;
-      }
-      if (hasContent === false) {
-        const column = user?.id ? "user_id" : "identity_key";
-        const scope = user?.id ?? identityKey;
-        const count = await countContentProjects(column, scope);
-        if (count >= MAX_FREE_CONTENT_PROJECTS) {
-          const oldest = await oldestContentProject(column, scope);
-          return NextResponse.json(
-            { success: false, code: "PROJECT_LIMIT", oldest, error: "Batas project ber-isi tercapai." },
-            { status: 409 },
-          );
-        }
-      }
+      // 5C: OWNERSHIP + PROJECT_LIMIT sudah dicek di awal route (SEBELUM debet
+      // & SEBELUM panggilan AI) — tidak diulang di sini.
 
       const supabase = createServiceRoleClient();
       const { error: persistError } = await supabase
@@ -274,6 +323,17 @@ export async function POST(request: NextRequest) {
 
       if (persistError) {
         console.error("[generate-script] Gagal persist script ke projects:", persistError);
+        // 5C: script sudah digenerate tetapi gagal tersimpan → kembalikan kredit
+        // (idempoten, sama seperti bila AI gagal; debit.status pasti "charged"
+        // karena semua penolakan terjadi sebelum debet).
+        await refundScriptDebit({
+          charge: debit,
+          projectId: body.projectId ?? null,
+          identityKey,
+          userId: user?.id ?? null,
+          requestId,
+          reason: "persist script ke projects gagal",
+        });
         return NextResponse.json(
           { success: false, error: "Script berhasil digenerate tetapi gagal disimpan ke project. Coba lagi." },
           { status: 500 }

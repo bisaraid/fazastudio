@@ -15,6 +15,7 @@ import {
 } from "@/lib/types";
 import { generateId } from "@/lib/utils";
 import { providerLabel } from "@/lib/constants";
+import { clearedMedia, invalidateDownstream, type UpstreamStep } from "@/lib/pipeline/downstream-reset";
 
 interface ProjectState {
   // Projects list
@@ -74,6 +75,26 @@ const createInitialSteps = () => ({
   video: "pending" as StepStatus,
   export: "pending" as StepStatus,
 });
+
+/**
+ * 5A: persist invalidasi hilir ke DB. Kolom media hilir dikosongkan lewat
+ * `clearMedia` (whitelist di PATCH /api/projects) beserta metadata + status
+ * terbaru, supaya reload tidak menghidupkan hasil basi.
+ */
+function persistInvalidation(project: Project, upstream: UpstreamStep): void {
+  fetch("/api/projects", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      projectId: project.id,
+      clearMedia: clearedMedia(upstream),
+      metadata: project.metadata ?? {},
+      status: project.status,
+    }),
+  }).catch((err) =>
+    console.warn("[projectStore] persist invalidasi hilir error:", err)
+  );
+}
 
 // ============================================================
 // Safe parsing & normalisasi (Sesi 3 fix — anti-crash dashboard)
@@ -367,12 +388,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const { currentProject } = get();
     if (!currentProject) return;
 
-    const updatedProject = {
-      ...currentProject,
-      script: result,
-      steps: { ...currentProject.steps, script: "done" as StepStatus },
-      updatedAt: new Date().toISOString(),
-    };
+    // 5A: script baru → hasil hilir (audio/subtitle/video) TIDAK valid lagi.
+    // Atomik: hasil hulu dipasang, hilir dibuang, lalu dipersist ke DB.
+    const updatedProject = invalidateDownstream(
+      {
+        ...currentProject,
+        script: result,
+        steps: { ...currentProject.steps, script: "done" as StepStatus },
+      },
+      "script"
+    );
 
     set((state) => ({
       currentProject: updatedProject,
@@ -380,18 +405,25 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         p.id === updatedProject.id ? updatedProject : p
       ),
     }));
+
+    persistInvalidation(updatedProject, "script");
   },
 
   setAudioResult: (result: AudioResult) => {
     const { currentProject } = get();
     if (!currentProject) return;
 
-    const updatedProject = {
-      ...currentProject,
-      audio: result,
-      steps: { ...currentProject.steps, audio: "done" as StepStatus },
-      updatedAt: new Date().toISOString(),
-    };
+    // 5A: audio baru → subtitle (dibuat dari audio) & video lama tidak valid.
+    // Catatan: kolom audio_url ditulis server (generate-tts), jadi invalidasi
+    // hanya mengosongkan subtitle + video.
+    const updatedProject = invalidateDownstream(
+      {
+        ...currentProject,
+        audio: result,
+        steps: { ...currentProject.steps, audio: "done" as StepStatus },
+      },
+      "audio"
+    );
 
     set((state) => ({
       currentProject: updatedProject,
@@ -399,18 +431,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         p.id === updatedProject.id ? updatedProject : p
       ),
     }));
+
+    persistInvalidation(updatedProject, "audio");
   },
 
   setSubtitleResult: (result: SubtitleResult) => {
     const { currentProject } = get();
     if (!currentProject) return;
 
-    const updatedProject = {
+    // 5A: subtitle baru → video lama TIDAK valid (render memakai subtitleUrl).
+    // metadata.subtitleSrt diperbarui sekaligus (agar export SRT/VTT tidak hilang).
+    const withSubtitle: Project = {
       ...currentProject,
       subtitle: result,
       steps: { ...currentProject.steps, subtitle: "done" as StepStatus },
-      updatedAt: new Date().toISOString(),
+      metadata: result?.srtContent
+        ? { ...(currentProject.metadata || {}), subtitleSrt: result.srtContent }
+        : currentProject.metadata,
     };
+
+    const updatedProject = invalidateDownstream(withSubtitle, "subtitle");
 
     set((state) => ({
       currentProject: updatedProject,
@@ -419,20 +459,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       ),
     }));
 
-    // Persist subtitle srtContent → metadata (agar export SRT/VTT tidak hilang saat reload).
-    if (result?.srtContent) {
-      const metadata: ProjectMetadata = {
-        ...(currentProject.metadata || {}),
-        subtitleSrt: result.srtContent,
-      };
-      fetch("/api/projects", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: updatedProject.id, metadata }),
-      }).catch((err) =>
-        console.warn("[projectStore] setSubtitleResult persist metadata error:", err)
-      );
-    }
+    // Persist metadata (termasuk subtitleSrt) + kosongkan kolom video hilir.
+    persistInvalidation(updatedProject, "subtitle");
   },
 
   setVideoResult: (result: VideoResult) => {
@@ -605,6 +633,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     // UX final: Script → Audio → Video. Export sudah tidak jadi step UI.
     const stepOrder: PipelineStep[] = ["script", "audio", "video"];
     const currentIndex = stepOrder.indexOf(step);
+    // subtitle/export bukan destination step → tidak ada step berikutnya.
+    // Tanpa guard ini, indexOf(-1)+1 = 0 akan me-reset currentStep ke "script".
+    if (currentIndex === -1) return;
     const nextStep = stepOrder[currentIndex + 1];
 
     if (nextStep) {

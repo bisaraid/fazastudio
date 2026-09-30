@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { providerLabel, VOICE_EMOTIONS } from "@/lib/constants";
 import { useUsage } from "@/hooks/useUsage";
 import type { ScriptResult } from "@/lib/types";
-import { ArrowDown, ChevronDown, Headphones, Loader2, Play, RefreshCw } from "lucide-react";
+import { ChevronDown, Headphones, Loader2, Play, RefreshCw } from "lucide-react";
 import { PipelineCard, CardMode } from "./PipelineCard";
 
 export interface ScriptCardProps {
@@ -23,15 +23,22 @@ export interface ScriptCardProps {
   previewError: string | null;
   previewRef: RefObject<HTMLAudioElement>;
   onPreview: () => void;
-  onContinueAudio: () => void;
   onRegenScript: () => void;
   disabled: boolean;
-  running?: boolean;
+  /** D2: step ini yang menunggu aksi user → kartu tidak auto-collapse. */
+  isCurrent?: boolean;
+  /** D6: pesan error step ini (ditampilkan di dalam kartu). */
+  errorMessage?: string | null;
+  /** D4: 1 baris penjelasan saat kartu terkunci. */
+  lockedHint?: string;
   progress?: number;
   statusMessage?: string;
   showPercent?: boolean;
-  thinkSteps?: string[];
-  thinkActiveIndex?: number;
+  /** D8: proses >20 dtk → peringatan jangan tutup halaman. */
+  slow?: boolean;
+  /** Fase 4B: accordion pengaturan audio dikendalikan halaman (dibuka dari hint sticky bar). */
+  audioSettingsOpen?: boolean;
+  onAudioSettingsToggle?: (open: boolean) => void;
 }
 
 export function ScriptCard(p: ScriptCardProps) {
@@ -40,13 +47,18 @@ export function ScriptCard(p: ScriptCardProps) {
     ? `${p.script.scenes?.length ?? 0} scene · ${p.script.wordCount ?? 0} kata`
     : undefined;
 
-  const [audioOpen, setAudioOpen] = useState(false);
+  const [audioOpenInternal, setAudioOpenInternal] = useState(false);
+  // Fase 4B: kalau halaman mengirim `audioSettingsOpen` (dari hint "Suara: ..."
+  // di sticky bar), accordion dikendalikan halaman; jika tidak, state lokal.
+  const audioOpen = p.audioSettingsOpen ?? audioOpenInternal;
+  const toggleAudio = () =>
+    p.onAudioSettingsToggle ? p.onAudioSettingsToggle(!audioOpen) : setAudioOpenInternal(!audioOpen);
 
   // Controlli audio in accordion chiuso di default — non bloccano il flusso.
   const audioOpenBtn = p.script && (
     <button
       type="button"
-      onClick={() => setAudioOpen(!audioOpen)}
+      onClick={toggleAudio}
       className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/40"
       aria-expanded={audioOpen}
       aria-controls="script-audio-options"
@@ -144,14 +156,22 @@ export function ScriptCard(p: ScriptCardProps) {
     </div>
   );
 
-  const actions = p.script && (
-    <div className="flex gap-2">
-      <Button size="sm" onClick={p.onContinueAudio} disabled={p.disabled} className="gap-1.5">
-        <ArrowDown className="h-4 w-4" /> Lanjut ke Audio
-      </Button>
-      <Button size="sm" variant="outline" onClick={p.onRegenScript} disabled={p.disabled} className="gap-1.5">
+  // D3: aksi sekunder tetap di dalam kartu (min 44px). Aksi utama step ini
+  // ada di sticky bar; tombol inline hanya untuk state ready.
+  const secondary = p.script && p.mode !== "error" && (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={p.onRegenScript}
+        disabled={p.disabled}
+        className="h-11 gap-1.5"
+      >
         <RefreshCw className="h-4 w-4" /> Ulangi Script
       </Button>
+      {/* 5A: regenerate script pada project yang sama mendebet 1 kredit bulanan
+          (route /api/generate-script selalu memotong 1 kredit). */}
+      <span className="text-xs text-muted-foreground">Memakai 1 kredit</span>
     </div>
   );
 
@@ -160,21 +180,30 @@ export function ScriptCard(p: ScriptCardProps) {
       mode={p.mode}
       stepLabel="Langkah 1 · Script"
       summary={summary}
-      running={p.running}
+      forceOpen={p.isCurrent}
+      lockedHint={p.lockedHint}
       progress={p.progress}
       statusMessage={p.statusMessage}
       showPercent={p.showPercent}
-      thinkSteps={p.thinkSteps}
-      thinkActiveIndex={p.thinkActiveIndex}
+      slow={p.slow}
+      errorTitle="Gagal membuat script"
+      errorMessage={p.errorMessage}
+      onRetry={p.onRegenScript}
     >
       {p.script && (
         <div className="max-h-72 overflow-y-auto rounded-lg bg-muted/40 p-4 text-sm leading-relaxed whitespace-pre-wrap">
           {p.script.fullScript}
         </div>
       )}
+      {p.mode === "ready" && (
+        <p className="text-xs text-muted-foreground">
+          Tulis topik di panel atas, lalu tekan tombol{" "}
+          <span className="font-medium text-foreground">Buat Script</span> di bar bawah.
+        </p>
+      )}
       {audioOpenBtn}
       {audioOptions}
-      {actions}
+      {secondary}
     </PipelineCard>
   );
 }

@@ -114,6 +114,22 @@
   animation: progress-pulse 2s ease-in-out infinite;
 }
 
+/* D8: bar progres indeterminate — dipakai saat belum ada angka riil
+   (script/audio/subtitle, dan fase antre render video). */
+@keyframes bar-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+.bar-indeterminate {
+  animation: bar-indeterminate 1.4s ease-in-out infinite;
+  will-change: transform;
+}
+
 /* Shimmer sweep untuk badge "Paling Populer — CSS-only, hanya transform */
 @keyframes shimmer-sweep {
   from {
@@ -165,6 +181,7 @@
     animation: none;
   }
   .step-active,
+  .bar-indeterminate,
   .shimmer-sweep::after {
     animation: none;
   }

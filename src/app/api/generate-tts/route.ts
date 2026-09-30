@@ -104,6 +104,16 @@ export async function POST(request: NextRequest) {
     let providerToUse: TTSProvider = provider as TTSProvider;
 
     if (preview !== true) {
+      // 5D: TTS non-preview memakai kredit + kuota harian TTS → wajib login.
+      // Preview TETAP terbuka untuk anon (guard PREVIEW_USED di atas); 401 ini
+      // ditangkap klien sebagai sinyal membuka gate daftar (bukan error merah).
+      if (!ttsUser) {
+        return NextResponse.json(
+          { success: false, code: "AUTH_REQUIRED", error: "Daftar gratis untuk melanjutkan." },
+          { status: 401 }
+        );
+      }
+
       const usage = ttsUser
         ? await getUsageForUser(ttsUser.id)
         : await getUsage(identityKey);

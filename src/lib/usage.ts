@@ -60,6 +60,25 @@ const PLAN_CREDITS: Record<PlanTier, number> = {
 
 const USAGE_TABLE = "user_usage";
 
+// ============================================================
+// STATUS DEBET EKSPLISIT (Fase 4A) — refund HANYA untuk "charged"
+// ============================================================
+/**
+ * `charged`   → kredit BENAR-BENAR terpotong di period ini (aman untuk refund).
+ * `exhausted` → kuota habis / row belum ada → request ditolak 402 (tanpa debet).
+ * `failopen`  → error DB/network (bukan "function not found") → kredit TIDAK
+ *               terpotong tetapi request diizinkan. JANGAN refund jalur ini,
+ *               karena tidak ada yang dipotong (refund akan membuat saldo naik).
+ */
+export type DebitStatus = "charged" | "exhausted" | "failopen";
+
+export interface DebitResult {
+  status: DebitStatus;
+  /** Period (YYYY-MM) yang dipakai debet — WAJIB diteruskan apa adanya ke refund. */
+  period: string;
+}
+
+
 /**
  * `identity_key` untuk baris jalur AKUN.
  *
@@ -198,7 +217,7 @@ export async function getUsage(identityKey: string): Promise<UsageResult> {
  * Fail-open: hanya untuk network/DB error yang bukan "function not found" —
  * setelah migration 014 deploy, jalur normal selalu atomic.
  */
-export async function decrementCredit(identityKey: string): Promise<boolean> {
+export async function decrementCredit(identityKey: string): Promise<DebitResult> {
   const period = currentPeriod();
   const supabase = createServiceRoleClient();
 
@@ -215,18 +234,20 @@ export async function decrementCredit(identityKey: string): Promise<boolean> {
       if (isFunctionNotFound(error)) {
         // Migration 014 belum deploy → guarded fallback (never overspend).
         console.warn("[usage] decrement_credit RPC belum tersedia, fallback guarded");
-        return fallbackDecrementCredit(identityKey, period);
+        const charged = await fallbackDecrementCredit(identityKey, period);
+        return { status: charged ? "charged" : "exhausted", period };
       }
       // Error DB lain — fail-open konsisten doctrine codebase.
       console.warn("[usage] decrementCredit error (fail-open):", error.message);
-      return true;
+      return { status: "failopen", period };
     }
 
     // data === null → UPDATE tidak match → kuota habis / row belum ada.
-    return data !== null && data !== undefined;
+    const charged = data !== null && data !== undefined;
+    return { status: charged ? "charged" : "exhausted", period };
   } catch (e) {
     console.warn("[usage] decrementCredit RPC error (fail-open):", e instanceof Error ? e.message : e);
-    return true;
+    return { status: "failopen", period };
   }
 }
 
@@ -445,7 +466,7 @@ export async function getUsageForUser(userId: string): Promise<UsageResult> {
  * DECREMENT credit keyed by user_id — panggil ONCE per project di
  * /api/generate-script voor user login. Atomic via RPC by_user (018).
  */
-export async function decrementCreditForUser(userId: string): Promise<boolean> {
+export async function decrementCreditForUser(userId: string): Promise<DebitResult> {
   const period = currentPeriod();
   const supabase = createServiceRoleClient();
 
@@ -459,24 +480,26 @@ export async function decrementCreditForUser(userId: string): Promise<boolean> {
       if (isFunctionNotFound(error)) {
         // Migration 018 belum deploy → guarded fallback (never overspend).
         console.warn("[usage] decrement_credit_by_user RPC belum tersedia, fallback guarded");
-        return fallbackDecrementCreditByUser(userId, period);
+        const charged = await fallbackDecrementCreditByUser(userId, period);
+        return { status: charged ? "charged" : "exhausted", period };
       }
       // Error DB lain — fail-open konsisten doc codebase.
       console.warn(
         "[usage] decrementCreditForUser error (fail-open): " +
           formatSupabaseError(describeSupabaseError(error))
       );
-      return true;
+      return { status: "failopen", period };
     }
 
     // data === null → UPDATE tidak match → kuota habis / row belum ada.
-    return data !== null && data !== undefined;
+    const charged = data !== null && data !== undefined;
+    return { status: charged ? "charged" : "exhausted", period };
   } catch (e) {
     console.warn(
       "[usage] decrementCreditForUser RPC error (fail-open): " +
         formatSupabaseError(describeSupabaseError(e))
     );
-    return true;
+    return { status: "failopen", period };
   }
 }
 
@@ -528,6 +551,117 @@ export async function checkCreditsForUser(userId: string): Promise<boolean> {
   const period = currentPeriod();
   const row = await fetchOrCreateByUser(userId, period);
   return row.credits_total > 0 && row.credits_used < row.credits_total;
+}
+
+// ============================================================
+// REFUND KREDIT (Fase 4A) — butuh migration 031_credit_refund.sql
+// ============================================================
+// Aturan pemakaian (dipatuhi src/lib/credit-refund.ts):
+//   1. Refund HANYA bila debet berstatus "charged" di request yang sama.
+//   2. Kunci idempotensi deterministik per kejadian (mis. script:<projectId>:<requestId>)
+//      ⇒ pemanggilan kedua tidak menambah saldo (RPC membalas -1).
+//   3. Period yang dikirim adalah PERIOD DEBET, bukan period saat refund dipanggil.
+//   4. Fungsi di sini TIDAK PERNAH throw dan tidak pernah menggagalkan respons
+//      error yang sedang dikirim: RPC belum deploy → "unavailable", error
+//      sementara → 1× retry lalu "error" (log saja).
+
+export type RefundStatus = "refunded" | "already" | "unavailable" | "error";
+
+export interface RefundResult {
+  status: RefundStatus;
+  /** `credits_used` setelah refund; null bila tidak ada yang dikembalikan. */
+  creditsUsed: number | null;
+}
+
+export interface RefundOptions {
+  /** Period DEBET (YYYY-MM) — bukan `currentPeriod()` saat refund. */
+  period: string;
+  /** Kunci idempotensi per kejadian (deterministik, bukan acak). */
+  idempotencyKey: string;
+  reason?: string;
+}
+
+/** 1 percobaan + 1 retry untuk error sementara (network/5xx). */
+const REFUND_MAX_ATTEMPTS = 2;
+
+/** Terjemahkan nilai balik RPC: -1 = sudah pernah di-refund (sukses idempoten). */
+function interpretRefund(data: unknown): RefundResult {
+  if (data === -1) return { status: "already", creditsUsed: null };
+  if (typeof data === "number") return { status: "refunded", creditsUsed: data };
+  return { status: "error", creditsUsed: null };
+}
+
+/** Refund jalur ANON. Tidak pernah throw. */
+export async function refundCredit(
+  identityKey: string,
+  opts: RefundOptions
+): Promise<RefundResult> {
+  const supabase = createServiceRoleClient();
+
+  for (let attempt = 1; attempt <= REFUND_MAX_ATTEMPTS; attempt++) {
+    try {
+      const { data, error } = await supabase.rpc("refund_credit", {
+        p_identity_key: identityKey,
+        p_period: opts.period,
+        p_idempotency_key: opts.idempotencyKey,
+        p_reason: opts.reason ?? null,
+      });
+
+      if (!error) return interpretRefund(data);
+
+      if (isFunctionNotFound(error)) {
+        // Migration 031 belum deploy → refund dilewati (bukan kegagalan request).
+        console.warn("[usage] refund_credit RPC belum tersedia — refund dilewati");
+        return { status: "unavailable", creditsUsed: null };
+      }
+      console.warn(
+        `[usage] refundCredit error (attempt ${attempt}/${REFUND_MAX_ATTEMPTS}): ${error.message}`
+      );
+    } catch (e) {
+      console.warn(
+        `[usage] refundCredit throw (attempt ${attempt}/${REFUND_MAX_ATTEMPTS}): ` +
+          formatSupabaseError(describeSupabaseError(e))
+      );
+    }
+  }
+
+  return { status: "error", creditsUsed: null };
+}
+
+/** Refund jalur AKUN (user_id) — mirror 018/028. Tidak pernah throw. */
+export async function refundCreditForUser(
+  userId: string,
+  opts: RefundOptions
+): Promise<RefundResult> {
+  const supabase = createServiceRoleClient();
+
+  for (let attempt = 1; attempt <= REFUND_MAX_ATTEMPTS; attempt++) {
+    try {
+      const { data, error } = await supabase.rpc("refund_credit_by_user", {
+        p_user_id: userId,
+        p_period: opts.period,
+        p_idempotency_key: opts.idempotencyKey,
+        p_reason: opts.reason ?? null,
+      });
+
+      if (!error) return interpretRefund(data);
+
+      if (isFunctionNotFound(error)) {
+        console.warn("[usage] refund_credit_by_user RPC belum tersedia — refund dilewati");
+        return { status: "unavailable", creditsUsed: null };
+      }
+      console.warn(
+        `[usage] refundCreditForUser error (attempt ${attempt}/${REFUND_MAX_ATTEMPTS}): ${error.message}`
+      );
+    } catch (e) {
+      console.warn(
+        `[usage] refundCreditForUser throw (attempt ${attempt}/${REFUND_MAX_ATTEMPTS}): ` +
+          formatSupabaseError(describeSupabaseError(e))
+      );
+    }
+  }
+
+  return { status: "error", creditsUsed: null };
 }
 
 /** Hasil penulisan plan keyed by user_id (kegagalan membawa penyebabnya). */

@@ -24,30 +24,60 @@ export function makeDataUrl(content: string, mime: string): string {
   }
 }
 
-/** Progress bar dengan thumb — reusable untuk audio & video. */
+/**
+ * Seek bar dengan area sentuh ≥44px (D10) — dipakai audio & video.
+ * Tap/klik di mana pun pada area 44px langsung melakukan seek, sehingga tetap
+ * bisa dipakai di perangkat sentuh (tanpa hover). Bisa juga dioperasikan dengan
+ * panah kiri/kanan pada keyboard.
+ */
 export function ProgressBar({
   value,
   duration,
   onSeek,
+  label = "Posisi putar",
 }: {
   value: number;
   duration: number;
   onSeek: (t: number) => void;
+  label?: string;
 }) {
+  const trackRef = useRef<HTMLDivElement | null>(null);
   const pct = duration > 0 ? Math.min(100, (value / duration) * 100) : 0;
+
+  const seekFromClientX = (clientX: number) => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || duration <= 0) return;
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    onSeek(ratio * duration);
+  };
+
   return (
-    <div
-      className="group/progress relative h-1.5 w-full cursor-pointer rounded-full bg-muted-foreground/20"
-      onClick={(e) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const ratio = (e.clientX - rect.left) / rect.width;
-        onSeek(ratio * duration);
-      }}
-    >
+    <div className="flex h-11 w-full items-center">
       <div
-        className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary to-fuchsia-500"
-        style={{ width: `${pct}%` }}
-      />
+        ref={trackRef}
+        role="slider"
+        tabIndex={0}
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={Math.round(duration) || 0}
+        aria-valuenow={Math.round(value) || 0}
+        onClick={(e) => seekFromClientX(e.clientX)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            onSeek(Math.max(0, value - 5));
+          } else if (e.key === "ArrowRight") {
+            e.preventDefault();
+            onSeek(Math.min(duration || 0, value + 5));
+          }
+        }}
+        className="relative h-1.5 w-full cursor-pointer rounded-full bg-muted-foreground/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <div
+          className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary to-fuchsia-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
     </div>
   );
 }
@@ -67,12 +97,12 @@ export function VideoPlayer({ src }: { src: string }) {
   };
 
   return (
-    <div className="group relative overflow-hidden rounded-xl border bg-black">
+    <div className="group relative mx-auto w-full max-w-[26rem] overflow-hidden rounded-xl border bg-black">
       <video
         ref={ref}
         src={proxyUrl("api/video-proxy", src)}
         preload="metadata"
-        className="w-full aspect-video"
+        className="aspect-[9/16] max-h-[70dvh] w-full object-contain"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => {
@@ -94,7 +124,8 @@ export function VideoPlayer({ src }: { src: string }) {
           </span>
         </button>
       )}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
+      {/* D10: kontrol selalu terlihat (perangkat sentuh tidak punya hover) */}
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 pb-1 pt-2">
         <ProgressBar
           value={current}
           duration={duration}

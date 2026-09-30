@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useProjectStore } from "@/lib/store/projectStore";
 import {
   PipelineStep,
@@ -14,6 +14,8 @@ import {
 import { CategoryId } from "@/lib/categories/types";
 import { DurationTier } from "@/lib/duration";
 import { providerLabel } from "@/lib/constants";
+import { decideWatchdog } from "@/lib/pipeline/video-watchdog";
+import { planChainSteps } from "@/lib/pipeline/resume-action";
 import { generateId, sleep } from "@/lib/utils";
 import { track } from "@/lib/posthog";
 
@@ -45,16 +47,53 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
   }
 }
 
+/**
+ * Fase 4B/5B: tempelkan `code` (+ waktu tunggu Retry-After) ke Error supaya UI
+ * bisa bereaksi spesifik: 402 → upgrade, 429 → tombol disabled, 401 → gate daftar.
+ */
+function withErrorCode(
+  err: Error,
+  status: number,
+  apiCode?: string | null,
+  retryAfterHeader?: string | null
+): Error {
+  const code =
+    apiCode ||
+    (status === 402
+      ? "CREDIT_EXHAUSTED"
+      : status === 429
+        ? "RATE_LIMITED"
+        : status === 401
+          ? "AUTH_REQUIRED"
+          : "");
+  const target = err as Error & { code?: string; retryAfterSeconds?: number };
+  if (code) target.code = code;
+
+  const seconds = Number(retryAfterHeader);
+  if (Number.isFinite(seconds) && seconds > 0) target.retryAfterSeconds = seconds;
+  return err;
+}
+
 export interface PipelineProgress {
   currentStep: PipelineStep;
   progress: number; // 0-100 — hanya bermakna untuk video (data SSE riil)
   statusMessage: string;
   isRunning: boolean;
   error: string | null;
-  /** Langkah "thinking" step aktif (script/audio/subtitle) — muncul satu per satu. */
-  thinkSteps?: string[];
-  /** Indeks langkah thinking yang sudah muncul (0-based). */
-  thinkActiveIndex?: number;
+  /** D6: destination step yang sedang gagal — untuk retry di kartu + sticky bar. */
+  errorStep: PipelineStep | null;
+  /** D7: pesan error subtitle (dependency internal audio → video). */
+  subtitleError: string | null;
+  /** Fase 4B: kode error API (mis. "CREDIT_EXHAUSTED" untuk 402) → menentukan aksi lanjutan. */
+  errorCode?: string | null;
+  /** Fase 4B: server memakai ulang job render yang masih hidup (bukan render baru). */
+  videoJobActive?: boolean;
+  /** 5B: sisa detik dari header Retry-After (untuk pesan "coba lagi dalam …"). */
+  retryAfterSeconds?: number | null;
+  /** 5D: endpoint mahal menolak anon (401) → halaman membuka gate daftar. */
+  requiresAuth?: boolean;
+  /** D8: step berjalan >20 dtk → UI menampilkan "jangan tutup halaman". */
+  slow?: boolean;
   limitProject?: { id?: string; title?: string | null } | null;
 }
 
@@ -84,38 +123,12 @@ const STEP_MESSAGES: Record<PipelineStep, string> = {
   export: "Menyiapkan hasil akhir...",
 };
 
-/** Urutan langkah "thinking" per step (script/audio/subtitle) — muncul satu per satu.
- *  Video memakai % riil via SSE, jadi kosong. */
-const STEP_THINK_STEPS: Record<PipelineStep, string[]> = {
-  script: [
-    "Menganalisis topik",
-    "Menyusun struktur naskah",
-    "Menulis pembuka (hook)",
-    "Mengembangkan narasi & scene",
-    "Menyempurnakan penutup & CTA",
-    "Menyimpan naskah",
-  ],
-  audio: [
-    "Menyiapkan suara",
-    "Menghasilkan narasi (TTS)",
-    "Memproses audio",
-    "Mengunggah audio ke cloud",
-    "Menyelesaikan audio",
-  ],
-  subtitle: [
-    "Memuat audio",
-    "Membuat subtitle",
-    "Menyinkronkan timing",
-    "Menyimpan subtitle",
-  ],
-  video: [],   // progress % riil via SSE — tanpa thinking steps
-  export: [],
-};
-
-/** Interval tiap langkah thinking muncul (ms). */
-const THINK_TIMING_MS = 750;
-
-// (Fake progress interval dihapus — persen hanya ditampilkan untuk video via SSE.)
+/**
+ * D8: ambang "proses lama". Setelah ini UI menampilkan
+ * "Masih diproses, jangan tutup halaman." Think-steps berbasis timer dihapus —
+ * progres hanya berupa status nyata + bar indeterminate.
+ */
+const SLOW_STEP_MS = 20_000;
 
 /**
  * Mapping Genre ACS → CategoryId engine (1:1 karena sudah disamakan)
@@ -143,9 +156,20 @@ export function usePipeline() {
     statusMessage: "",
     isRunning: false,
     error: null,
+    errorStep: null,
+    subtitleError: null,
   });
 
   const store = useProjectStore();
+
+  /**
+   * REL-06: lock re-entrancy berbasis REF (bukan state).
+   *
+   * `isRunning` baru berubah setelah re-render, jadi dua klik cepat / klik +
+   * Enter masih bisa lolos dua-duanya dan menembak 2 job render (CPU + kuota
+   * harian dobel). Ref berubah sinkron → klik kedua langsung ditolak.
+   */
+  const busyRef = useRef(false);
 
   const generateSingleStep = useCallback(
     async (step: PipelineStep, projectId: string, audioOptions?: AudioOptions, subtitleAudioUrl?: string): Promise<boolean | string> => {
@@ -164,39 +188,25 @@ export function usePipeline() {
         progress: 0,
         statusMessage: STEP_MESSAGES[step],
         error: null,
+        // D6: mulai/retry step → bersihkan error step.
+        errorStep: null,
+        // Fase 4B: bersihkan kode error percobaan sebelumnya.
+        errorCode: null,
+        // D8: reset penanda "proses lama" untuk step baru.
+        slow: false,
+        // D7: mulai percobaan subtitle → sembunyikan error subtitle sebelumnya.
+        ...(step === "subtitle" ? { subtitleError: null } : {}),
       }));
 
-      const isVideoStep = step === "video";
-      const thinkList = STEP_THINK_STEPS[step] || [];
-      let progressInterval: ReturnType<typeof setInterval> | undefined;
-      let thinkTimer: ReturnType<typeof setInterval> | undefined;
+      // D8: tidak ada lagi nudge % palsu & think-steps berbasis timer. Yang
+      // ditampilkan: statusMessage nyata + bar indeterminate, dan penanda
+      // "proses lama" setelah SLOW_STEP_MS.
+      let slowTimer: ReturnType<typeof setTimeout> | undefined;
 
       try {
-        if (!isVideoStep) {
-          // TANPA angka % palsu — tampilkan langkah "thinking" satu per satu (CSS).
-          setProgress((prev) => ({
-            ...prev,
-            thinkSteps: thinkList,
-            thinkActiveIndex: 0,
-            statusMessage: thinkList[0] || prev.statusMessage,
-          }));
-          thinkTimer = setInterval(() => {
-            setProgress((prev) => {
-              const next = Math.min((prev.thinkActiveIndex ?? 0) + 1, thinkList.length - 1);
-              return {
-                ...prev,
-                thinkActiveIndex: next,
-                statusMessage: thinkList[next] || prev.statusMessage,
-              };
-            });
-          }, THINK_TIMING_MS);
-        } else {
-          // Video: hanya nudge kecil agar tidak terlihat "beku" sampai frame SSE pertama.
-          const cap = 15;
-          progressInterval = setInterval(() => {
-            setProgress((prev) => ({ ...prev, progress: Math.min(prev.progress + 1, cap) }));
-          }, 600);
-        }
+        slowTimer = setTimeout(() => {
+          setProgress((prev) => ({ ...prev, slow: true }));
+        }, SLOW_STEP_MS);
 
         switch (step) {
           case "script": {
@@ -232,7 +242,7 @@ export function usePipeline() {
                 throw new Error("Batas project ber-isi tercapai. Hapus project terlama: "+ oldestTitle);
               }
             }
-throw new Error(json.error || "Generate script gagal");
+throw withErrorCode(new Error(json.error || "Generate script gagal"), res.status, json.code, res.headers.get("Retry-After"));
             }
             const script = json.data as ScriptResult;
 
@@ -313,13 +323,15 @@ throw new Error(json.error || "Generate script gagal");
 
             if (!res.ok) {
               let errorMsg = `TTS gagal (${res.status})`;
+              let apiCode: string | null = null;
               try {
                 const json = await res.json();
                 if (json.error) errorMsg = json.error;
+                if (json.code) apiCode = json.code;
               } catch {
                 // ignore — response bukan JSON (mungkin error binary)
               }
-              throw new Error(errorMsg);
+              throw withErrorCode(new Error(errorMsg), res.status, apiCode, res.headers.get("Retry-After"));
             }
 
             // ===== PREVIEW: response binary audio/mpeg → Blob URL (hanya untuk browser) =====
@@ -431,6 +443,7 @@ throw new Error(json.error || "Generate script gagal");
               language: subJson.data.language || "id-ID",
               url: subJson.data.subtitleUrl,
             } as SubtitleResult);
+            setProgress((prev) => ({ ...prev, subtitleError: null }));
             break;
           }
           case "video": {
@@ -513,7 +526,12 @@ throw new Error(json.error || "Generate script gagal");
 
             if (!vidRes.ok) {
               const errBody = await vidRes.json().catch(() => ({}));
-              throw new Error(errBody.error || `Video render gagal (HTTP ${vidRes.status})`);
+              throw withErrorCode(
+                new Error(errBody.error || `Video render gagal (HTTP ${vidRes.status})`),
+                vidRes.status,
+                errBody.code,
+                vidRes.headers.get("Retry-After")
+              );
             }
 
             const vidJson = await vidRes.json();
@@ -522,74 +540,177 @@ throw new Error(json.error || "Generate script gagal");
             }
 
             const jobId = vidJson.jobId;
+            // Fase 4C: hanya pesan SSE milik job ini yang dipakai. Pesan dari job
+            // lama (project sama, klik sebelumnya) diabaikan supaya `done` job lama
+            // tidak menyelesaikan tunggu job baru.
+            const activeJobId = jobId;
             console.log(`[Pipeline] Job enqueued: ${jobId}`);
 
-            // 2. Subscribe progress via EventSource (SSE dari Redis pub/sub)
-            const videoUrl = await new Promise<string>((resolve, reject) => {
-              let streamError: string | null = null;
-              let doneUrl: string | undefined;
-              let doneResolution: string | undefined;
+            // Worker belum tentu langsung mengambil job (antre di BullMQ) →
+            // katakan apa adanya, bukan angka % palsu. `reused` = server
+            // menemukan job aktif untuk project+media yang sama (REL-06):
+            // kita menyambung ke job itu, TANPA menembak job kedua.
+            setProgress((prev) => ({
+              ...prev,
+              // Fase 4B: dipakai pemilih aksi lanjutan ("Sambungkan ke Render").
+              videoJobActive: vidJson.reused === true,
+              statusMessage: vidJson.reused
+                ? "Menyambung ke render yang sedang berjalan..."
+                : "Menunggu antrean render...",
+            }));
 
-              const es = new EventSource(`/api/video-progress?projectId=${encodeURIComponent(project.id)}`);
+            // 2. Subscribe progress via EventSource (SSE dari Redis pub/sub)
+            // `project.id` diambil dulu: di dalam `function` hoisted, TS tidak
+            // membawa penyempitan tipe (narrowing) dari scope luar.
+            const streamProjectId = project.id;
+            const videoUrl = await new Promise<string>((resolve, reject) => {
+              let settled = false;
+              let streamError: string | null = null;
+              let lastPercent: number | null = null;
+              let recoveryUsed = false;
+              let lastMsgAt = Date.now();
+              let es: EventSource | null = null;
 
               // Safety timeout total (15 menit — render panjang + upload)
               const TOTAL_TIMEOUT_MS = 15 * 60 * 1000;
               const totalTimer = setTimeout(() => {
-                es.close();
-                reject(new Error("Render video timeout (15 menit). Coba render ulang."));
+                finish(() => reject(new Error("Render video timeout (15 menit). Coba render ulang.")));
               }, TOTAL_TIMEOUT_MS);
 
-              es.onmessage = (event) => {
-                let msg: any;
-                try {
-                  msg = JSON.parse(event.data);
-                } catch {
+              // REL-01: watchdog. Ambang mengikuti fase: 120 dtk bila belum ada
+              // percent (antre/persiapan), 30 dtk saat FFmpeg mengirim progress,
+              // 120 dtk lagi saat menunggu upload (lihat
+              // src/lib/pipeline/video-watchdog.ts). Tidak ada endpoint status
+              // job terpisah → pemulihan = reconnect sekali.
+              const watchdogTimer = setInterval(() => {
+                const decision = decideWatchdog({
+                  lastPercent,
+                  recoveryUsed,
+                  idleMs: Date.now() - lastMsgAt,
+                });
+                if (decision === "wait") return;
+                if (decision === "recover") {
+                  recover();
                   return;
                 }
+                finish(() => reject(new Error("Progres render terputus. Coba render ulang.")));
+              }, 1_000);
 
-                console.log("[SSE progress]", msg);
+              function cleanup() {
+                clearInterval(watchdogTimer);
+                clearTimeout(totalTimer);
+                // Tutup koneksi supaya tidak ada progress ganda saat "Coba Lagi".
+                es?.close();
+                es = null;
+              }
 
-                if (typeof msg.percent === "number") {
-                  setProgress((prev) => {
-                    const next = Math.max(prev.progress, msg.percent);
-                    return { ...prev, progress: next, statusMessage: `Merender video... ${Math.round(next)}%` };
-                  });
-                } else if (msg.status === "processing") {
-                  setProgress((prev) => ({
-                    ...prev,
-                    statusMessage: "Memproses render di server...",
-                  }));
-                } else if (msg.status === "uploading") {
-                  setProgress((prev) => ({
-                    ...prev,
-                    statusMessage: "Mengunggah video ke cloud...",
-                  }));
-                } else if (msg.status === "done") {
-                  doneUrl = msg.videoUrl;
-                  doneResolution = msg.resolution;
-                  clearTimeout(totalTimer);
-                  es.close();
-                  if (doneUrl) {
-                    resolve(doneUrl);
-                  } else {
-                    reject(new Error("Video render selesai tanpa URL"));
+              function finish(next: () => void) {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                next();
+              }
+
+              function recover() {
+                if (settled) return;
+                recoveryUsed = true;
+                lastMsgAt = Date.now();
+                console.warn("[Pipeline] progres video sepi — reconnect SSE sekali");
+                setProgress((prev) => ({
+                  ...prev,
+                  statusMessage: "Koneksi progres tersendat — menyambung ulang...",
+                }));
+                openStream();
+              }
+
+              // REL-06: tiap koneksi diberi nomor urut. Pesan/error dari koneksi
+              // LAMA (yang sudah di-close saat recover) diabaikan total, supaya
+              // stream job lama tidak mencampuri percobaan retry yang baru.
+              let streamSeq = 0;
+              function openStream() {
+                if (settled) return;
+                es?.close(); // jangan sampai ada dua koneksi hidup
+                const seq = ++streamSeq;
+                const current = new EventSource(
+                  `/api/video-progress?projectId=${encodeURIComponent(streamProjectId)}`
+                );
+                es = current;
+                const isStale = () => settled || seq !== streamSeq;
+
+                current.onopen = () => {
+                  if (isStale()) return;
+                  lastMsgAt = Date.now();
+                };
+
+                current.onmessage = (event) => {
+                  if (isStale()) return;
+                  lastMsgAt = Date.now();
+                  let msg: any;
+                  try {
+                    msg = JSON.parse(event.data);
+                  } catch {
+                    return;
                   }
-                } else if (msg.status === "error") {
-                  streamError = msg.message || "Video render gagal";
-                  clearTimeout(totalTimer);
-                  es.close();
-                  reject(new Error(streamError || "Video render gagal"));
-                }
-              };
 
-              es.onerror = () => {
-                // EventSource auto-reconnect; hanya reject jika sudah ada error message
-                if (streamError) {
-                  clearTimeout(totalTimer);
-                  es.close();
-                  reject(new Error(streamError));
-                }
-              };
+                  console.log("[SSE progress]", msg);
+
+                  // Fase 4C + 5F: buang pesan dari job lain. Worker kini
+                  // melampirkan jobId pada SEMUA pesan (processing, percent,
+                  // done, error) — pesan SSE lama tidak lagi menimpa state
+                  // render yang sedang berjalan.
+                  if (msg.jobId && activeJobId && msg.jobId !== activeJobId) {
+                    console.warn(`[SSE progress] abaikan pesan job lain: ${msg.jobId}`);
+                    return;
+                  }
+
+                  if (typeof msg.percent === "number") {
+                    lastPercent = msg.percent;
+                    setProgress((prev) => {
+                      const next = Math.max(prev.progress, msg.percent);
+                      return { ...prev, progress: next, statusMessage: `Merender video... ${Math.round(next)}%` };
+                    });
+                  } else if (msg.status === "processing") {
+                    setProgress((prev) => ({
+                      ...prev,
+                      statusMessage: "Memproses render di server...",
+                    }));
+                  } else if (msg.status === "uploading") {
+                    setProgress((prev) => ({
+                      ...prev,
+                      statusMessage: "Mengunggah video ke cloud...",
+                    }));
+                  } else if (msg.status === "done") {
+                    const url = msg.videoUrl as string | undefined;
+                    if (!url) {
+                      finish(() => reject(new Error("Video render selesai tanpa URL")));
+                      return;
+                    }
+                    finish(() => resolve(url));
+                  } else if (msg.status === "error") {
+                    streamError = msg.message || "Video render gagal";
+                    const message = streamError;
+                    finish(() => reject(new Error(message || "Video render gagal")));
+                  }
+                };
+
+                current.onerror = () => {
+                  if (isStale()) return;
+                  if (streamError) {
+                    const message = streamError;
+                    finish(() => reject(new Error(message || "Video render gagal")));
+                    return;
+                  }
+                  if (!recoveryUsed) {
+                    recover();
+                    return;
+                  }
+                  finish(() =>
+                    reject(new Error("Koneksi progres render terputus. Coba render ulang."))
+                  );
+                };
+              }
+
+              openStream();
             });
 
             // ===== TRACING SEMENTARA — verifikasi setVideoResult =====
@@ -629,96 +750,185 @@ throw new Error(json.error || "Generate script gagal");
         return true;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Terjadi kesalahan";
+        // Fase 4B: kode dari API (CREDIT_EXHAUSTED/RATE_LIMITED/AUTH_REQUIRED)
+        // menentukan aksi lanjutan di sticky bar.
+        const errorCode = (error as { code?: string } | null)?.code ?? null;
+        const retryAfterSeconds =
+          (error as { retryAfterSeconds?: number } | null)?.retryAfterSeconds ?? null;
+
+        // 5D: 401 dari endpoint mahal (anon) BUKAN error merah — cukup sinyal
+        // untuk membuka gate daftar; step tidak ditandai gagal.
+        if (errorCode === "AUTH_REQUIRED") {
+          console.warn("[Pipeline] endpoint butuh login — buka gate daftar");
+          setProgress((prev) => ({
+            ...prev,
+            progress: 0,
+            error: null,
+            errorCode,
+            errorStep: null,
+            requiresAuth: true,
+            isRunning: false,
+          }));
+          return false;
+        }
+
         store.updateProjectStep(step, "error");
         if (step === "subtitle") {
-          // Subtitle adalah dependency internal — layan error tanpa menggagalkan audio.
+          // D7: subtitle adalah dependency internal audio → jangan pakai
+          // errorStep; kartu audio tetap "done" dengan blok error subtitle.
           console.error("[Pipeline] subtitle auto-chain error:", errorMessage);
+          setProgress((prev) => ({
+            ...prev,
+            progress: 0,
+            subtitleError: errorMessage,
+            isRunning: false,
+          }));
+          return false;
         }
         setProgress((prev) => ({
           ...prev,
           progress: 0,
           error: errorMessage,
+          errorCode,
+          retryAfterSeconds,
+          errorStep: step,
           isRunning: false,
         }));
         return false;
       } finally {
-        // Hentikan semua timer setelah API selesai (sukses/gagal).
-        if (progressInterval) clearInterval(progressInterval);
-        if (thinkTimer) clearInterval(thinkTimer);
+        // Hentikan timer "proses lama" setelah API selesai (sukses/gagal).
+        if (slowTimer) clearTimeout(slowTimer);
       }
     },
     [store]
+  );
+
+  /**
+   * D7: subtitle adalah dependency internal audio → video. Jalankan dengan
+   * retry otomatis supaya satu kegagalan (mis. jaringan) tidak langsung
+   * memblokir user di step video dengan pesan teknis.
+   */
+  const generateSubtitle = useCallback(
+    async (projectId: string, retriesLeft = 1): Promise<boolean> => {
+      const freshProject = useProjectStore.getState().projects.find((p) => p.id === projectId);
+      const audioUrl = freshProject?.audio?.url;
+      let ok = (await generateSingleStep("subtitle", projectId, undefined, audioUrl)) === true;
+      let remaining = retriesLeft;
+      while (!ok && remaining > 0) {
+        console.warn(`[Pipeline] subtitle gagal — retry otomatis (sisa ${remaining})`);
+        remaining -= 1;
+        ok = (await generateSingleStep("subtitle", projectId, undefined, audioUrl)) === true;
+      }
+      return ok;
+    },
+    [generateSingleStep]
   );
 
   // Step-by-step: generate one step at a time
   // Returns: boolean (true = sukses) untuk generate penuh, atau string URL untuk preview audio
   const generateStep = useCallback(
     async (step: PipelineStep, projectId: string, audioOptions?: AudioOptions) => {
-      setProgress((prev) => ({ ...prev, isRunning: true, error: null, limitProject: null }));
-      const result = await generateSingleStep(step, projectId, audioOptions);
-      if (result === true) {
-        store.advanceStep(step);
+      // REL-06: tolak klik/Enter dobel secara SINKRON — state `isRunning` baru
+      // berubah setelah re-render, jadi belum bisa menahan klik kedua.
+      if (busyRef.current) {
+        console.warn(`[Pipeline] step ${step} ditolak: masih ada proses berjalan`);
+        return false;
+      }
+      busyRef.current = true;
+      try {
+        setProgress((prev) => ({ ...prev, isRunning: true, error: null, errorStep: null, limitProject: null }));
+        const result = await generateSingleStep(step, projectId, audioOptions);
+        if (result === true) {
+          store.advanceStep(step);
 
-        // AUTO-CHAIN: setelah Audio sukses, otomatis generate Subtitle.
-        // Subtitle adalah dependency internal dari Video — bukan destination step.
-        // Jika subtitle gagal, Audio TETAP "done" — jangan rollback.
-        // User tetap bisa masuk Video Composition meskipun subtitle error.
-        if (step === "audio") {
-          // Ambil audioUrl dari state TERBARU (hindari stale state/race condition).
-          const freshProject = useProjectStore.getState().projects.find((p) => p.id === projectId);
-          const audioUrl = freshProject?.audio?.url;
-          await generateSingleStep("subtitle", projectId, undefined, audioUrl);
+          // AUTO-CHAIN: setelah Audio sukses, otomatis generate Subtitle.
+          // Subtitle adalah dependency internal dari Video — bukan destination step.
+          // Jika subtitle gagal, Audio TETAP "done" — jangan rollback.
+          // User tetap bisa masuk Video Composition meskipun subtitle error.
+          if (step === "audio") {
+            // Subtitle = dependency internal video → retry otomatis 1x (D7).
+            await generateSubtitle(projectId);
+          }
         }
-      }
-      setProgress((prev) => ({ ...prev, isRunning: false }));
+        setProgress((prev) => ({ ...prev, isRunning: false }));
 
-      // Beri tahu hook useUsage agar kredit/plan di-refresh setelah generate selesai.
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event("usage:refresh"));
-      }
+        // Beri tahu hook useUsage agar kredit/plan di-refresh setelah generate selesai.
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("usage:refresh"));
+        }
 
-      return result;
+        return result;
+      } finally {
+        busyRef.current = false;
+      }
     },
-    [generateSingleStep, store]
+    [generateSingleStep, generateSubtitle, store]
   );
 
   // Auto-chain behavior-aware: script → (audio+subtitle) → video in un colpo,
   // tenendo isRunning=true per tutto il percorso (niente flicker tra gli step).
   const runAutoChain = useCallback(
     async (projectId: string, opts?: { audioOptions?: AudioOptions }) => {
+      // REL-06: chain tumpang tindih (klik dobel, auto-generate beruntun, atau
+      // auto-generate + klik manual) ditolak di sini, bukan hanya lewat state.
+      if (busyRef.current) {
+        console.warn("[Pipeline] auto-chain ditolak: masih ada proses berjalan");
+        return false;
+      }
+      busyRef.current = true;
+
+      // Fase 4B + 5A: "step mana yang masih perlu dijalankan" diputuskan oleh
+      // fungsi murni planChainSteps (bisa diuji tanpa React). Setelah invalidasi
+      // hilir (5A: regen script/audio/subtitle) step yang direset WAJIB muncul
+      // lagi di sini — jangan sampai dilewati karena data basi.
+      const fresh = useProjectStore.getState().currentProject;
+      const plan = planChainSteps({
+        hasScript: !!fresh?.script?.scenes?.length,
+        hasAudio: !!fresh?.audio?.url,
+        hasSubtitle: !!fresh?.subtitle,
+        hasVideo: !!fresh?.video?.url,
+      });
+      const firstStep: PipelineStep = plan[0] ?? "video";
+
       setProgress((prev) => ({
         ...prev,
         isRunning: true,
         error: null,
-        currentStep: "script",
+        errorStep: null,
+        errorCode: null,
+        subtitleError: null,
+        currentStep: firstStep,
         progress: 0,
-        statusMessage: STEP_MESSAGES.script,
+        statusMessage: STEP_MESSAGES[firstStep],
       }));
       try {
-        const okScript = await generateSingleStep("script", projectId);
-        if (okScript !== true) return false;
-        store.advanceStep("script");
+        for (const step of plan) {
+          if (step === "subtitle") {
+            const okSubtitle = await generateSubtitle(projectId);
+            // D7: subtitle gagal → berhenti di sini (user diberi "Buat ulang
+            // subtitle" di kartu audio); jangan lanjut ke video dengan pesan teknis.
+            if (!okSubtitle) return false;
+            continue;
+          }
 
-        // AUDIO + SUBTITLE (subtitle = dependency interna di video)
-        const okAudio = await generateSingleStep("audio", projectId, opts?.audioOptions);
-        if (okAudio !== true) return false;
-        store.advanceStep("audio");
-        const freshProject = useProjectStore.getState().projects.find((p) => p.id === projectId);
-        await generateSingleStep("subtitle", projectId, undefined, freshProject?.audio?.url);
-
-        // VIDEO
-        const okVideo = await generateSingleStep("video", projectId);
-        if (okVideo !== true) return false;
-        store.advanceStep("video");
+          const ok = await generateSingleStep(
+            step,
+            projectId,
+            step === "audio" ? opts?.audioOptions : undefined
+          );
+          if (ok !== true) return false;
+          store.advanceStep(step);
+        }
         return true;
       } finally {
         setProgress((prev) => ({ ...prev, isRunning: false }));
         if (typeof window !== "undefined") {
           window.dispatchEvent(new Event("usage:refresh"));
         }
+        busyRef.current = false;
       }
     },
-    [generateSingleStep, store]
+    [generateSingleStep, generateSubtitle, store]
   );
 
   // Preview audio: fetch 7 kata pertama TANPA menyentuh progress/isRunning/step status.
@@ -794,8 +1004,11 @@ throw new Error(json.error || "Generate script gagal");
         const blob = await res.blob();
         return URL.createObjectURL(blob);
       } catch (err) {
+        // REL-05: jangan telan error — pemanggil butuh `code: PREVIEW_USED`
+        // untuk memunculkan gate "Daftar gratis". `null` hanya untuk kasus
+        // "tidak ada yang bisa di-preview" (script belum ada).
         console.error("[usePipeline] Preview audio gagal:", err);
-        return null;
+        throw err;
       }
     },
     []
@@ -808,9 +1021,15 @@ throw new Error(json.error || "Generate script gagal");
       statusMessage: "",
       isRunning: false,
       error: null,
-      thinkSteps: [],
-      thinkActiveIndex: 0,
+      errorStep: null,
+      subtitleError: null,
+      slow: false,
     });
+  }, []);
+
+  /** 5D: dipanggil halaman setelah membuka gate daftar → bersihkan sinyal 401. */
+  const resetAuthSignal = useCallback(() => {
+    setProgress((prev) => ({ ...prev, requiresAuth: false }));
   }, []);
 
 
@@ -820,5 +1039,6 @@ throw new Error(json.error || "Generate script gagal");
     runAutoChain,
     previewAudio,
     resetProgress,
+    resetAuthSignal,
   };
 }

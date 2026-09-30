@@ -17,7 +17,7 @@ vi.hoisted(() => {
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-import { getUsage, decrementCredit, checkCredits, setPlan, FREE_CREDITS } from "@/lib/usage";
+import { getUsage, decrementCredit, checkCredits, setPlan, refundCredit, FREE_CREDITS } from "@/lib/usage";
 
 // ============================================================
 // Fake in-memory "user_usage" — emulasi Postgres semantics:
@@ -80,6 +80,23 @@ class FakeUsageDb {
   all(): FakeRow[] {
     return Array.from(this.rows.values()).map((r) => ({ ...r }));
   }
+
+  /**
+   * Emulasi RPC `refund_credit` (migration 031):
+   *   - kunci idempotensi sudah dipakai → -1 (sukses idempoten, tanpa efek).
+   *   - baris tidak ada / credits_used = 0 → tidak ada yang dikembalikan (-1).
+   *   - selain itu → credits_used - 1 (guard non-negatif) & kunci dicatat.
+   */
+  refunds = new Set<string>();
+
+  refund(identityKey: string, period: string, idempotencyKey: string): number {
+    if (this.refunds.has(idempotencyKey)) return -1;
+    const row = this.rows.get(this.key(identityKey, period));
+    if (!row || row.credits_used <= 0) return -1;
+    this.refunds.add(idempotencyKey);
+    row.credits_used = Math.max(row.credits_used - 1, 0);
+    return row.credits_used;
+  }
 }
 
 // ============================================================
@@ -120,7 +137,7 @@ function selectRows(db: FakeUsageDb, url: URL): FakeRow[] {
  * `rpcAvailable=false` → semua RPC dibalas PGRST202 (function not found),
  * memaksa jalur fallback legacy (sebelum migration 014 deploy).
  */
-function createFetchHandler(db: FakeUsageDb, rpcAvailable = true) {
+function createFetchHandler(db: FakeUsageDb, rpcAvailable = true, refundFailStatus = 0) {
   return async (input: any, init: any) => {
     const url = new URL(typeof input === "string" ? input : input.url);
     const method = (init?.method || "GET").toUpperCase();
@@ -142,6 +159,14 @@ function createFetchHandler(db: FakeUsageDb, rpcAvailable = true) {
       }
       if (fn === "decrement_credit") {
         return jsonResponse(await db.decrement(body.p_identity_key, body.p_period));
+      }
+      if (fn === "refund_credit") {
+        if (refundFailStatus) {
+          return pgrstError(refundFailStatus, "XX000", "simulasi error sementara");
+        }
+        return jsonResponse(
+          db.refund(body.p_identity_key, body.p_period, body.p_idempotency_key)
+        );
       }
       return pgrstError(404, "PGRST202", `Could not find the function ${fn}`);
     }
@@ -223,20 +248,22 @@ describe("usage credit system — ATOMIC (migration 014)", () => {
     expect(usage.creditsRemaining).toBe(10);
   });
 
-  test("decrementCredit sukses → true & credits_used +1", async () => {
+  test("decrementCredit sukses → status charged (+ period debet) & credits_used +1", async () => {
     await getUsage("anon:test");
     const ok = await decrementCredit("anon:test");
 
-    expect(ok).toBe(true);
+    expect(ok.status).toBe("charged");
+    // Period debet WAJIB ikut dikembalikan agar refund memakai period yang sama.
+    expect(ok.period).toMatch(/^\d{4}-\d{2}$/);
     expect(db.all()[0].credits_used).toBe(1);
   });
 
-  test("decrementCredit kuota habis → false (RETURNING kosong = null)", async () => {
+  test("decrementCredit kuota habis → status exhausted (RETURNING kosong = null)", async () => {
     await getUsage("anon:test");
     for (let i = 0; i < FREE_CREDITS; i++) {
-      expect(await decrementCredit("anon:test")).toBe(true);
+      expect((await decrementCredit("anon:test")).status).toBe("charged");
     }
-    expect(await decrementCredit("anon:test")).toBe(false);
+    expect((await decrementCredit("anon:test")).status).toBe("exhausted");
     expect(db.all()[0].credits_used).toBe(FREE_CREDITS);
   });
 
@@ -247,8 +274,8 @@ describe("usage credit system — ATOMIC (migration 014)", () => {
       Array.from({ length: 20 }, () => decrementCredit("anon:race"))
     );
 
-    const success = results.filter((r) => r === true).length;
-    const failed = results.filter((r) => r === false).length;
+    const success = results.filter((r) => r.status === "charged").length;
+    const failed = results.filter((r) => r.status === "exhausted").length;
 
     expect(success).toBe(FREE_CREDITS);
     expect(failed).toBe(20 - FREE_CREDITS);
@@ -296,10 +323,10 @@ describe("usage credit system — FALLBACK (RPC belum deploy / PGRST202)", () =>
     await getUsage("anon:legacy");
 
     for (let i = 0; i < FREE_CREDITS; i++) {
-      expect(await decrementCredit("anon:legacy")).toBe(true);
+      expect((await decrementCredit("anon:legacy")).status).toBe("charged");
     }
     // Kuota habis → fallback .lt("credits_used", total) tidak match
-    expect(await decrementCredit("anon:legacy")).toBe(false);
+    expect((await decrementCredit("anon:legacy")).status).toBe("exhausted");
     expect(db.all()[0].credits_used).toBe(FREE_CREDITS);
   });
 test("FALLBACK TRUE-CONCURRENCY: 20 request parallel tanpa RPC → max 10 sukses (CAS anti-lost-update)", async () => {
@@ -312,8 +339,8 @@ test("FALLBACK TRUE-CONCURRENCY: 20 request parallel tanpa RPC → max 10 sukses
       Array.from({ length: 20 }, () => decrementCredit("anon:cas"))
     );
 
-    const success = results.filter((r) => r === true).length;
-    const failed = results.filter((r) => r === false).length;
+    const success = results.filter((r) => r.status === "charged").length;
+    const failed = results.filter((r) => r.status === "exhausted").length;
 
     expect(success).toBe(FREE_CREDITS);
     expect(failed).toBe(20 - FREE_CREDITS);
@@ -321,5 +348,84 @@ test("FALLBACK TRUE-CONCURRENCY: 20 request parallel tanpa RPC → max 10 sukses
     const row = db.all().find((r) => r.identity_key === "anon:cas")!;
     expect(row.credits_used).toBe(FREE_CREDITS);
     expect(row.credits_used).toBeLessThanOrEqual(row.credits_total);
+  });
+});
+
+// ============================================================
+// Fase 4A — REFUND KREDIT (migration 031): idempotensi + ketahanan
+// ============================================================
+describe("usage — refund kredit (migration 031)", () => {
+  const PERIOD = new Date().toISOString().slice(0, 7);
+
+  test("refund sukses → status refunded & credits_used turun 1", async () => {
+    mockFetch.mockImplementation(createFetchHandler(db, true));
+    await getUsage("anon:refund");
+    await decrementCredit("anon:refund");
+
+    const res = await refundCredit("anon:refund", {
+      period: PERIOD,
+      idempotencyKey: "script:p1:req-1",
+      reason: "uji",
+    });
+
+    expect(res.status).toBe("refunded");
+    expect(res.creditsUsed).toBe(0);
+    expect(db.all()[0].credits_used).toBe(0);
+  });
+
+  test("kunci sama dipakai dua kali → -1 = 'already' & saldo TIDAK turun dua kali", async () => {
+    mockFetch.mockImplementation(createFetchHandler(db, true));
+    await getUsage("anon:refund");
+    await decrementCredit("anon:refund");
+    await decrementCredit("anon:refund");
+
+    const first = await refundCredit("anon:refund", {
+      period: PERIOD,
+      idempotencyKey: "script:p1:req-2",
+    });
+    const second = await refundCredit("anon:refund", {
+      period: PERIOD,
+      idempotencyKey: "script:p1:req-2",
+    });
+
+    expect(first.status).toBe("refunded");
+    expect(second.status).toBe("already");
+    expect(db.all()[0].credits_used).toBe(1); // hanya 1 yang dikembalikan
+  });
+
+  test("RPC refund belum deploy (PGRST202) → 'unavailable', tidak throw", async () => {
+    mockFetch.mockImplementation(createFetchHandler(db, false));
+
+    await expect(
+      refundCredit("anon:refund", { period: PERIOD, idempotencyKey: "script:p1:req-3" })
+    ).resolves.toEqual({ status: "unavailable", creditsUsed: null });
+  });
+
+  test("error sementara → 1× retry lalu status error (request tidak digagalkan)", async () => {
+    mockFetch.mockImplementation(createFetchHandler(db, true, 500));
+
+    const res = await refundCredit("anon:refund", {
+      period: PERIOD,
+      idempotencyKey: "script:p1:req-4",
+    });
+
+    const refundCalls = mockFetch.mock.calls.filter((c: any[]) =>
+      String(c[0]).includes("refund_credit")
+    ).length;
+    expect(res.status).toBe("error");
+    expect(refundCalls).toBe(2); // 1 percobaan + 1 retry
+  });
+
+  test("guard non-negatif: refund tanpa debet tidak membuat saldo negatif", async () => {
+    mockFetch.mockImplementation(createFetchHandler(db, true));
+    await getUsage("anon:refund"); // credits_used = 0
+
+    const res = await refundCredit("anon:refund", {
+      period: PERIOD,
+      idempotencyKey: "script:p1:req-5",
+    });
+
+    expect(res.status).toBe("already"); // -1: tidak ada yang bisa dikembalikan
+    expect(db.all()[0].credits_used).toBe(0);
   });
 });

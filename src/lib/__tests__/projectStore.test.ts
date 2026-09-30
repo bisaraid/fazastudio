@@ -11,6 +11,7 @@ const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
 import { useProjectStore } from "@/lib/store/projectStore";
+import type { Project } from "@/lib/types";
 
 function jsonOk(body: any) {
   return { ok: true, status: 200, json: async () => body };
@@ -100,5 +101,150 @@ describe("projectStore - loadProjects (anti-crash)", () => {
     await useProjectStore.getState().loadProjects();
 
     expect(useProjectStore.getState().projects).toHaveLength(0);
+  });
+});
+
+describe("projectStore - 5A invalidasi hilir", () => {
+  beforeEach(() => {
+    useProjectStore.setState({ projects: [], currentProject: null });
+    mockFetch.mockResolvedValue(jsonOk({ success: true }));
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function fullProject(): Project {
+    return {
+      id: "p-1",
+      title: "Judul",
+      genre: "edukasi",
+      topic: "topik",
+      tone: "kasual",
+      targetDuration: 60,
+      platform: "tiktok",
+      mode: "step-by-step",
+      status: "completed",
+      currentStep: "video",
+      steps: { script: "done", audio: "done", subtitle: "done", video: "done", export: "pending" },
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:00:00Z",
+      script: { id: "s1", title: "t", scenes: [], fullScript: "f", estimatedDuration: 5, wordCount: 1 },
+      audio: { id: "a1", url: "a.mp3", duration: 5, voiceName: "Sari", language: "id-ID", speed: 1, emotion: "netral" },
+      subtitle: {
+        id: "sub1",
+        entries: [],
+        segments: [],
+        style: { fontSize: 24, color: "#fff", position: "bottom" },
+        srtContent: "LAMA",
+        vttContent: "LAMA",
+        language: "id",
+      },
+      video: { id: "v1", url: "v.mp4", duration: 5, format: "mp4" },
+      videoStoragePlan: "free",
+      videoExpiresAt: "2026-09-02T00:00:00Z",
+      metadata: { subtitleSrt: "LAMA", currentStep: "video" },
+    };
+  }
+
+  const NEW_SCRIPT = {
+    id: "s-new",
+    title: "Baru",
+    scenes: [],
+    fullScript: "f",
+    estimatedDuration: 5,
+    wordCount: 1,
+  };
+
+  function lastPatchBody() {
+    const calls = mockFetch.mock.calls.filter((c) => c[0] === "/api/projects" && c[1]?.method === "PATCH");
+    const last = calls[calls.length - 1];
+    expect(last, "PATCH /api/projects tidak terkirim").toBeTruthy();
+    return JSON.parse(last[1].body);
+  }
+
+  test("setScriptResult → media hilir dihapus + clearMedia [audio,subtitle,video] + status draft", () => {
+    const proj = fullProject();
+    useProjectStore.setState({ projects: [proj], currentProject: proj });
+
+    useProjectStore.getState().setScriptResult(NEW_SCRIPT as never);
+
+    const state = useProjectStore.getState();
+    const cur = state.currentProject!;
+    expect(cur.script?.id).toBe("s-new");
+    expect(cur.audio).toBeUndefined();
+    expect(cur.subtitle).toBeUndefined();
+    expect(cur.video).toBeUndefined();
+    expect(cur.steps.audio).toBe("pending");
+    expect(cur.steps.video).toBe("pending");
+    expect(cur.status).toBe("draft");
+    expect(cur.metadata?.subtitleSrt).toBeUndefined();
+    // daftar project ikut ter-update (bukan hanya currentProject)
+    expect(state.projects[0].video).toBeUndefined();
+
+    const body = lastPatchBody();
+    expect(body.projectId).toBe("p-1");
+    expect(body.clearMedia).toEqual(["audio", "subtitle", "video"]);
+    expect(body.status).toBe("draft");
+  });
+
+  test("setAudioResult → subtitle+video direset, audio BARU tetap, script tidak tersentuh", () => {
+    const proj = fullProject();
+    useProjectStore.setState({ projects: [proj], currentProject: proj });
+
+    useProjectStore.getState().setAudioResult({
+      id: "a-new",
+      url: "u.mp3",
+      duration: 1,
+      voiceName: "Sari",
+      language: "id-ID",
+      speed: 1,
+      emotion: "netral",
+    });
+
+    const cur = useProjectStore.getState().currentProject!;
+    expect(cur.audio?.id).toBe("a-new");
+    expect(cur.subtitle).toBeUndefined();
+    expect(cur.video).toBeUndefined();
+    expect(cur.steps.script).toBe("done");
+    expect(cur.steps.subtitle).toBe("pending");
+
+    expect(lastPatchBody().clearMedia).toEqual(["subtitle", "video"]);
+  });
+
+  test("setSubtitleResult → video direset; subtitle + subtitleSrt BARU tersimpan", () => {
+    const proj = fullProject();
+    useProjectStore.setState({ projects: [proj], currentProject: proj });
+
+    useProjectStore.getState().setSubtitleResult({
+      id: "sub-new",
+      entries: [],
+      segments: [],
+      style: { fontSize: 24, color: "#fff", position: "bottom" },
+      srtContent: "BARU",
+      vttContent: "BARU",
+      language: "id",
+    });
+
+    const cur = useProjectStore.getState().currentProject!;
+    expect(cur.subtitle?.id).toBe("sub-new");
+    expect(cur.video).toBeUndefined();
+    expect(cur.audio).toBeDefined();
+    expect(cur.steps.video).toBe("pending");
+    expect(cur.metadata?.subtitleSrt).toBe("BARU");
+
+    const body = lastPatchBody();
+    expect(body.clearMedia).toEqual(["video"]);
+    expect(body.metadata.subtitleSrt).toBe("BARU");
+  });
+
+  test("media sudah kosong → invalidasi tetap jalan tanpa error (idempoten)", () => {
+    const proj = { ...fullProject(), audio: undefined, subtitle: undefined, video: undefined };
+    useProjectStore.setState({ projects: [proj], currentProject: proj });
+
+    expect(() => useProjectStore.getState().setScriptResult(NEW_SCRIPT as never)).not.toThrow();
+
+    expect(useProjectStore.getState().currentProject?.audio).toBeUndefined();
+    expect(lastPatchBody().clearMedia).toEqual(["audio", "subtitle", "video"]);
   });
 });

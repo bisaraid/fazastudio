@@ -184,11 +184,28 @@ async function redisCheck(key: string, maxRequests: number, windowMs: number): P
 
   // Hasil pipeline: [zaddResult, zremResult, zcardResult, expireResult]
   const zcardResult = results[2];
-  const currentCount = Array.isArray(zcardResult) && zcardResult[0] === null
+  let currentCount = Array.isArray(zcardResult) && zcardResult[0] === null
     ? (zcardResult[1] as number)
     : 0;
 
   const allowed = currentCount <= maxRequests;
+
+  // 5B: request yang DITOLAK tidak boleh ditinggal di sorted set.
+  // Kalau dibiarkan, tiap retry menambah member ber-timestamp "now" sehingga
+  // jendela geser terus dan lockout praktis tidak pernah berakhir (plus memori
+  // Redis tumbuh tanpa batas untuk user yang agresif).
+  if (!allowed) {
+    try {
+      await redisClient.zrem(redisKey, member);
+      currentCount = Math.max(0, currentCount - 1);
+    } catch (err) {
+      // Fail-open: kegagalan ZREM tidak boleh menggagalkan request.
+      console.warn(
+        `⚠️ [RateLimit] Gagal ZREM member yang ditolak untuk key "${key}":`,
+        err
+      );
+    }
+  }
 
   // Hitung reset time: ambil timestamp tertua yang masih dalam window
   const oldestResult = await redisClient.zrange(redisKey, 0, 0, 'WITHSCORES');

@@ -52,7 +52,9 @@ const worker = new Worker<RenderJobData>(
         // 1. Update BullMQ job progress (bisa di-poll via API)
         await job.updateProgress(percent);
         // 2. Publish ke Redis pub/sub (untuk SSE proxy di Vercel)
-        await publishProgress(projectId, { percent });
+        // 5F: lampirkan jobId di SEMUA pesan (percent/done/error) — bukan hanya
+        // "processing" — supaya klien bisa membuang pesan dari job lama.
+        await publishProgress(projectId, { percent, jobId: job.id });
       };
 
       const result = await renderVideo(job.data, onProgress);
@@ -72,6 +74,7 @@ const worker = new Worker<RenderJobData>(
       // Notify: done
       await publishProgress(projectId, {
         status: "done",
+        jobId: job.id,
         videoUrl: result.videoUrl,
         format: result.format,
         resolution: result.resolution,
@@ -101,7 +104,7 @@ const worker = new Worker<RenderJobData>(
       }
 
       // Notify: error
-      await publishProgress(projectId, { status: "error", message });
+      await publishProgress(projectId, { status: "error", message, jobId: job.id });
 
       throw error; // biar BullMQ handle retry
     }

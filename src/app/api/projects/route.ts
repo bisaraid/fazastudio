@@ -255,6 +255,22 @@ export async function PATCH(request: NextRequest) {
     // Field script (opsional — backward compat)
     if (body.script !== undefined) updates.script = JSON.stringify(body.script);
 
+    // 5A: invalidasi hilir — kosongkan kolom media yang sudah tidak valid.
+    // Whitelist ketat: hanya nilai di bawah ini yang diterima (tanpa migrasi
+    // baru karena kolomnya sudah ada).
+    const CLEARABLE_MEDIA: Record<string, readonly string[]> = {
+      audio: ["audio_url", "audio_provider", "audio_voice"],
+      subtitle: ["subtitle_url"],
+      video: ["video_url", "video_storage_plan", "video_expires_at"],
+    };
+    if (Array.isArray(body.clearMedia)) {
+      for (const kind of body.clearMedia as unknown[]) {
+        const columns = typeof kind === "string" ? CLEARABLE_MEDIA[kind] : undefined;
+        if (!columns) continue;
+        for (const column of columns) updates[column] = null;
+      }
+    }
+
     // Metadata pipeline (JSONB) — currentStep, subtitleSrt, pilihan audio,
     // override platform/durasi. Disimpan apa adanya sebagai objek JSON.
     if (body.metadata !== undefined) updates.metadata = body.metadata;
