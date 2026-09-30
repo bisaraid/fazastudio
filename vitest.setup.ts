@@ -27,16 +27,42 @@ type VitestMockerLike = {
   __winDriveCaseFixed?: boolean;
 };
 
+const isWindows = process.platform === "win32";
 const mocker = (globalThis as { __vitest_mocker__?: VitestMockerLike })
   .__vitest_mocker__;
 
-if (
-  mocker &&
-  typeof mocker.normalizePath === "function" &&
-  !mocker.__winDriveCaseFixed
-) {
+// ── Guard: JANGAN gagal diam-diam ─────────────────────────────────────────────
+// Tanpa patch ini vi.mock tetap "jalan" tapi TIDAK aktif untuk file project di
+// Windows (bug case drive letter — lihat TESTING.md). Jika API internal
+// berubah/lenyap saat upgrade Vitest, hentikan dengan pesan yang jelas, jangan
+// lanjut dengan mock yang mati senyap.
+if (!mocker || typeof mocker.normalizePath !== "function") {
+  if (isWindows) {
+    throw new Error(
+      "[vitest.setup.ts] API internal VitestMocker.normalizePath " +
+        (mocker
+          ? "hilang/berubah bentuk (globalThis.__vitest_mocker__ ada tapi bukan function)"
+          : "tidak ditemukan (globalThis.__vitest_mocker__ tidak ada)") +
+        ". Patch drive-letter Windows tidak bisa dipasang → vi.mock akan DIAM-DIAM " +
+        "tidak aktif untuk file project. Kemungkinan API internal Vitest berubah setelah " +
+        "upgrade — perbarui vitest.setup.ts (TESTING.md, bagian " +
+        '"vi.mock & Windows drive letter").'
+    );
+  }
+  // Non-Windows: patch memang no-op (tak ada prefix drive letter) → aman dilewati.
+} else if (!mocker.__winDriveCaseFixed) {
   const originalNormalizePath = mocker.normalizePath.bind(mocker);
   mocker.normalizePath = (id: string) =>
     originalNormalizePath(id).replace(/^[a-z]:/, (drive) => drive.toUpperCase());
   mocker.__winDriveCaseFixed = true;
+
+  // Probe pasca-patch: buktikan drive letter benar-benar dinormalkan.
+  const probe = mocker.normalizePath("c:/__vitest_drive_probe__");
+  if (!probe.startsWith("C:/__vitest_drive_probe__")) {
+    throw new Error(
+      `[vitest.setup.ts] Patch terpasang tetapi hasil normalizePath tak terduga: "${probe}" ` +
+        '(diharapkan "C:/__vitest_drive_probe__"). API internal kemungkinan berubah — ' +
+        "perbarui patch di vitest.setup.ts (TESTING.md)."
+    );
+  }
 }
