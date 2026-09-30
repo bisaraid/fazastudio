@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { fetchTrendingByNiche } from "@/lib/trend-youtube";
 import { scoreTrends, getTopTrends } from "@/lib/trend-scoring";
+import { buildAiFallbackRows } from "@/lib/ideas-fallback";
 import { checkRateLimit, buildBurstKey, getClientIp } from "@/lib/rate-limit";
 import { getServerIdentity } from "@/lib/identity";
 import { RATE_LIMIT_LIMITS, MINUTE_WINDOW_MS } from "@/lib/rate-limit-config";
@@ -184,16 +185,30 @@ export async function GET(request: NextRequest) {
   // 3. YouTube gagal → Fallback AI
   const aiIdeas = await generateAIFallback(niche, limit);
   if (aiIdeas.length > 0) {
-    const rowsToInsert = aiIdeas.map((idea) => ({
-      keyword: idea,
-      niche_slug: niche,
-      source: "ai_fallback",
-      score: 0,
-      score_breakdown: {},
-      fetched_at: new Date().toISOString(),
-      first_seen_at: new Date().toISOString(),
-    }));
-    await supabase.from("trend_ideas").insert(rowsToInsert);
+    // Hindari bentrok unique index (keyword, niche, tanggal): buang ide yang
+    // sudah ada hari ini untuk niche ini (baris harvest maupun AI request lama).
+    const dayStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+    const { data: existingRows } = await supabase
+      .from("trend_ideas")
+      .select("keyword")
+      .eq("niche_slug", niche)
+      .gte("fetched_at", dayStart);
+    const rowsToInsert = buildAiFallbackRows(
+      aiIdeas,
+      niche,
+      new Date().toISOString(),
+      (existingRows ?? []).map((r) => r.keyword)
+    );
+
+    if (rowsToInsert.length > 0) {
+      const { error: insertErr } = await supabase.from("trend_ideas").insert(rowsToInsert);
+      if (insertErr) {
+        // 23505 = race dengan request lain; bukan fatal (cache gagal = AI dipanggil lagi).
+        console.warn(
+          `[ideas] insert ai_fallback gagal: code=${insertErr.code} message=${insertErr.message}`
+        );
+      }
+    }
 
     return NextResponse.json({
       success: true,
