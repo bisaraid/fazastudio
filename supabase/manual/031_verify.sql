@@ -1,4 +1,4 @@
--- Faza Studio — 031 (Fase 4A / revisi 6A): QUERY VERIFIKASI
+-- Faza Studio — 031 (Fase 4A / revisi 6A + perbaikan 6A.2): QUERY VERIFIKASI
 -- ============================================================
 -- Jalankan SETELAH supabase/migrations/031_credit_refund.sql.
 --
@@ -13,6 +13,18 @@
 --     dalam satu batch.
 -- Jalankan sebagai service_role / postgres (SQL Editor Supabase).
 -- Tiap query mencantumkan HARAPAN hasil agar mudah dibandingkan.
+--
+-- revisi 6A.2 (perbaikan):
+--   * Query 2 TIDAK lagi memakai information_schema.routine_privileges — view
+--     itu ikut menampilkan PEMILIK fungsi (baris "postgres") sehingga
+--     pemeriksaan "hanya service_role" selalu GAGAL. Kini memakai
+--     has_function_privilege(), yang menanyakan efektif privilege per-role
+--     (anon / authenticated / service_role).
+--   * Query 4 memakai `v_sqlstate := sqlstate;` di blok EXCEPTION —
+--     RETURNED_SQLSTATE hanya berlaku untuk GET STACKED DIAGNOSTICS.
+--   * Query 4 jalur by_user menguji SATU id auth.users yang benar-benar ada
+--     (bila ada) dengan period '2099-01' di dalam blok yang ter-rollback;
+--     bila auth.users kosong → LEWAT. Tidak ada baris nyata yang tersentuh.
 -- ============================================================
 
 
@@ -46,31 +58,37 @@ select n.fungsi,
 
 
 -- ============================================================
--- Query 2 — READ-ONLY. Grant eksekusi HANYA service_role pada kedua fungsi;
---           anon/authenticated/public TIDAK boleh punya hak apa pun.
+-- Query 2 — READ-ONLY. Hak eksekusi HANYA service_role pada kedua fungsi;
+--           anon & authenticated TIDAK boleh punya hak apa pun.
+--           Catatan: TIDAK memakai information_schema.routine_privileges —
+--           view tersebut ikut menampilkan PEMILIK fungsi (baris "postgres"),
+--           sehingga pemeriksaan "hanya service_role" selalu GAGAL.
+--           has_function_privilege() menanyakan efektif privilege per-role,
+--           jadi hasilnya akurat.
 --           Jalankan satu per satu (Run terpisah dari Query 1).
 --     HARAPAN: tepat 2 baris —
---       grantee_list = hanya memuat "service_role"
---       hasil        = LULUS pada kedua baris
---       (bila memuat anon / authenticated / public / PUBLIC → GAGAL;
---        bila "(tidak ada grant)" → GAGAL karena service_role ikut hilang)
+--       proname       = refund_credit | refund_credit_by_user
+--       anon          = false
+--       authenticated = false
+--       service_role  = true
+--       hasil         = LULUS pada kedua baris
+--       (anon / authenticated true → GAGAL: fungsi bisa dipanggil klien;
+--        service_role false → GAGAL: aplikasi tidak bisa refund)
 -- ============================================================
-select n.fungsi,
-       coalesce(string_agg(distinct p.grantee, ', ' order by p.grantee),
-                '(tidak ada grant)')                                   as grantee_list,
-       case
-         when coalesce(bool_or(upper(p.grantee) = 'SERVICE_ROLE'
-                               and p.privilege_type = 'EXECUTE'), false)
-          and not coalesce(bool_or(upper(p.grantee) <> 'SERVICE_ROLE'), false)
-           then 'LULUS'
-           else 'GAGAL'
-       end                                                             as hasil
-  from (values ('refund_credit'), ('refund_credit_by_user')) as n(fungsi)
-  left join information_schema.routine_privileges p
-         on p.routine_schema = 'public'
-        and p.routine_name = n.fungsi
- group by n.fungsi
- order by n.fungsi;
+select p.proname,
+       has_function_privilege('anon', p.oid, 'EXECUTE')          as anon,
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated,
+       has_function_privilege('service_role', p.oid, 'EXECUTE')  as service_role,
+       case when not has_function_privilege('anon', p.oid, 'EXECUTE')
+                 and not has_function_privilege('authenticated', p.oid, 'EXECUTE')
+                 and has_function_privilege('service_role', p.oid, 'EXECUTE')
+            then 'LULUS'
+            else 'GAGAL'
+       end                                                       as hasil
+  from pg_proc p
+ where p.pronamespace = 'public'::regnamespace
+   and p.proname in ('refund_credit', 'refund_credit_by_user')
+ order by p.proname;
 
 
 -- ============================================================
@@ -115,8 +133,14 @@ select t.tabel,
 --   3. pastikan credits_used tidak minus (harus 0);
 --   4. panggil lagi dengan kunci BARU saat sudah 0 → harapannya exception
 --      P0001, ditangkap dengan nested begin/exception;
---   5. uji refund_credit_by_user; bila skema mewajibkan baris auth.users
---      nyata (FK dari 008_user_id.sql) → tulis alasannya dan LEWAT;
+--   5. uji jalur akun (refund_credit_by_user) memakai SATU id yang
+--      benar-benar ada di auth.users (`select id from auth.users order by
+--      created_at limit 1`) dengan period '2099-01' (periode uji, tidak
+--      dipakai produksi): baris uji (user_id, '2099-01') diperiksa lebih dulu
+--      — dicatat "ada"/"tidak ada" — lalu dibersihkan sebelum insert, agar
+--      tidak menabrak baris nyata; harapannya pertama = 0, kedua = -1.
+--      Bila auth.users kosong (atau tidak terbaca) → catat LEWAT + alasannya,
+--      TIDAK menggagalkan blok;
 --   6. kumpulkan hasil tiap pemeriksaan sebagai LULUS/GAGAL lalu di akhir
 --      `raise exception 'HASIL 031 | ...'` → seluruh blok ter-rollback
 --      otomatis, tidak ada data uji tersisa.
@@ -128,8 +152,12 @@ select t.tabel,
 --         refund_kunci_sama(-1)=LULUS
 --         tidak_minus(used=0)=LULUS
 --         kunci_baru_p0001=LULUS
---         refund_by_user=LULUS (pertama=0, kedua=-1)
---              — ATAU — LEWAT (butuh baris auth.users nyata ... SQLSTATE 23503)
+--         refund_by_user=LULUS (pertama=0, kedua=-1, baris_lama_2099=…)
+--              — ATAU — LEWAT (tidak ada baris auth.users / auth.users tidak
+--              terbaca — alasannya ikut tercetak)
+--       Semua perubahan (baris uji anon, baris uji akun, ledger refund) berada
+--       di dalam blok ini dan ter-rollback oleh `raise exception` di akhir —
+--       berapa pun hasilnya, tidak ada baris nyata yang tersisa berubah.
 --       Bila balasan BUKAN "HASIL 031 | ..." → ada error nyata di dalam blok
 --       (mis. fungsi/tabel belum ada); perbaiki dulu sebelum menyimpulkan.
 -- ============================================================
@@ -137,7 +165,8 @@ do $$
 declare
   v_identity   text    := 'anon:__verify031__';
   v_period     text    := '2099-01';
-  v_test_user  uuid    := gen_random_uuid();
+  v_real_user  uuid;                          -- diisi dari auth.users (bila ada)
+  v_alasan_uid text    := 'LEWAT (tidak ada baris auth.users — jalur akun tidak bisa diuji)';
   v_r1         integer;
   v_r2         integer;
   v_used       integer;
@@ -146,7 +175,7 @@ declare
   v_ok3        boolean := false;
   v_ok4        boolean := false;
   v_alasan4    text    := 'tidak ada exception (seharusnya melempar P0001)';
-  v_user_row   boolean := false;
+  v_ada_lama   boolean := false;              -- (user_id, '2099-01') sudah ada?
   v_u1         integer;
   v_u2         integer;
   v_hasil_uid  text;
@@ -154,10 +183,11 @@ declare
   v_hasil      text;
 begin
   -- Bersihkan sisa baris uji bila ada (defensif; ikut ter-rollback bersama blok).
+  -- Hanya menyentuh identity uji & period uji '2099-01' di dalam blok ini.
   delete from credit_refunds where idempotency_key like 'verify031:%';
   delete from user_usage
    where identity_key = v_identity
-      or identity_key = 'account:' || v_test_user::text;
+     and period = v_period;
 
   -- (a) Baris uji anon — semua kolom NOT NULL terisi (003/014/018/028/030);
   --     plan 'free' sehingga trigger expiry (030) tidak mengubah apa pun.
@@ -188,37 +218,72 @@ begin
     v_ok4 := false; -- tidak boleh sampai sini: seharusnya exception
   exception
     when others then
-      get diagnostics v_sqlstate = returned_sqlstate;
+      -- Di dalam exception handler ini `sqlstate` = SQLSTATE error yang
+      -- ditangkap (RETURNED_SQLSTATE hanya untuk GET STACKED DIAGNOSTICS).
+      v_sqlstate := sqlstate;
       v_ok4 := (v_sqlstate = 'P0001');
       v_alasan4 := 'SQLSTATE ' || coalesce(v_sqlstate, '?') || ' ' || sqlerrm;
   end;
 
-  -- (f) Jalur refund_credit_by_user. user_usage.user_id memiliki FK →
-  --     auth.users(id) (008_user_id.sql), sehingga baris uji dengan uuid
-  --     acak ditolak skema (23503). Bila skema mengizinkan (tanpa FK), uji
-  --     penuh; bila tidak, catat LEWAT beserta alasannya.
+  -- (f) Jalur refund_credit_by_user — memakai SATU id yang benar-benar ada di
+  --     auth.users (bila ada) dengan period '2099-01' (periode uji, tidak
+  --     dipakai produksi), sehingga jalur akun ikut teruji.
+  --     KEAMANAN DATA NYATA: baris uji (user_id, '2099-01') diperiksa lebih
+  --     dulu (dicatat "ada"/"tidak ada"), lalu dibersihkan sebelum insert;
+  --     semua perubahan di blok ini ter-rollback oleh `raise exception` di
+  --     akhir, sehingga baris sisa (bila ada) tetap utuh setelah Run. Tidak
+  --     ada baris produksi (period selain '2099-01') yang disentuh.
   begin
-    insert into user_usage (user_id, identity_key, period, plan, credits_total, credits_used)
-    values (v_test_user, 'account:' || v_test_user::text, v_period, 'free', 10, 1);
-    v_user_row := true;
+    select u.id into v_real_user
+      from auth.users u
+     order by u.created_at
+     limit 1;
   exception
     when others then
-      v_user_row := false;
-      get diagnostics v_sqlstate = returned_sqlstate;
-      v_hasil_uid := 'LEWAT (butuh baris auth.users nyata — FK user_usage.user_id → auth.users(id), '
-                  || 'migrasi 008_user_id.sql; SQLSTATE ' || coalesce(v_sqlstate, '?') || ')';
+      v_real_user  := null;
+      v_sqlstate   := sqlstate;
+      v_alasan_uid := 'LEWAT (auth.users tidak terbaca — SQLSTATE '
+                   || coalesce(v_sqlstate, '?') || ' ' || sqlerrm || ')';
   end;
 
-  if v_user_row then
+  if v_real_user is null then
+    -- Tidak ada baris auth.users (mis. DB kosong) → jalur akun tidak bisa diuji.
+    v_hasil_uid := v_alasan_uid;
+  else
     begin
-      v_u1 := refund_credit_by_user(v_test_user, v_period, 'verify031:uidem:v1', 'uji 031');
-      v_u2 := refund_credit_by_user(v_test_user, v_period, 'verify031:uidem:v1', 'uji 031');
+      -- Periksa dulu apakah (user_id, '2099-01') sudah ada — nilainya ikut
+      -- dilaporkan sebagai baris_lama_2099.
+      select exists (select 1
+                       from user_usage
+                      where period = v_period
+                        and (user_id = v_real_user
+                             or identity_key = 'account:' || v_real_user::text))
+        into v_ada_lama;
+
+      -- Bersihkan sisa baris uji period '2099-01' sebelum insert, agar tidak
+      -- menabrak baris nyata / unique constraint (identity_key, period).
+      delete from user_usage
+       where period = v_period
+         and (user_id = v_real_user
+              or identity_key = 'account:' || v_real_user::text);
+
+      insert into user_usage (user_id, identity_key, period, plan, credits_total, credits_used)
+      values (v_real_user, 'account:' || v_real_user::text, v_period, 'free', 10, 1);
+
+      -- Refund pertama 1 → 0 ⇒ harus 0; kedua dengan kunci SAMA ⇒ harus -1.
+      v_u1 := refund_credit_by_user(v_real_user, v_period, 'verify031:uidem:v1', 'uji 031');
+      v_u2 := refund_credit_by_user(v_real_user, v_period, 'verify031:uidem:v1', 'uji 031');
+
       v_hasil_uid := case when v_u1 = 0 and v_u2 = -1 then 'LULUS' else 'GAGAL' end
                   || ' (pertama=' || coalesce(v_u1::text, 'null')
-                  || ', kedua='    || coalesce(v_u2::text, 'null') || ')';
+                  || ', kedua='    || coalesce(v_u2::text, 'null')
+                  || ', baris_lama_2099=' || case when v_ada_lama
+                                                  then 'ada→dibersihkan (dipulihkan rollback)'
+                                                  else 'tidak ada' end
+                  || ', user=' || v_real_user::text || ')';
     exception
       when others then
-        get diagnostics v_sqlstate = returned_sqlstate;
+        v_sqlstate := sqlstate;
         v_hasil_uid := 'GAGAL (SQLSTATE ' || coalesce(v_sqlstate, '?') || ' ' || sqlerrm || ')';
     end;
   end if;
