@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isOnboardingComplete, personaFromProfile } from "@/lib/onboarding";
 
 /**
  * Routing otentikasi — Faza Studio.
@@ -109,20 +110,25 @@ export async function middleware(request: NextRequest) {
   // maupun /pengaturan → diarahkan ke /mulai sampai profil lengkap.
   if (user && isLoginRequired) {
     try {
-      const { data: profile } = await supabase
+      const { data: profile, error } = await supabase
         .from("profiles")
         .select("layer1_mode, niche_slug, gaya_key, cerita_key")
         .eq("user_id", user.id)
         .maybeSingle();
 
-      const done =
-        profile &&
-        profile.layer1_mode &&
-        profile.niche_slug &&
-        profile.gaya_key &&
-        profile.cerita_key;
-
-      if (!done) {
+      // Error query (RLS / kolom hilang / gangguan sementara) BUKAN bukti
+      // "belum onboarding". Dulu `error` diabaikan: data → null → redirect ke
+      // /mulai, padahal blok catch tidak pernah jalan (Supabase mengembalikan
+      // error sebagai NILAI, bukan throw). Hasilnya user terpental dari
+      // /beranda tanpa henti dan tanpa jejak diagnosa apa pun. Sekarang log +
+      // fail-open (biar user masuk; halaman terkait tetap menangani profil
+      // kosong dengan aman).
+      if (error) {
+        console.warn(
+          "[middleware] gate onboarding: gagal baca profil (dilewati):",
+          error.message
+        );
+      } else if (!isOnboardingComplete(personaFromProfile(profile))) {
         const mul = request.nextUrl.clone();
         mul.pathname = "/mulai";
         mul.searchParams.set("next", pathname);

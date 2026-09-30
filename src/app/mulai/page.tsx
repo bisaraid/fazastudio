@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, Suspense, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   LAYER1_OPTIONS,
   NICHES,
@@ -11,13 +11,22 @@ import {
 import { NicheOption } from "@/lib/persona-data";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sparkles, Check, ChevronLeft, Loader2 } from "lucide-react";
+import { Sparkles, Check, ChevronLeft, ChevronRight, Loader2, RefreshCw, ArrowRight } from "lucide-react";
 import { track } from "@/lib/posthog";
+import {
+  isOnboardingComplete,
+  navigateTo,
+  normalizeNextPath,
+  personaFromProfile,
+  savePersona,
+  type PersonaAnswers,
+} from "@/lib/onboarding";
 
 function MulaiForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get("next") ?? "/beranda";
+  // `next` dinormalkan: tidak boleh kembali ke /mulai (loop tak berujung) atau
+  // keluar origin (open-redirect). Lihat src/lib/onboarding.ts.
+  const next = normalizeNextPath(searchParams.get("next"));
 
   const [mode, setMode] = useState<string>("");
   const [niche, setNiche] = useState<string>("");
@@ -29,6 +38,11 @@ function MulaiForm() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // Profil di server sudah lengkap (user lama / sudah berplan) → sediakan jalan
+  // keluar langsung, tanpa memaksa mengulang 4 langkah.
+  const [profileComplete, setProfileComplete] = useState(false);
+  // Guard sinkron: cegah klik ganda "Simpan" (state React belum tentu ter-flush).
+  const savingRef = useRef(false);
 
   // Animasi: `anim` = sedang slide. `dir` = +1 maju, -1 mundur.
   const [anim, setAnim] = useState(false);
@@ -46,11 +60,12 @@ function MulaiForm() {
       .then((r) => r.json())
       .then((data) => {
         if (cancelled || !data?.success || !data?.data) return;
-        const p = data.data;
-        if (p.layer1_mode) setMode(p.layer1_mode);
-        if (p.niche_slug) setNiche(p.niche_slug);
-        if (p.gaya_key) setGaya(p.gaya_key);
-        if (p.cerita_key) setCerita(p.cerita_key);
+        const persona = personaFromProfile(data.data);
+        if (persona.mode) setMode(persona.mode);
+        if (persona.niche) setNiche(persona.niche);
+        if (persona.gaya) setGaya(persona.gaya);
+        if (persona.cerita) setCerita(persona.cerita);
+        setProfileComplete(isOnboardingComplete(persona));
       })
       .catch(() => {})
       .finally(() => !cancelled && setLoaded(true));
@@ -88,17 +103,21 @@ function MulaiForm() {
     doTransition(1, ackText, nextStep);
   };
 
-  /** Layer 4: pilih → simpan & redirect (setelah slide-out). */
-  const selectFinal = (val: string, ackText: string) => {
+  /** Keluar dari wizard dengan navigasi KERAS (lihat navigateTo). */
+  const goToNext = () => {
+    clearTimers();
+    navigateTo(next);
+  };
+
+  /** Layer 4: pilih → ack singkat. Simpan dilakukan tombol "Simpan & lanjut". */
+  const selectCerita = (val: string, ackText: string) => {
     if (anim || saving) return;
     setCerita(val);
     clearTimers();
     setAck(ackText);
     setDir(1);
     setAnim(true);
-    const t = setTimeout(() => {
-      handleSave({ cerita: val });
-    }, 350);
+    const t = setTimeout(() => setAnim(false), 380);
     timers.current.push(t);
   };
 
@@ -107,33 +126,53 @@ function MulaiForm() {
     doTransition(-1, null, step - 1);
   };
 
-  const handleSave = async (override?: { cerita?: string }) => {
+  /** Langkah 1-3: tombol Lanjut manual — setiap langkah selalu punya jalan maju. */
+  const handleNext = () => {
+    if (anim || saving || step >= 4) return;
+    const choice = step === 1 ? mode : step === 2 ? niche : gaya;
+    if (!choice) return;
+    doTransition(1, ackLabels[choice] ?? "", step + 1);
+  };
+
+  /**
+   * Simpan persona. Selalu berakhir jelas: sukses → keluar dari wizard, gagal →
+   * pesan error yang TERLIHAT + tombol "Coba lagi"/"Lanjut tanpa menyimpan".
+   *
+   * `saving` dijamin di-reset di semua jalur. Sebelumnya jalur sukses tidak
+   * me-reset `saving`, sehingga semua tombol (termasuk Kembali) tetap disabled
+   * dan user terkunci di layar "Profil kamu siap!".
+   */
+  const handleSave = async () => {
+    if (savingRef.current) return;
+    const answers: PersonaAnswers = { mode, niche, gaya, cerita };
+
+    if (!isOnboardingComplete(answers)) {
+      setError("Lengkapi dulu semua langkah: tujuan, niche, gaya, dan cara cerita.");
+      return;
+    }
+
+    savingRef.current = true;
     setSaving(true);
     setError(null);
-    try {
-      const res = await fetch("/api/profile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          layer1Mode: mode,
-          nicheSlug: niche,
-          gayaKey: gaya,
-          ceritaKey: override?.cerita ?? cerita,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json?.error || "Gagal menyimpan preferensi.");
-      }
-      setSaved(true);
-      track("user_signup", { mode, niche, gaya, cerita });
-      setTimeout(() => router.push(next), 1500);
-      return;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Terjadi kesalahan.");
+
+    const result = await savePersona(answers);
+
+    savingRef.current = false;
+    setSaving(false);
+
+    if (!result.ok) {
       setAnim(false);
-      setSaving(false);
+      setError(result.error);
+      return;
     }
+
+    setSaved(true);
+    track("user_signup", { mode, niche, gaya, cerita });
+    // Jeda singkat agar pesan sukses terbaca, lalu keluar. Tombol
+    // "Lanjut ke Beranda" tetap tersedia sebagai jalan keluar manual bila
+    // navigasi otomatis tidak terjadi (mis. halaman ini di-render ulang).
+    const t = setTimeout(() => goToNext(), 800);
+    timers.current.push(t);
   };
 
   // Acknowledgment singkat untuk opsi tertentu (sesuai kebutuhan).
@@ -289,7 +328,7 @@ function MulaiForm() {
                 {ceritaOptions.map((opt) => (
                   <button
                     key={opt.key}
-                    onClick={() => selectFinal(opt.key, "Siap! 🚀")}
+                    onClick={() => selectCerita(opt.key, "Siap! 🚀")}
                     disabled={saving}
                     className={`w-full rounded-lg border p-3 text-left text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${
                       cerita === opt.key
@@ -310,7 +349,6 @@ function MulaiForm() {
             </Card>
           )}
 
-          {error && <p className="mb-2 text-sm text-destructive">{error}</p>}
         </div>
 
         {/* Acknowledgment singkat */}
@@ -320,13 +358,59 @@ function MulaiForm() {
           </div>
         )}
 
-        {saved && (
-          <div className="mt-4 text-center text-sm font-medium text-primary">
-            Profil kamu siap! 🎉
+        {/* Profil di server sudah lengkap (user lama / sudah berplan) →
+            jalan keluar langsung, tanpa memaksa mengulang 4 langkah. */}
+        {loaded && profileComplete && !saved && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3">
+            <p className="text-sm text-muted-foreground">
+              Profil kamu sudah lengkap. Kamu bisa langsung masuk.
+            </p>
+            <Button size="sm" variant="outline" onClick={goToNext}>
+              Lanjut ke Beranda <ArrowRight className="ml-1 h-4 w-4" />
+            </Button>
           </div>
         )}
 
-        {/* Kembali */}
+        {/* Sukses: pesan + tombol keluar MANUAL (anti-jebakan bila navigasi
+            otomatis tidak terjadi karena cache/redirect). */}
+        {saved && (
+          <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-3 text-center">
+            <p className="text-sm font-medium text-primary">Profil kamu siap! 🎉</p>
+            <Button size="sm" className="mt-2" onClick={goToNext}>
+              Lanjut ke Beranda <ArrowRight className="ml-1 h-4 w-4" />
+            </Button>
+          </div>
+        )}
+
+        {/* Gagal simpan: pesan yang TERLIHAT + coba lagi + tetap boleh lanjut. */}
+        {error && (
+          <div
+            role="alert"
+            className="mt-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3"
+          >
+            <p className="text-sm font-medium text-destructive">Gagal menyimpan profil</p>
+            <p className="mt-1 text-sm text-muted-foreground">{error}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={handleSave} disabled={saving}>
+                {saving ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1 h-4 w-4" />
+                )}
+                Coba lagi
+              </Button>
+              <Button size="sm" variant="ghost" onClick={goToNext}>
+                Lanjut tanpa menyimpan <ArrowRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Kalau lanjut tanpa menyimpan, pilihan kamu belum tersimpan dan halaman ini bisa
+              muncul lagi.
+            </p>
+          </div>
+        )}
+
+        {/* Navigasi — SETIAP langkah selalu punya jalan keluar. */}
         <div className="mt-4 flex items-center justify-between gap-3">
           {step > 1 ? (
             <Button variant="ghost" onClick={handleBack} disabled={anim || saving}>
@@ -334,6 +418,31 @@ function MulaiForm() {
             </Button>
           ) : (
             <span />
+          )}
+
+          {step < 4 ? (
+            <Button
+              onClick={handleNext}
+              disabled={anim || saving || !(step === 1 ? mode : step === 2 ? niche : gaya)}
+            >
+              Lanjut <ChevronRight className="ml-1 h-4 w-4" />
+            </Button>
+          ) : saved ? (
+            <Button onClick={goToNext}>
+              Lanjut ke Beranda <ArrowRight className="ml-1 h-4 w-4" />
+            </Button>
+          ) : (
+            <Button onClick={handleSave} disabled={saving || !cerita}>
+              {saving ? (
+                <>
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" /> Menyimpan…
+                </>
+              ) : (
+                <>
+                  Simpan &amp; lanjut <ArrowRight className="ml-1 h-4 w-4" />
+                </>
+              )}
+            </Button>
           )}
         </div>
       </div>
