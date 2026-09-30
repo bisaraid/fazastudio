@@ -11,6 +11,7 @@ import { PricingPlansWithUsage } from "@/components/pricing-plans-with-usage";
 import { track } from "@/lib/posthog";
 import { generateId } from "@/lib/utils";
 import { showAdminLink } from "@/lib/admin-link";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 import {
   Sparkles,
   ArrowRight,
@@ -334,6 +335,8 @@ export default function LandingPage() {
             <span>Faza Studio</span>
           </div>
           <div className="flex-1" />
+          {/* Tema: Terang / Gelap / Ikuti sistem (3 opsi) — tanpa request */}
+          <ThemeToggle className="mr-2" />
           {loading ? null : user ? (
             <div className="relative flex items-center gap-2">
               <button

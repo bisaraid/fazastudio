@@ -7,6 +7,7 @@ import type { User } from "@supabase/supabase-js";
 import { ExternalLink, LogOut, Menu, Search, ShieldCheck } from "lucide-react";
 import { Avatar, avatarSourceFromUser, displayNameOf } from "@/components/admin/avatar";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { cn } from "@/lib/utils";
 
 export interface TopbarProps {
@@ -90,6 +91,9 @@ export function Topbar({ onMenuToggle, user, onOpenPalette, onPrefetchPalette }:
           </kbd>
         </button>
       </div>
+
+      {/* Tema: Terang / Gelap / Ikuti sistem (3 opsi) — tanpa request baru */}
+      <ThemeToggle className="shrink-0" />
 
       <div className="relative shrink-0" ref={wrapRef}>
         <button

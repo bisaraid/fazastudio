@@ -1,6 +1,6 @@
 "use client";
 
-import { useTheme } from "next-themes";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,8 +9,6 @@ import { showAdminLink } from "@/lib/admin-link";
 import { useUsage } from "@/hooks/useUsage";
 import { useUser } from "@/hooks/useUser";
 import {
-  Sun,
-  Moon,
   Sparkles,
   Menu,
   LogOut,
@@ -29,7 +27,6 @@ interface NavbarProps {
 
 export function Navbar({ onMenuToggle }: NavbarProps) {
   const router = useRouter();
-  const { theme, setTheme } = useTheme();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -143,15 +140,8 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
                 {plan === "starter" ? "Starter" : plan === "pro" ? "Pro" : plan}
               </Badge>
             ) : null}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              aria-label="Toggle theme"
-            >
-              <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-              <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-            </Button>
+            {/* Tema: Terang / Gelap / Ikuti sistem (3 opsi, accessible) */}
+            <ThemeToggle />
 
             {authLoading ? (
               <Button
