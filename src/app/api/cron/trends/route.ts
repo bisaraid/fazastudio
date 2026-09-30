@@ -1,39 +1,23 @@
 /**
- * Cron Job: /api/cron/trends
+ * Cron Job: /api/cron/trends — HANYA untuk trigger manual dari admin
+ * (tombol "Trigger Harvest Manual").
  *
- * Harvest flow (multi-source):
- * - Fetch top 50 trending ID (YouTube, geen category filter).
- * - Fetch Google Trends (daily, ID) + RSS (Detik/Kompas) parallel.
- * - Gabung alle judul -> dedupe -> topic-extractor (Groq).
- * - Insert naar trend_ideas met source per asal: "youtube" | "google_trends" | "rss".
+ * Sumber kebenaran harvest = GitHub Actions → scripts/harvest.ts (cron 4×/hari).
+ * Route ini memakai modul YANG SAMA (src/lib/trend-harvest.ts) sehingga
+ * perilakunya identik: fetch sumber → ekstraksi sequential + jeda Groq →
+ * normalisasi keyword → baseline 7 hari → skor/velocity → upsert RPC 024.
+ *
+ * Risiko: total durasi (jeda Groq + translate US) bisa melebihi limit
+ * function Vercel — bila timeout, harvest tetap jalan via GH Actions.
  *
  * Proteksi: header Authorization: Bearer CRON_SECRET
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import {
-  fetchYouTubeTrending,
-  SOURCE_YOUTUBE,
-  YouTubeVideo,
-} from "@/lib/trend-youtube";
-import { extractTopicsFromTitles } from "@/lib/topic-extractor";
-import { fetchGoogleTrends } from "@/lib/harvest-google-trends";
-import { fetchRssTitles } from "@/lib/harvest-rss";
+import { runTrendHarvest } from "@/lib/trend-harvest";
 import { recordAdminMetricsDay } from "@/lib/admin-snapshot";
 
-const TOP_VIDEOS = 50;
-const SOURCE_GOOGLE_TRENDS = "google_trends";
-const SOURCE_RSS = "rss";
-
-/** Baris hasil extract yang siap di-group per niche. */
-interface ExtractRow {
-  topic: string;
-  niche: string;
-  source: string;
-  sourceTitle: string;
-  video: YouTubeVideo | null;
-}
 export async function GET(request: NextRequest) {
   // ===== Proteksi CRON_SECRET =====
   const authHeader = request.headers.get("authorization");
@@ -43,151 +27,7 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createServiceRoleClient();
-  const nowIso = new Date().toISOString();
-
-  // ===== 1. Fetch top 50 ID (geen category filter) =====
-  const idRes = await fetchYouTubeTrending(TOP_VIDEOS, "ID");
-
-  // ===== 1b. Google Trends + RSS (parallel, best-effort) =====
-  const [gtRes, rssRes] = await Promise.allSettled([
-    fetchGoogleTrends(),
-    fetchRssTitles(),
-  ]);
-  const gtTitles = gtRes.status === "fulfilled" ? gtRes.value : [];
-  const rssTitles = rssRes.status === "fulfilled" ? rssRes.value : [];
-
-  // ===== 2. Siapkan batch per source =====
-  const ytTitles: string[] = [];
-  const ytVideos: YouTubeVideo[] = [];
-  for (const v of idRes.data ?? []) {
-    const t = (v.title || "").trim();
-    if (!t) continue;
-    ytTitles.push(t);
-    ytVideos.push(v);
-  }
-  console.log(
-    `[cron-trends] fetched youtube=${ytTitles.length} gt=${gtTitles.length} rss=${rssTitles.length}`
-  );
-
-  // ===== 3. Ekstrak topik per source (sequential) =====
-  // Urutan: RSS dulu (paling banyak item & paling valuable) → jeda 15s → YouTube.
-  // Kalau YouTube jalan duluan, ia sering kena 429 / boros rate-limit Groq.
-  // Google Trends tetap terakhir, dengan jeda serupa.
-  function sleep(ms: number): Promise<void> {
-    return new Promise(function (r) { setTimeout(r, ms); });
-  }
-
-  const rssExtracted = await extractTopicsFromTitles(rssTitles);
-  await sleep(15000);
-  const ytExtracted = await extractTopicsFromTitles(ytTitles);
-  await sleep(15000);
-  const gtExtracted = await extractTopicsFromTitles(gtTitles);
-  console.log(
-    `[cron-trends] extracted youtube=${ytExtracted.length} gt=${gtExtracted.length} rss=${rssExtracted.length}`
-  );
-
-  // ===== 4. Gabung hasil extract per source =====
-  const rows: ExtractRow[] = [];
-  for (const it of ytExtracted) {
-    rows.push({
-      topic: it.topic,
-      niche: it.niche,
-      source: SOURCE_YOUTUBE,
-      sourceTitle: it.sourceTitle,
-      video: ytVideos[it.index] ?? null,
-    });
-  }
-  for (const it of gtExtracted) {
-    rows.push({
-      topic: it.topic,
-      niche: it.niche,
-      source: SOURCE_GOOGLE_TRENDS,
-      sourceTitle: it.sourceTitle,
-      video: null,
-    });
-  }
-  for (const it of rssExtracted) {
-    rows.push({
-      topic: it.topic,
-      niche: it.niche,
-      source: SOURCE_RSS,
-      sourceTitle: it.sourceTitle,
-      video: null,
-    });
-  }
-
-  // ===== 4b. Group per niche + prepare DB rows =====
-  const byNiche: Record<string, Record<string, unknown>[]> = {};
-  let skipped = 0;
-  for (const item of rows) {
-    if (!item.topic || !item.niche) {
-      skipped++;
-      continue;
-    }
-    const v = item.video;
-    const row: Record<string, unknown> = {
-      keyword: item.topic,
-      niche_slug: item.niche,
-      source: item.source,
-      score: 0,
-      score_breakdown: {},
-      youtube_video_id: v?.videoId ?? null,
-      youtube_title: v?.title ?? item.sourceTitle,
-      youtube_channel: v?.channelTitle ?? null,
-      youtube_views: v?.viewCount ?? 0,
-      youtube_likes: v?.likeCount ?? 0,
-      youtube_uploaded_at: v?.publishedAt || null,
-      fetched_at: nowIso,
-      first_seen_at: nowIso,
-    };
-    byNiche[item.niche] = byNiche[item.niche] ? [...byNiche[item.niche], row] : [row];
-  }
-
-  // ===== 5. Insert per niche (error handling + logging per niche) =====
-  const results: { niche: string; count: number; source: string }[] = [];
-  let total = 0;
-  for (const niche of Object.keys(byNiche)) {
-    const nicheRows = byNiche[niche];
-    let count = 0;
-    let err: string | null = null;
-    try {
-      for (const row of nicheRows) {
-        // Upsert-accumulate: salah satu keyword per niche per hari (lintas source)
-        // di-merge; appearances/source_count/sources_seen/evergreen diperbarui di DB.
-        const { error } = await supabase.rpc("upsert_trend_row", {
-          p_keyword: row.keyword as string,
-          p_niche_slug: row.niche_slug as string,
-          p_source: row.source as string,
-          p_score: typeof row.score === "number" ? row.score : 0,
-          p_velocity: (row.velocity as number | null | undefined) ?? null,
-          p_trend_direction: (row.trend_direction as string | null | undefined) ?? null,
-          p_youtube_video_id: (row.youtube_video_id as string | null) ?? null,
-          p_youtube_title: (row.youtube_title as string | null) ?? null,
-          p_youtube_channel: (row.youtube_channel as string | null) ?? null,
-          p_youtube_views: typeof row.youtube_views === "number" ? row.youtube_views : 0,
-          p_youtube_likes: typeof row.youtube_likes === "number" ? row.youtube_likes : 0,
-          p_youtube_uploaded_at: (row.youtube_uploaded_at as string | null) ?? null,
-          p_fetched_at: row.fetched_at as string,
-        });
-        if (error) {
-          err = error.message;
-          break;
-        }
-        count++;
-      }
-    } catch (e) {
-      err = e instanceof Error ? e.message : String(e);
-    }
-    console.log(
-      `[cron-trends] niche=${niche} rows=${count}` + (err ? ` error=${err}` : "")
-    );
-    results.push({ niche, count, source: err ? "error" : "mixed" });
-    total += count;
-  }
-
-  console.log(
-    `[cron-trends] done rows=${rows.length} inserted=${total} skipped=${skipped}`
-  );
+  const summary = await runTrendHarvest(supabase);
 
   try {
     await recordAdminMetricsDay();
@@ -195,11 +35,21 @@ export async function GET(request: NextRequest) {
     console.warn("[cron-trends] snapshot gagal:", e instanceof Error ? e.message : e);
   }
 
+  const total = summary.inserted;
+  const results = summary.byNiche.map((n) => ({
+    niche: n.niche,
+    count: n.count,
+    source: "mixed",
+  }));
+
   return NextResponse.json({
-    success: true,
-    message: `Cron trends selesai: ${total} data dari ${Object.keys(byNiche).length} niche`,
+    success: summary.errors.length === 0,
+    message: `Cron trends selesai: ${total} data dari ${results.length} niche`,
     total,
-    skipped,
+    skipped: summary.batchRows - summary.inserted,
     results,
+    baselineRows: summary.baselineRows,
+    velocity: summary.velocity,
+    errors: summary.errors,
   });
 }

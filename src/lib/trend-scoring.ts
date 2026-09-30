@@ -11,6 +11,11 @@
  */
 
 import { YouTubeVideo } from "./trend-youtube";
+import { VELOCITY_DIRECTION_THRESHOLD } from "./trend-insight-config";
+
+// Ambang arah tren kini satu sumber: trend-insight-config.ts (disetel di sana).
+// Di-re-export agar import lama (test/kode) tetap kompatibel.
+export { VELOCITY_DIRECTION_THRESHOLD };
 
 /** Keywords per niche untuk relevance matching */
 const NICHE_KEYWORDS: Record<string, string[]> = {
@@ -147,9 +152,6 @@ export function getTopTrends(scored: ScoredTrend[], n: number = 5): ScoredTrend[
 // ============================================================
 // Trend Pattern Engine — helper murni (tanpa IO, mudah di-test)
 // ============================================================
-
-/** Ambang selisih score (Δ) untuk menentukan arah tren. Konstanta terpusat — mudah diubah. */
-export const VELOCITY_DIRECTION_THRESHOLD = 5;
 
 export interface VelocityResult {
   /** Selisih score saat ini vs hari sebelumnya (1 desimal). */
