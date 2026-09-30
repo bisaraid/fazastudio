@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { PricingPlansWithUsage } from "@/components/pricing-plans-with-usage";
 import { track } from "@/lib/posthog";
 import { generateId } from "@/lib/utils";
+import { showAdminLink } from "@/lib/admin-link";
 import {
   Sparkles,
   ArrowRight,
@@ -21,6 +22,7 @@ import {
   Settings,
   LayoutDashboard,
   LogOut,
+  ShieldCheck,
 } from "lucide-react";
 
 const CONTOH_AUDIO_SRC = "/audio/contoh-preview.mp3";
@@ -215,7 +217,11 @@ export default function LandingPage() {
   const { user, loading } = useUser();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [profile, setProfile] = useState<{ full_name?: string; avatar_url?: string } | null>(null);
+  const [profile, setProfile] = useState<{
+    full_name?: string;
+    avatar_url?: string;
+    is_admin?: boolean;
+  } | null>(null);
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -223,7 +229,11 @@ export default function LandingPage() {
       .then((r) => r.json())
       .then((data) => {
         if (cancelled || !data?.success || !data?.data) return;
-        setProfile({ full_name: data.data.full_name, avatar_url: data.data.avatar_url });
+        setProfile({
+          full_name: data.data.full_name,
+          avatar_url: data.data.avatar_url,
+          is_admin: data.data.is_admin === true,
+        });
       })
       .catch(() => {});
     return () => {
@@ -383,6 +393,21 @@ export default function LandingPage() {
                       <Settings className="h-4 w-4" />
                       Pengaturan
                     </button>
+                    {/* Link admin: hanya bila status admin diketahui & true.
+                        Profil dari /api/profile yang sudah dipanggil di atas —
+                        tidak ada request tambahan. */}
+                    {showAdminLink(profile) && (
+                      <button
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          router.push("/admin");
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        Panel Admin
+                      </button>
+                    )}
                     <button
                       onClick={logout}
                       disabled={loggingOut}

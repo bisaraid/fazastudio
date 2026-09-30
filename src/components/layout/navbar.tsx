@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { showAdminLink } from "@/lib/admin-link";
 import { useUsage } from "@/hooks/useUsage";
 import { useUser } from "@/hooks/useUser";
 import {
@@ -14,6 +15,7 @@ import {
   Menu,
   LogOut,
   Settings,
+  ShieldCheck,
   User,
   LayoutDashboard,
   CreditCard,
@@ -34,14 +36,23 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
   const { plan, creditsUsed, creditsTotal, loading } = useUsage();
   const creditsRemaining = Math.max(0, (creditsTotal ? creditsTotal : 0) - (creditsUsed ? creditsUsed : 0));
   const { user: authUser, loading: authLoading } = useUser();
-  const [profile, setProfile] = useState<{ full_name?: string; avatar_url?: string } | null>(null);
+  const [profile, setProfile] = useState<{
+    full_name?: string;
+    avatar_url?: string;
+    is_admin?: boolean;
+  } | null>(null);
   useEffect(() => {
     if (!authUser) return;
     let cancelled = false;
     fetch("/api/profile")
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled && data?.success && data?.data) setProfile({ full_name: data.data.full_name, avatar_url: data.data.avatar_url });
+        if (!cancelled && data?.success && data?.data)
+          setProfile({
+            full_name: data.data.full_name,
+            avatar_url: data.data.avatar_url,
+            is_admin: data.data.is_admin === true,
+          });
       })
       .catch(() => {});
     return () => {
@@ -177,6 +188,20 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
                         <Settings className="h-4 w-4" />
                         Pengaturan
                       </button>
+                      {/* Link admin: hanya dirender jika status admin diketahui & true
+                          (profil dari /api/profile — tanpa request tambahan). */}
+                      {showAdminLink(profile) && (
+                        <button
+                          onClick={() => {
+                            router.push("/admin");
+                            setShowUserMenu(false);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                        >
+                          <ShieldCheck className="h-4 w-4" />
+                          Panel Admin
+                        </button>
+                      )}
                       <button
                         onClick={handleLogout}
                         disabled={loggingOut}
@@ -233,6 +258,19 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
                   {link.label}
                 </button>
               ))}
+              {/* Link admin (mobile) — syarat sama: hanya bila is_admin true */}
+              {showAdminLink(profile) && (
+                <button
+                  onClick={() => {
+                    router.push("/admin");
+                    setShowMobileDrawer(false);
+                  }}
+                  className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm hover:bg-accent transition-colors"
+                >
+                  <ShieldCheck className="h-5 w-5 text-muted-foreground" />
+                  Panel Admin
+                </button>
+              )}
               <div className="border-t my-3" />
               <button
                 onClick={handleLogout}
