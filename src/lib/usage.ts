@@ -31,6 +31,12 @@
  */
 
 import { createServiceRoleClient } from "@/lib/supabase/service";
+import {
+  describeSupabaseError,
+  formatSupabaseError,
+  maskId,
+  type SupabaseErrorInfo,
+} from "@/lib/db-error";
 
 export type PlanTier = "free" | "starter" | "pro";
 
@@ -53,6 +59,24 @@ const PLAN_CREDITS: Record<PlanTier, number> = {
 };
 
 const USAGE_TABLE = "user_usage";
+
+/**
+ * `identity_key` untuk baris jalur AKUN.
+ *
+ * Kolom `identity_key` masih `not null` (migration 003) dan TIDAK punya default,
+ * sedangkan baris akun dikenali lewat `user_id`. Tanpa nilai ini, INSERT jalur
+ * akun selalu ditolak Postgres dengan 23502:
+ *   null value in column "identity_key" of relation "user_usage"
+ *   violates not-null constraint
+ * Nilai deterministik `account:<user_id>` juga menjaga unique index
+ * (identity_key, period) tetap konsisten per akun dan tidak pernah bentrok
+ * dengan jalur anon (`anon:<device>`).
+ * Migration 028 melonggarkan constraint-nya; kode ini tetap mengisi nilainya
+ * supaya tetap bekerja sebelum migration dijalankan.
+ */
+export function accountIdentityKey(userId: string): string {
+  return `account:${userId}`;
+}
 
 /** Periode bulan aktuell: YYYY-MM */
 function currentPeriod(): string {
@@ -334,11 +358,17 @@ async function fetchOrCreateByUser(userId: string, period: string): Promise<Usag
       return normalizeRow(data);
     }
     if (error && !isFunctionNotFound(error)) {
-      // Error bukan "function not found" — log, lanjut fallback.
-      console.warn("[usage] ensure_usage_row_by_user unexpected error:", error.message);
+      // Error bukan "function not found" — log ter-redaksi, lanjut fallback.
+      console.warn(
+        "[usage] ensure_usage_row_by_user error: " +
+          formatSupabaseError(describeSupabaseError(error))
+      );
     }
   } catch (e) {
-    console.warn("[usage] ensure_usage_row_by_user error:", e instanceof Error ? e.message : e);
+    console.warn(
+      "[usage] ensure_usage_row_by_user exception: " +
+        formatSupabaseError(describeSupabaseError(e))
+    );
   }
 
   // Fallback: legacy get-then-insert keyed by user_id (sebelum migration 018 deploy).
@@ -364,23 +394,36 @@ async function fetchOrCreateLegacyByUser(
 
   const defaults: UsageRow = { plan: "free", credits_total: FREE_CREDITS, credits_used: 0 };
   try {
-    const { data: created } = await supabase
+    const { data: created, error: createError } = await supabase
       .from(USAGE_TABLE)
       .insert({
         user_id: userId,
+        // `identity_key` masih `not null` (migration 003) → WAJIB diisi di jalur
+        // akun. Dulu error 23502 dari insert ini TERTELAN (hanya `data` yang
+        // dibaca), sehingga fungsi diam-diam mengembalikan default tanpa baris
+        // dan seluruh metering akun (018) tidak pernah tersimpan.
+        identity_key: accountIdentityKey(userId),
         period,
         plan: "free",
         credits_total: FREE_CREDITS,
         credits_used: 0,
       })
       .select("plan, credits_total, credits_used")
-      .single();
+      .maybeSingle();
 
-    if (created) {
+    if (createError) {
+      console.warn(
+        `[usage] gagal membuat baris usage akun: user=${maskId(userId)} period=${period} ` +
+          formatSupabaseError(describeSupabaseError(createError))
+      );
+    } else if (created) {
       return normalizeRow(created);
     }
   } catch (e) {
-    console.warn("[usage] Gagal menyimpan usage row by user:", e);
+    console.warn(
+      `[usage] gagal menyimpan usage row by user: user=${maskId(userId)} ` +
+        formatSupabaseError(describeSupabaseError(e))
+    );
   }
 
   return defaults;
@@ -419,14 +462,20 @@ export async function decrementCreditForUser(userId: string): Promise<boolean> {
         return fallbackDecrementCreditByUser(userId, period);
       }
       // Error DB lain — fail-open konsisten doc codebase.
-      console.warn("[usage] decrementCreditForUser error (fail-open):", error.message);
+      console.warn(
+        "[usage] decrementCreditForUser error (fail-open): " +
+          formatSupabaseError(describeSupabaseError(error))
+      );
       return true;
     }
 
     // data === null → UPDATE tidak match → kuota habis / row belum ada.
     return data !== null && data !== undefined;
   } catch (e) {
-    console.warn("[usage] decrementCreditForUser RPC error (fail-open):", e instanceof Error ? e.message : e);
+    console.warn(
+      "[usage] decrementCreditForUser RPC error (fail-open): " +
+        formatSupabaseError(describeSupabaseError(e))
+    );
     return true;
   }
 }
@@ -454,7 +503,10 @@ async function fallbackDecrementCreditByUser(userId: string, period: string): Pr
       .maybeSingle();
 
     if (error) {
-      console.warn("[usage] fallback by-user decrement error (fail-open):", error.message);
+      console.warn(
+        "[usage] fallback by-user decrement error (fail-open): " +
+          formatSupabaseError(describeSupabaseError(error))
+      );
       return true;
     }
 
@@ -478,31 +530,121 @@ export async function checkCreditsForUser(userId: string): Promise<boolean> {
   return row.credits_total > 0 && row.credits_used < row.credits_total;
 }
 
-/** SET PLAN keyed by user_id — untuk flow yang punya userId. */
-export async function setPlanForUser(userId: string, plan: PlanTier): Promise<boolean> {
+/** Hasil penulisan plan keyed by user_id (kegagalan membawa penyebabnya). */
+export interface PlanWriteResult {
+  ok: boolean;
+  /** Langkah tempat penulisan berakhir (sukses/gagal). */
+  stage: "update" | "insert";
+  /** Penyebab kegagalan Supabase SUDAH ter-redaksi (aman untuk log). */
+  error: SupabaseErrorInfo | null;
+}
+
+/** Catat kegagalan tulis plan: code/message/details/hint ter-redaksi + user ter-masker. */
+function failPlanWrite(
+  stage: "update" | "insert",
+  userId: string,
+  period: string,
+  rawError: unknown
+): PlanWriteResult {
+  const error = describeSupabaseError(rawError);
+  console.warn(
+    `[usage] setPlanForUser gagal: stage=${stage} period=${period} ` +
+      `user=${maskId(userId)} ${formatSupabaseError(error)}`
+  );
+  return { ok: false, stage, error };
+}
+
+/**
+ * SET PLAN keyed by user_id — versi DETIL (menyertakan penyebab kegagalan).
+ *
+ * Kenapa bukan `upsert({ onConflict: "user_id,period" })` lagi:
+ *  1. `upsert` mensyaratkan unique index (user_id, period) SUDAH ada; kalau
+ *     belum (migration 018 belum jalan) Postgres membalas 42P10.
+ *  2. Baris akun butuh INSERT tanpa `identity_key`, sedang kolom itu `not null`
+ *     sejak migration 003 → 23502. Inilah penyebab nyata "Gagal memperbarui
+ *     plan" untuk user yang sudah terdaftar (barisnya belum pernah tercipta,
+ *     sehingga selalu jatuh ke cabang INSERT).
+ *
+ * Urutan UPDATE → (bila 0 baris) INSERT dengan `identity_key` eksplisit bekerja
+ * baik sebelum MAUPUN sesudah migration 028 dijalankan, dan tidak menyentuh
+ * lifecycle/expiry plan (hanya plan + kuota bulan berjalan).
+ */
+export async function setPlanForUserDetailed(
+  userId: string,
+  plan: PlanTier
+): Promise<PlanWriteResult> {
   const period = currentPeriod();
   const supabase = createServiceRoleClient();
+  const patch = {
+    plan,
+    credits_total: PLAN_CREDITS[plan] ?? FREE_CREDITS,
+    credits_used: 0,
+    updated_at: new Date().toISOString(),
+  };
 
-  // Pastikan baris ada (create with default free jika not exist).
-  await fetchOrCreateByUser(userId, period);
+  // Langkah terakhir yang sedang dijalankan — dipakai bila promise melempar
+  // (mis. jaringan mati) supaya log tetap menyebut tahap yang benar.
+  let stage: "update" | "insert" = "update";
 
-  const { error } = await supabase.from(USAGE_TABLE).upsert(
-    {
-      user_id: userId,
-      period,
-      plan,
-      credits_total: PLAN_CREDITS[plan] ?? FREE_CREDITS,
-      credits_used: 0,
-      updated_at: new Date().toISOString(),
-    },
-    {
-      onConflict: "user_id,period",
+  try {
+    // 1) UPDATE baris periode berjalan milik akun (jalur normal).
+    const { data: updatedRows, error: updateError } = await supabase
+      .from(USAGE_TABLE)
+      .update(patch)
+      .eq("user_id", userId)
+      .eq("period", period)
+      .select("id");
+
+    if (updateError) {
+      return failPlanWrite(stage, userId, period, updateError);
     }
-  );
+    if (Array.isArray(updatedRows) && updatedRows.length > 0) {
+      return { ok: true, stage, error: null };
+    }
 
-  if (error) {
-    console.warn("[usage] setPlanForUser error:", error.message);
-    return false;
+    // 2) Belum ada baris → INSERT (identity_key WAJIB: `not null` di 003).
+    stage = "insert";
+    const { error: insertError } = await supabase.from(USAGE_TABLE).insert({
+      user_id: userId,
+      identity_key: accountIdentityKey(userId),
+      period,
+      ...patch,
+    });
+
+    if (!insertError) {
+      return { ok: true, stage, error: null };
+    }
+
+    // 3) Balapan dengan request lain (23505) → baris sudah dibuat, ulangi UPDATE.
+    if (insertError.code === "23505") {
+      stage = "update";
+      const { data: retryRows, error: retryError } = await supabase
+        .from(USAGE_TABLE)
+        .update(patch)
+        .eq("user_id", userId)
+        .eq("period", period)
+        .select("id");
+
+      if (!retryError && Array.isArray(retryRows) && retryRows.length > 0) {
+        return { ok: true, stage, error: null };
+      }
+      return failPlanWrite(stage, userId, period, retryError ?? insertError);
+    }
+
+    return failPlanWrite(stage, userId, period, insertError);
+  } catch (e) {
+    // Error jaringan / exception tak terduga — jangan dilempar ke route
+    // (respons JSON tetap dibentuk, penyebab masuk log ter-redaksi).
+    return failPlanWrite(stage, userId, period, e);
   }
-  return true;
+}
+
+/**
+ * SET PLAN keyed by user_id — wrapper boolean (kompatibel pemanggil lama:
+ * webhook checkout & route admin). Penyebab kegagalan sudah di-log di dalam
+ * `setPlanForUserDetailed`.
+ */
+export async function setPlanForUser(userId: string, plan: PlanTier): Promise<boolean> {
+  const result = await setPlanForUserDetailed(userId, plan);
+  return result.ok;
 }

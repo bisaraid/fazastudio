@@ -41,7 +41,10 @@ describe("setPlanErrorMessage", () => {
   });
 
   test("dua keadaan itu TIDAK memakai pesan yang sama", () => {
-    const notFound = setPlanErrorMessage({ code: "user_not_found", error: "Email X belum terdaftar." }, 404);
+    const notFound = setPlanErrorMessage(
+      { code: "user_not_found", error: "Email X belum terdaftar." },
+      404
+    );
     const serverDown = setPlanErrorMessage(
       { code: "auth_lookup_failed", error: "Gagal menghubungi layanan Auth." },
       500
@@ -61,6 +64,31 @@ describe("setPlanErrorMessage", () => {
   test("fetch reject (server tak terjangkau) → pesan jaringan tetap", () => {
     expect(setPlanErrorMessage(null)).toBe(NETWORK_ERROR_MESSAGE);
     expect(NETWORK_ERROR_MESSAGE).toMatch(/koneksi/i);
+  });
+
+  test("code plan_write_failed → pesan server (dengan kode referensi), bukan 'tidak ditemukan'", () => {
+    const msg = setPlanErrorMessage(
+      {
+        code: "plan_write_failed",
+        ref: "sp-ab12cd34",
+        error:
+          "Gagal menyimpan plan ke database (kode sp-ab12cd34). Hubungi admin/dev dan sebutkan kode ini.",
+      },
+      500
+    );
+
+    expect(msg).toContain("Gagal menyimpan plan ke database");
+    expect(msg).toContain("sp-ab12cd34");
+    expect(msg).not.toMatch(/belum terdaftar/i);
+    // Detail internal tidak boleh muncul di UI.
+    expect(msg).not.toContain("23502");
+    expect(msg).not.toContain("identity_key");
+  });
+
+  test("code plan_write_failed tanpa pesan server → fallback yang tetap jelas", () => {
+    const msg = setPlanErrorMessage({ code: "plan_write_failed" }, 500);
+    expect(msg).toContain("Gagal menyimpan plan ke database");
+    expect(msg).toContain("admin/dev");
   });
 
   test("tanpa code: pakai pesan server bila ada, jika tidak pesan generik", () => {

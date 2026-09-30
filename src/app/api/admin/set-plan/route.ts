@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service";
-import { setPlanForUser, type PlanTier } from "@/lib/usage";
+import { setPlanForUserDetailed, type PlanTier } from "@/lib/usage";
+import { formatSupabaseError, maskId, newLogRef } from "@/lib/db-error";
 import { requireAdmin } from "../_auth";
 import { recordAudit } from "@/lib/admin-audit";
 import {
@@ -124,16 +125,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const ok = await setPlanForUser(userId, plan);
-  if (!ok) {
+  const write = await setPlanForUserDetailed(userId, plan);
+  if (!write.ok) {
+    // Lookup SUKSES tapi TULIS plan ke DB gagal → bedakan dari kedua kegagalan
+    // di atas. Penyebab teknis (code/message/details/hint, sudah ter-redaksi)
+    // hanya masuk log server; klien hanya menerima kode referensi.
+    const ref = newLogRef();
     console.warn(
-      `[admin-set-plan] setPlanForUser gagal (userId=${userId}, plan=${plan})`
+      `[admin-set-plan] plan_write_failed ref=${ref} stage=${write.stage} ` +
+        `plan=${plan} user=${maskId(userId)} ${formatSupabaseError(write.error)}`
     );
     return NextResponse.json(
       {
         success: false,
-        code: "plan_update_failed",
-        error: "Gagal memperbarui plan",
+        code: "plan_write_failed",
+        ref,
+        // Tanpa detail internal (kode Postgres, nama kolom/tabel).
+        error: `Gagal menyimpan plan ke database (kode ${ref}). Hubungi admin/dev dan sebutkan kode ini.`,
       },
       { status: 500 }
     );

@@ -5,7 +5,9 @@
  * POST /api/admin/set-plan: field `code` membedakan
  *   - "user_not_found"     → email belum terdaftar (bukan salah server)
  *   - "auth_lookup_failed" → layanan Auth tidak bisa dihubungi
- *   - "plan_update_failed" → lookup sukses, update plan gagal
+ *   - "plan_write_failed"  → lookup sukses, TULIS plan ke DB gagal
+ *                            (pesan server memuat kode referensi log; detail
+ *                            teknis hanya ada di log server)
  * Tanpa `code`, UI jatuh ke pesan dari server (atau generik bila kosong).
  */
 
@@ -20,6 +22,8 @@ export const UNKNOWN_ERROR_MESSAGE =
 export interface SetPlanErrorBody {
   code?: string;
   error?: string;
+  /** Kode referensi log server (dikirim bersama code "plan_write_failed"). */
+  ref?: string;
 }
 
 /**
@@ -41,6 +45,15 @@ export function setPlanErrorMessage(
 
   if (body.code === "auth_lookup_failed") {
     return body.error || "Gagal menghubungi layanan Auth untuk mencari user.";
+  }
+
+  if (body.code === "plan_write_failed") {
+    // Pesan server sudah ramah + memuat kode referensi log; jangan tampilkan
+    // detail database (hanya ada di log server).
+    return (
+      body.error ||
+      "Gagal menyimpan plan ke database. Hubungi admin/dev dan sebutkan kode referensi di log server."
+    );
   }
 
   if (body.error) return body.error;

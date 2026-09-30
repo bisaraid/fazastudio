@@ -9,7 +9,9 @@ import type { NextRequest } from "next/server";
 //  2. user di halaman ke-2 (paginasi penuh) → tetap ketemu,
 //  3. listUsers error → 500 `auth_lookup_failed` (BUKAN 404 palsu) + log,
 //  4. email belum terdaftar → 404 `user_not_found` + pesan jelas + saran,
-//  5. kegagalan update plan dibedakan dari kegagalan lookup.
+//  5. lookup sukses tapi tulis plan gagal → 500 `plan_write_failed` + kode
+//     referensi log (detail teknis code/message/details/hint hanya di log,
+//     ter-redaksi / tanpa PII).
 // Semua I/O dimock (Auth + usage + audit) — tanpa jaringan/DB.
 // ============================================================
 
@@ -20,6 +22,12 @@ interface FakeUser {
 
 const fake = vi.hoisted(() => ({
   planResult: true,
+  planError: null as null | {
+    code: string;
+    message: string;
+    details: string | null;
+    hint: string | null;
+  },
   setPlanCalls: [] as Array<[string, string]>,
   auditCalls: [] as Array<Record<string, unknown>>,
   listUserCalls: [] as Array<{ page: number; perPage: number }>,
@@ -35,9 +43,11 @@ vi.mock("@/app/api/admin/_auth", () => ({
 }));
 
 vi.mock("@/lib/usage", () => ({
-  setPlanForUser: async (userId: string, plan: string) => {
+  // Route memakai varian DETIL agar penyebab kegagalan DB bisa dicatat.
+  setPlanForUserDetailed: async (userId: string, plan: string) => {
     fake.setPlanCalls.push([userId, plan]);
-    return fake.planResult;
+    if (fake.planResult) return { ok: true, stage: "update", error: null };
+    return { ok: false, stage: "insert", error: fake.planError };
   },
 }));
 
@@ -64,6 +74,10 @@ vi.mock("@/lib/supabase/service", () => ({
 
 import { POST } from "@/app/api/admin/set-plan/route";
 
+/** Data nyata yang dipakai di test: userId + email user terdaftar. */
+const USER_ID = "cffd1283-e3c4-49d8-ad34-2e6b6109e93d";
+const USER_EMAIL = "akunjobside@gmail.com";
+
 /** Request minimal — route hanya memakai request.json(). */
 const req = (body: unknown) => ({ json: async () => body }) as unknown as NextRequest;
 
@@ -76,6 +90,7 @@ function fullPage(n: number, prefix: string): FakeUser[] {
 
 beforeEach(() => {
   fake.planResult = true;
+  fake.planError = null;
   fake.setPlanCalls = [];
   fake.auditCalls = [];
   fake.listUserCalls = [];
@@ -168,18 +183,46 @@ describe("POST /api/admin/set-plan — cari user via email", () => {
     expect(fake.setPlanCalls).toHaveLength(0);
   });
 
-  test("lookup sukses tapi update plan gagal → 500 plan_update_failed (beda dari lookup)", async () => {
+  test("lookup sukses tapi tulis plan gagal → 500 plan_write_failed + ref, detail hanya di log", async () => {
     fake.planResult = false;
-    fake.pages = [[{ id: "u-1", email: "ada@example.com" }]];
+    fake.planError = {
+      code: "23502",
+      message:
+        'null value in column "identity_key" of relation "user_usage" violates not-null constraint',
+      details: `Failing row contains (${USER_ID}, null, 2026-09).`,
+      hint: `jalankan migration 028; pemilik ${USER_EMAIL}`,
+    };
+    fake.pages = [[{ id: USER_ID, email: USER_EMAIL }]];
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const res = await POST(req({ email: "ada@example.com", plan: "starter" }));
+    const res = await POST(req({ email: USER_EMAIL, plan: "starter" }));
     const json = await res.json();
 
     expect(res.status).toBe(500);
-    expect(json.code).toBe("plan_update_failed");
-    expect(fake.setPlanCalls).toEqual([["u-1", "starter"]]);
+    expect(json.success).toBe(false);
+    expect(json.code).toBe("plan_write_failed");
+    expect(fake.setPlanCalls).toEqual([[USER_ID, "starter"]]);
     expect(fake.auditCalls).toHaveLength(0);
+
+    // Klien hanya menerima kode referensi — TANPA detail internal.
+    expect(json.ref).toMatch(/^sp-[a-z0-9]{8}$/);
+    expect(json.error).toContain(json.ref);
+    expect(json.error).toContain("Gagal menyimpan plan ke database");
+    expect(json.error).not.toContain("23502");
+    expect(json.error).not.toContain("identity_key");
+    expect(json.error).not.toContain("user_usage");
+
+    // Penyebab lengkap (code/message/details/hint) ada di log, sudah ter-redaksi.
+    const log = warn.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(log).toContain("plan_write_failed");
+    expect(log).toContain(`ref=${json.ref}`);
+    expect(log).toContain("stage=insert");
+    expect(log).toContain("code=23502");
+    expect(log).toContain("message=null value in column");
+    expect(log).toContain("details=Failing row contains ([uuid]");
+    expect(log).toContain("hint=jalankan migration 028");
+    expect(log).not.toContain(USER_ID);
+    expect(log).not.toContain(USER_EMAIL);
     warn.mockRestore();
   });
 
