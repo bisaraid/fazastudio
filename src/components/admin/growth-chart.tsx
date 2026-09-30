@@ -37,7 +37,12 @@ interface MetricsResponse {
 const PAD = { top: 12, right: 16, bottom: 28, left: 46 };
 const HEIGHT = 220;
 const COLOR_USERS = "hsl(var(--primary))";
-const COLOR_PROJECTS = "#10b981";
+/**
+ * Seri kedua (project) — token, bukan hex mati. Nilainya beda per tema
+ * (terang: emerald pekat kontras ≥3:1 di atas latar terang; gelap: emerald
+ * lebih cerah) supaya garis tetap terbaca di kedua tema.
+ */
+const COLOR_PROJECTS = "hsl(var(--chart-projects))";
 
 export default function GrowthChart({ days = 30 }: { days?: number }) {
   const [rows, setRows] = useState<MetricsRow[] | null>(null);

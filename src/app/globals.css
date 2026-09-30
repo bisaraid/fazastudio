@@ -32,6 +32,10 @@
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 239 84% 67%;
+    /* Seri kedua grafik admin (project). Bukan warna mati: dipakai lewat
+       `hsl(var(--chart-projects))` di growth-chart.tsx, dan nilainya berbeda
+       per tema supaya kontras ≥3:1 di atas latar masing-masing tema. */
+    --chart-projects: 152 76% 35%;
   }
 
   .dark {
@@ -62,6 +66,9 @@
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 239 84% 67%;
+    /* Versi terang dari seri project: terbaca di latar gelap (~12:1) dan tetap
+       beda jelas dari --primary (seri user) di grafik yang sama. */
+    --chart-projects: 152 76% 60%;
   }
 }
 
