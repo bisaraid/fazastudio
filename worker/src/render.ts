@@ -116,8 +116,129 @@ function resolveFfmpegPath(): string {
   return "";
 }
 
-function escapeFilterPath(filePath: string): string {
-  return filePath.replace(/\\/g, '/').replace(/^([A-Za-z]):/, '$1\\:');
+/**
+ * Escape path agar aman dipakai sebagai NILAI opsi filter FFmpeg
+ * (`subtitles=<path>`, `fontsdir=<path>`, `drawtext=fontfile=<path>`).
+ *
+ * Kenapa butuh backslash GANDA: string filtergraph (`-filter_complex` / `-vf`)
+ * di-parse DUA kali, dari luar ke dalam:
+ *   level 2 = deskripsi filtergraph (`\` `'` `,` `;` `[` `]`)
+ *   level 1 = nilai opsi di dalam filter (pemisah `:` antar opsi)
+ * Jadi titik dua drive Windows harus dikirim sebagai `\\:` — level 2 mengubah
+ * `\\` → `\`, lalu level 1 mengubah `\:` → `:`.
+ *
+ * Bug lama: `C\:` (satu backslash) → level 2 menghabiskan backslash-nya →
+ * level 1 membaca `C:` → path terpotong di titik dua. Gejala di Windows:
+ *   "Unable to parse option value ".../subtitle.srt" as image size;
+ *    Error applying option 'original_size' to filter 'subtitles'".
+ *
+ * Urutan escape: normalisasi `\` → `/`, lalu escape level 1 (nilai opsi),
+ * lalu escape level 2 (deskripsi filtergraph).
+ *
+ * Linux/macOS TIDAK berubah: path tanpa `:` `'` `,` `;` `[` `]` dan tanpa
+ * backslash — mis. `/tmp/acs-video-xxx/subtitle.srt` — keluar persis sama.
+ */
+export function escapeFilterPath(filePath: string): string {
+  return (
+    filePath
+      // Windows: backslash → slash supaya tidak perlu di-escape dua kali.
+      .replace(/\\/g, "/")
+      // Level 1 (nilai opsi): `'` lalu `:` (pemisah opsi).
+      .replace(/'/g, "\\'")
+      .replace(/:/g, "\\:")
+      // Level 2 (deskripsi filtergraph): `\` digandakan dulu, lalu `'` dan
+      // `,` `;` `[` `]` (NULL separator / label / pemisah chain).
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'")
+      .replace(/([,;\[\]])/g, "\\$1")
+  );
+}
+
+// ============================================================
+// Pembangun chain filtergraph (PURE — bisa diuji tanpa FFmpeg)
+// ============================================================
+
+export interface SceneChainPlan {
+  /** Chain per scene + chain transisi (xfade) / concat, siap digabung dengan ';'. */
+  parts: string[];
+  /** Label video hasil gabungan, sebelum chain subtitle (mis. `[vid2]` / `[base]`). */
+  baseLabel: string;
+}
+
+/**
+ * Rangkai chain TERAKHIR filtergraph: `<baseLabel><chainBody>[vout]`.
+ *
+ * HANYA SATU label input yang ditulis, yaitu label output chain sebelumnya.
+ * Jangan pernah menaruh label input kedua di dalam `chainBody` (mis. `[base]`):
+ * filter seperti `subtitles`/`drawtext` hanya punya satu input, sehingga label
+ * tambahan memicu:
+ *   "More input link labels specified for filter 'subtitles' than it has
+ *    inputs: 2 > 1" → Error linking filters → exit EINVAL (4294967274).
+ */
+export function buildFinalChain(baseLabel: string, chainBody: string, outLabel = "[vout]"): string {
+  const label = baseLabel.startsWith("[") ? baseLabel : "[" + baseLabel + "]";
+  return label + chainBody + outLabel;
+}
+
+/**
+ * Bulatkan nilai waktu filtergraph ke milidetik (3 desimal).
+ *
+ * Alasan: durasi scene yang dihitung proporsional (render.ts, `base * underScalar`)
+ * menghasilkan artefak float seperti `trim=duration=1.6800000000000002` atau
+ * `offset=0.7999999999999999` yang membuat graph & log sulit dibaca.
+ *
+ * AMAN: pergeseran maksimum 0,5 ms per nilai — jauh di bawah satu frame
+ * (1/30 s = 33,3 ms) dan total tetap dipatok opsi `-t totalDuration` +
+ * `-shortest`, sehingga durasi keluaran tidak bergeser (dibuktikan di matriks
+ * uji live: durasi keluaran identik sebelum/sesudah pembulatan).
+ */
+export function roundFilterSeconds(seconds: number): number {
+  return Math.round(seconds * 1000) / 1000;
+}
+
+/**
+ * Bangun chain untuk mode "auto per-scene":
+ * tiap scene → `[i:v]scale+pad(,zoom) → trim → setpts → format`,
+ * lalu digabung dengan `xfade` (crossfade, hanya bila >1 scene) atau `concat`.
+ *
+ * PURE (tanpa I/O / tanpa FFmpeg) sehingga bisa diuji langsung.
+ */
+export function buildSceneChain(opts: {
+  sceneDurations: number[];
+  scalePad: string;
+  useZoom: boolean;
+  useCrossfade: boolean;
+  crossfadeDuration: number;
+  zoomFilter?: string;
+}): SceneChainPlan {
+  const { sceneDurations, scalePad, useZoom, useCrossfade, crossfadeDuration: OVER, zoomFilter } = opts;
+  const parts: string[] = [];
+  // Durasi dibulatkan ke ms supaya graph bersih (mis. 1.68 bukan 1.6800000000000002).
+  const durs = sceneDurations.map(roundFilterSeconds);
+
+  for (let i = 0; i < durs.length; i++) {
+    let v = "[" + i + ":v]" + scalePad;
+    if (useZoom && zoomFilter) v += "," + zoomFilter;
+    v += ",trim=duration=" + durs[i] + ",setpts=PTS-STARTPTS,format=yuv420p[v" + i + "]";
+    parts.push(v);
+  }
+
+  if (useCrossfade && durs.length > 1) {
+    let acc = durs[0];
+    for (let i = 1; i < durs.length; i++) {
+      const off = roundFilterSeconds(Math.max(0, acc - OVER));
+      const prev = i === 1 ? "v0" : "vid" + (i - 1);
+      parts.push(
+        "[" + prev + "][v" + i + "]xfade=transition=fade:duration=" + OVER + ":offset=" + off + "[vid" + i + "]"
+      );
+      acc = roundFilterSeconds(acc + durs[i] - OVER);
+    }
+    return { parts, baseLabel: "[vid" + (durs.length - 1) + "]" };
+  }
+
+  const concatInputs = durs.map((_, i) => "[v" + i + "]");
+  parts.push(concatInputs.join("") + "concat=n=" + durs.length + ":v=1:a=0[base]");
+  return { parts, baseLabel: "[base]" };
 }
 
 function formatSrtTime(seconds: number): string {
@@ -434,9 +555,13 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
     const forceStyle = buildForceStyle(assStyle);
     const escapedSubtitlePath = escapeFilterPath(subtitleFile);
     const fontsDirOpt = subtitleFontDir ? ':fontsdir=' + escapeFilterPath(subtitleFontDir) : '';
-    const subtitleFilter = `[base]subtitles=${escapedSubtitlePath}${fontsDirOpt}:force_style='${forceStyle}'[vout]`;
-    // Versi untuk -vf (single clip, tanpa [base]).
-    const singleSubtitleFilter = `subtitles=${escapedSubtitlePath}${fontsDirOpt}:force_style='${forceStyle}'`;
+    // Chain subtitle TANPA label filtergraph: label input ditambahkan eksplisit
+    // lewat buildFinalChain() di tiap cabang. Label `[base]` TIDAK boleh ditulis
+    // di sini — mode xfade menghasilkan label `[vidN]`, dan `subtitles` hanya
+    // punya 1 input, sehingga label kedua memicu:
+    //   "More input link labels specified for filter 'subtitles' than it has
+    //    inputs: 2 > 1" (exit EINVAL 4294967274).
+    const subtitleChain = `subtitles=${escapedSubtitlePath}${fontsDirOpt}:force_style='${forceStyle}'`;
 
     // ===== WATERMARK (free plan) — burn-in "Faza Studio" bottom-right =====
     // Pricing janji: free plan punya "Watermark Faza Studio" (constants.ts).
@@ -453,8 +578,9 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
           "fontcolor=white@0.7:borderw=1:bordercolor=black@0.6"
         : "";
 
-    const subtitleFilterWm = subtitleFilter.replace(/\[vout\]$/, watermarkDraw + "[vout]");
-    const singleSubtitleFilterWm = singleSubtitleFilter + watermarkDraw;
+    // Chain subtitle + watermark dalam SATU chain (watermark = drawtext yang
+    // diawali koma). Dipakai baik oleh `-filter_complex` maupun `-vf`.
+    const subtitleChainWm = subtitleChain + watermarkDraw;
     const hasSceneFootage = Array.isArray(sceneFootage) && sceneFootage.length > 0;
     const scalePad = 'scale=' + outW + ':' + outH + ':force_original_aspect_ratio=decrease,pad=' + outW + ':' + outH + ':(ow-iw)/2:(oh-ih)/2';
     let autoSceneClipped: Array<{ path: string; duration: number; ok: boolean; weight: number }> | null = null;
@@ -489,31 +615,18 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
       });
 
       const zoomFilter = 'zoompan=z=\'min(1+0.0006*on,1.06)\':d=1:x=\'iw/2-(iw/zoom/2)\':y=\'ih/2-(ih/zoom/2)\':s=' + outW + 'x' + outH + ':fps=30';
-      const parts = [];
-      for (let i = 0; i < sceneInputs.length; i++) {
-        const dur = sceneInputs[i].duration;
-        let v = '[' + i + ':v]' + scalePad;
-        if (useZoom) v += ',' + zoomFilter;
-        v += ',trim=duration=' + dur + ',setpts=PTS-STARTPTS,format=yuv420p[v' + i + ']';
-        parts.push(v);
-      }
-      let baseLabel;
-      if (useCrossfade) {
-        let acc = sceneInputs[0].duration;
-        for (let i = 1; i < sceneInputs.length; i++) {
-          const off = Math.max(0, acc - OVER);
-          const prev = i === 1 ? 'v0' : 'vid' + (i - 1);
-          parts.push('[' + prev + '][v' + i + ']xfade=transition=fade:duration=' + OVER + ':offset=' + off + '[vid' + i + ']');
-          acc = acc + sceneInputs[i].duration - OVER;
-        }
-        baseLabel = '[vid' + (sceneInputs.length - 1) + ']';
-      } else {
-        const concatInputs = [];
-        for (let i = 0; i < sceneInputs.length; i++) concatInputs.push('[v' + i + ']');
-        parts.push(concatInputs.join('') + 'concat=n=' + sceneInputs.length + ':v=1:a=0[base]');
-        baseLabel = '[base]';
-      }
-      const filterComplex = parts.join(';') + ';' + baseLabel + subtitleFilterWm;
+      const scenePlan = buildSceneChain({
+        sceneDurations: sceneInputs.map((s) => s.duration),
+        scalePad,
+        useZoom,
+        useCrossfade,
+        crossfadeDuration: OVER,
+        zoomFilter,
+      });
+      // Label video terakhir (`[vidN]` untuk xfade, `[base]` untuk concat)
+      // ditulis SEKALI di sini — chain subtitle tidak membawa label sendiri.
+      const filterComplex =
+        scenePlan.parts.join(';') + ';' + buildFinalChain(scenePlan.baseLabel, subtitleChainWm);
       args = [];
       for (const s of sceneInputs) { args.push('-stream_loop', '-1', '-i', s.path); }
       args.push('-i', inputAudio, '-filter_complex', filterComplex, '-map', '[vout]', '-map', String(sceneInputs.length) + ':a');
@@ -539,7 +652,9 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
         parts.push('[' + i + ':v]' + scalePad + ',trim=duration=' + dur + ',setpts=PTS-STARTPTS[v' + i + ']');
         concatInputs.push('[v' + i + ']');
       }
-      const filterComplex = parts.join(';') + ';' + concatInputs.join('') + 'concat=n=' + sceneInputs.length + ':v=1:a=0[base];' + subtitleFilterWm;
+      const filterComplex =
+        parts.join(';') + ';' + concatInputs.join('') + 'concat=n=' + sceneInputs.length + ':v=1:a=0[base];' +
+        buildFinalChain('[base]', subtitleChainWm);
       args = [];
       for (const s of sceneInputs) { args.push('-stream_loop', '-1', '-i', s.path); }
       args.push('-i', inputAudio, '-filter_complex', filterComplex, '-map', '[vout]', '-map', String(sceneInputs.length) + ':a');
@@ -549,7 +664,7 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
     } else {
       args = [
         '-stream_loop', '-1', '-i', inputVideo, '-i', inputAudio,
-        '-vf', scalePad + ',' + singleSubtitleFilterWm,
+        '-vf', scalePad + ',' + subtitleChainWm,
         '-af', LOUDNORM,
         '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac',
         '-shortest', '-t', String(totalDuration), '-movflags', '+faststart', '-y', outputFile,
@@ -623,8 +738,20 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
     console.error('[render] Error:', error);
     throw error;
   } finally {
+    // Pembersihan workDir: di Windows handle ffmpeg bisa masih terbuka sesaat
+    // setelah kill/exit (EPERM/EBUSY pada rm) → coba ulang dengan jeda sebelum menyerah,
+    // supaya temp `acs-video-*` tidak menumpuk.
     if (workDir) {
-      try { await rm(workDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      const dir = workDir;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await rm(dir, { recursive: true, force: true });
+          break;
+        } catch (e) {
+          if (attempt === 3) console.warn('[render] Gagal hapus temp ' + dir + ':', e);
+          else await new Promise((r) => setTimeout(r, 250));
+        }
+      }
     }
   }
 }
