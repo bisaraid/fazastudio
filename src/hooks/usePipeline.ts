@@ -497,7 +497,9 @@ throw withErrorCode(new Error(json.error || "Generate script gagal"), res.status
                 subtitleUrl: project.subtitle.url || project.subtitle.srtContent,
                 projectId: project.id,
                 genre: project.genre,
-                platform: project.platform,
+                // Fallback aman (project lama/platform kosong) → tiktok;
+                // worker juga punya fallback internal di getSubtitlePlatformProfile.
+                platform: project.platform || "tiktok",
                 backgroundUrl,
                 subtitleSegments: project.subtitle?.segments || [],
                 subtitleStyle: project.subtitle?.style,

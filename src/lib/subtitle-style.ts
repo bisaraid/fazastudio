@@ -1,26 +1,24 @@
 /**
- * Subtitle Style Engine — ACS (Sesi B)
+ * Subtitle Style Engine — ACS (Sesi B + perbaikan ukuran/posisi)
  *
- * Memusatkan seluruh keputusan gaya caption subtitle yang sebelumnya
- * tersebar & sebagian BUG:
+ * Memusatkan seluruh keputusan gaya caption subtitle (ukuran, margin, warna,
+ * box) sebagai PURE function → bisa di-unit-tested tanpa route/FFmpeg.
  *
- * PROBLEM LAMA:
- *  - `subtitleStyle.fontSize` (dari UI) DIIGNOR oleh render — ukuran
- *    di-hardcode dari rumus konservatif (4% tinggi video) → caption
- *    tampil KECIL & cheesy.
- *  - `backgroundColor`/`backgroundAlpha` (box/gaya Netflix-TikTok)
- *    sudah ada di tipe tapi tidak pernah dipakai render.
+ * PERBAIKAN UKURAN (live-verified via FFmpeg 6.1.1 + libass):
+ *  - Konversi SRT→ASS FFmpeg membuat script virtual ber-PlayRes 384x288.
+ *    libass menskalakan SERAGAM berbasis tinggi: 1920/288 = 6,67x.
+ *    Akibatnya FontSize=30 "PlayRes" → cap ~131-140px di kanvas 1080x1920
+ *    (subtitle raksasa; teks panjang sampai 7 baris & meleset zona aman).
+ *  - FIX: force_style kini MENYERTAKAN PlayResX/PlayResY = ukuran video →
+ *    SEMUA nilai (FontSize, Outline, Margin) berarti PIKSEL NYATA di
+ *    outW x outH. (Opsi `original_size=` pada filter `subtitles` TERBUKTI
+ *    no-op untuk skala SRT.)
+ *  - Ukuran font & margin per platform lewat `getSubtitlePlatformProfile`
+ *    (~48-56 px pada lebar 1080; margin bawah 20-24% tinggi = zona aman UI
+ *    platform; margin kanan lebar untuk rail UI; target max 2 baris).
  *
- * FIX:
- *  - `fontSize` pengguna DIHORMATI (dengan clamp wajar 12–96 dalam
- *    ruang PlayRes 384x288) atau default platform-aware bila tidak diisi.
- *  - Dukungan box (BorderStyle=4) + outline + shadow — full styling.
- *  - Semua dikalkulasi di sini sebagai PURE function → bisa di-unit-tested
- *    tanpa route/FFmpeg.
- *
- * RUANG NILAI (PENTING): filter `subtitles` dengan SRT membuat ASS
- * virtual ber-PlayRes 384x288. Jadi SEMUA nilai (font, outline, margin)
- * harus dalam ruang itu — bukan piksel video asli.
+ * SINKRONISASI: worker/src/lib/subtitle-style.ts adalah SALINAN dari file ini.
+ * Ubah keduanya bersama-sama.
  */
 
 import type { SubtitleStyle } from "@/lib/types";
@@ -39,15 +37,19 @@ export interface SubtitleStyleInput {
 }
 
 export interface SubtitleAssStyle {
+  /** PlayResX = lebar video output — dipakai force_style agar satuan = piksel. */
+  playResX: number;
+  /** PlayResY = tinggi video output — dipakai force_style agar satuan = piksel. */
+  playResY: number;
   /** Nama font untuk ASS FontName. */
   fontName: string;
-  /** Ukuran font dalam ruang PlayRes 288 (tinggi). */
+  /** Ukuran font dalam PIKSEL nyata di kanvas outW x outH. */
   fontSize: number;
   /** Warna teks ASS (&HAABBGGRR). */
   primaryColour: string;
   /** Posisi: 2=bottom, 8=top (ASS). */
   alignment: number;
-  /** Ketebalan outline (PlayRes). */
+  /** Ketebalan outline (px). */
   outline: number;
   /** Warna outline ASS. */
   outlineColour: string;
@@ -55,24 +57,67 @@ export interface SubtitleAssStyle {
   borderStyle: number;
   /** Warna kotak/subtle (ASS dengan alpha). */
   backColour: string;
-  /** Shadow dalam angka. */
+  /** Shadow dalam piksel. */
   shadow: number;
   /** Warna shadow ASS. */
   shadowColour: string;
-  /** Margin kiri/kanan (PlayRes). */
+  /** Margin kiri/kanan (px). */
   marginL: number;
   marginR: number;
-  /** Margin vertikal (PlayRes). */
+  /** Margin vertikal bawah (px). */
   marginV: number;
 }
 
-/** Default font size per layout (dalam PlayRes height 288): TikTok besar, YouTube moderat. */
-const DEFAULT_FONT_PORTRAIT = 30;  // ~10.4% tinggi
-const DEFAULT_FONT_LANDSCAPE = 24; // ~8.3% tinggi
-const DEFAULT_FONT_SQUARE = 26;    // ~9.0% tinggi
+// ============================================================
+// Profil gaya subtitle per platform (fungsi murni platform → style)
+// ============================================================
 
-const MIN_FONT = 12;
-const MAX_FONT = 96;
+export interface SubtitlePlatformProfile {
+  /** Ukuran font (px) pada short-side referensi 1080. */
+  fontPx: number;
+  /** Margin bawah sebagai FRACSI tinggi frame — zona aman UI bawah platform. */
+  marginBottomPct: number;
+  /** Margin kiri sebagai fraksi lebar frame. */
+  marginLeftPct: number;
+  /** Margin kanan sebagai fraksi lebar frame (rail like/share sering menutup). */
+  marginRightPct: number;
+  /**
+   * Target maksimum baris (DESAIN — libass tidak punya batas runtime;
+   * wrap aktual = f(font + margin)). Statis: tidak dieksekusi FFmpeg.
+   */
+  maxLines: number;
+}
+
+/**
+ * Tabel profil per platform. Angka divalidasi render live 1080x1920 /
+ * 1920x1080 (lihat laporan): zona bawah 20-24% tinggi, kanan 16-18% lebar
+ * untuk platform dengan rail UI vertikal.
+ */
+const SUBTITLE_PROFILES: Record<string, SubtitlePlatformProfile> = {
+  tiktok:  { fontPx: 54, marginBottomPct: 0.24, marginLeftPct: 0.06, marginRightPct: 0.16, maxLines: 2 },
+  reels:   { fontPx: 52, marginBottomPct: 0.24, marginLeftPct: 0.06, marginRightPct: 0.18, maxLines: 2 },
+  youtube: { fontPx: 56, marginBottomPct: 0.20, marginLeftPct: 0.04, marginRightPct: 0.04, maxLines: 2 },
+  podcast: { fontPx: 48, marginBottomPct: 0.20, marginLeftPct: 0.08, marginRightPct: 0.08, maxLines: 2 },
+  shopee:  { fontPx: 50, marginBottomPct: 0.22, marginLeftPct: 0.06, marginRightPct: 0.18, maxLines: 2 },
+};
+
+/** Profil aman untuk platform kosong/project lama/unknown ("shorts", dst). */
+const DEFAULT_PROFILE: SubtitlePlatformProfile = SUBTITLE_PROFILES.tiktok;
+
+/** Ambil profil subtitle untuk platform (tidak pernah melempar; fallback tiktok). */
+export function getSubtitlePlatformProfile(
+  platform?: string | null
+): SubtitlePlatformProfile {
+  if (!platform) return DEFAULT_PROFILE;
+  return SUBTITLE_PROFILES[platform.toLowerCase()] ?? DEFAULT_PROFILE;
+}
+
+/** Short-side referensi profil (px). */
+const REF_SHORT_SIDE = 1080;
+/** Input UI di bawah ini = default LAMA (satuan PlayRes 28) → pakai profil. */
+const MIN_USER_FONT_PX = 32;
+const MIN_FONT_PX = 24;
+const MAX_FONT_PX = 120;
 
 /** Konversi hex "#RRGGBB" → ASS "&HAABBGGRR". Alpha 0-255 (255 = opaque). */
 export function hexToAssColor(hex: string, alpha = 0): string {
@@ -92,36 +137,30 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * Hitung seluruh parameter ASS untuk caption subtitle berdasarkan
- * style pengguna + resolusi + platform. Pure & testable.
+ * Hitung seluruh parameter ASS — SEMUA DALAM PIKSEL NYATA di outW x outH
+ * (karena force_style menyertakan PlayResX/PlayResY = ukuran output).
+ * Pure & testable.
  */
 export function computeSubtitleStyle(input: SubtitleStyleInput): SubtitleAssStyle {
   const { style, outW, outH, platform, resolvedFont } = input;
-  const scaleX = 384 / Math.max(1, outW);
-  const scaleY = 288 / Math.max(1, outH);
+  const profile = getSubtitlePlatformProfile(platform);
 
-  // ===== FONT SIZE =====
-  // Jika style.fontSize diisi (angka valid) → hormati (PlayRes).
-  // Jika tidak → default platform-aware (gaya TikTok besar).
-  let fontSize: number;
+  // ===== FONT SIZE (px) =====
+  // Profil platform diskalakan proporsional thd short-side (1080 = 1x).
+  // Input UI >= 32 px dihormati (clamp 24..120); nilai legacy 28 (default
+  // lama, satuan PlayRes) dianggap "otomatis" → pakai profil platform.
+  const scale = Math.max(1, Math.min(outW, outH)) / REF_SHORT_SIDE;
+  const profilePx = Math.max(MIN_FONT_PX, Math.round(profile.fontPx * scale));
   const userSize = Number(style?.fontSize);
-  if (Number.isFinite(userSize) && userSize > 0) {
-    fontSize = clamp(Math.round(userSize), MIN_FONT, MAX_FONT);
-  } else {
-    const isSquare = outW === outH;
-    const isHorizontal = outW > outH;
-    fontSize = isSquare
-      ? DEFAULT_FONT_SQUARE
-      : isHorizontal
-        ? DEFAULT_FONT_LANDSCAPE
-        : DEFAULT_FONT_PORTRAIT;
-    if (platform === "youtube") fontSize = DEFAULT_FONT_LANDSCAPE;
-  }
+  const fontSize =
+    Number.isFinite(userSize) && userSize >= MIN_USER_FONT_PX
+      ? clamp(Math.round(userSize), MIN_FONT_PX, MAX_FONT_PX)
+      : profilePx;
 
   // ===== WARNA =====
   const primaryColour = hexToAssColor(style?.color || "#FFFFFF");
   const outlineColour = hexToAssColor(style?.strokeColor || "#000000");
-  const outline = clamp(Math.round(style?.strokeWidth ?? 3), 2, 6);
+  const outline = clamp(Math.round(style?.strokeWidth ?? 3), 1, 6);
 
   // ===== BOX STYLE (Netflix/TikTok) =====
   const hasBox = !!style?.backgroundColor;
@@ -134,11 +173,14 @@ export function computeSubtitleStyle(input: SubtitleStyleInput): SubtitleAssStyl
   // ===== POSISI =====
   const alignment = style?.position === "top" ? 8 : 2;
 
-  // ===== MARGIN (PlayRes) =====
-  const sideMargin = Math.max(2, Math.round(outW * 0.08 * scaleX));
-  const marginV = Math.max(2, Math.round(outH * 0.06 * scaleY));
+  // ===== MARGIN (px — zona aman per platform, bukan lagi ruang PlayRes) =====
+  const marginL = Math.round(outW * profile.marginLeftPct);
+  const marginR = Math.round(outW * profile.marginRightPct);
+  const marginV = Math.round(outH * profile.marginBottomPct);
 
   return {
+    playResX: outW,
+    playResY: outH,
     fontName: resolvedFont || "Quicksand",
     fontSize,
     primaryColour,
@@ -147,17 +189,23 @@ export function computeSubtitleStyle(input: SubtitleStyleInput): SubtitleAssStyl
     outlineColour,
     borderStyle,
     backColour,
-    shadow: 1,
+    shadow: 2,
     shadowColour: "&H99000000",
-    marginL: sideMargin,
-    marginR: sideMargin,
+    marginL,
+    marginR,
     marginV,
   };
 }
 
-/** Bangun string `force_style` dari hasil kalkulasi (untuk filter libass). */
+/**
+ * Bangun string `force_style` (untuk filter libass).
+ * PlayResX/PlayResY DIDAHULUKAN agar override skala terbaca lebih dulu —
+ * semua nilai berikutnya berarti piksel nyata di kanvas output.
+ */
 export function buildForceStyle(ass: SubtitleAssStyle): string {
   return [
+    `PlayResX=${ass.playResX}`,
+    `PlayResY=${ass.playResY}`,
     `FontName=${ass.fontName}`,
     `FontSize=${ass.fontSize}`,
     `PrimaryColour=${ass.primaryColour}`,
