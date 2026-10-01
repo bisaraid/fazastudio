@@ -105,7 +105,9 @@ interface HookEntry {
 // CONSTANTS
 // ============================================================
 
-const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+// Nama model TIDAK lagi ditulis di sini: dipilih lewat env GROQ_MODEL_MAIN
+// (default openai/gpt-oss-120b, pengganti llama-3.3-70b-versatile) di
+// `src/lib/ai/models.ts`, dengan fallback otomatis ke OpenRouter.
 
 // ============================================================
 // HELPERS
@@ -530,12 +532,14 @@ async function generateSegment(
 
   try {
     const result = await aiCompletion({
-      model: MODEL!,
+      tier: "main", // script = tugas berat → GROQ_MODEL_MAIN → cadangan OpenRouter
+      json: true,
+      feature: "script-segment",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_tokens: 3072,
+      max_tokens: 4096, // gpt-oss = reasoning model: token berpikir ikut jatah output
       response_format: { type: "json_object" },
       temperature: (explicitConfig || getCategoryConfig(categoryId)).temperature ?? 0.7,
       signal,
@@ -670,11 +674,13 @@ Format: teks biasa, 3-5 kalimat saja.`;
       : `Kamu adalah penulis script ${config.name} Indonesia. Buat outline singkat.`;
 
   const result = await aiCompletion({
-    model: MODEL!,
+    tier: "main",
+    feature: "script-outline",
     messages: [
       { role: "system", content: systemContent },
       { role: "user", content: prompt },
     ],
+    max_tokens: 2048, // outline teks bebas; beri ruang untuk token reasoning gpt-oss
     response_format: { type: "text" },
     temperature: config.temperature ?? 0.7,
     signal,

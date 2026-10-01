@@ -10,8 +10,6 @@
 
 import { aiCompletion } from "@/lib/ai/completion";
 
-const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-
 /** Bersihkan wrapping code-fence bila Groq membungkus dengan ```json ... ``` */
 function parseJsonArrayLike(content: string): unknown {
   let cleaned = content.trim();
@@ -43,7 +41,10 @@ export async function translateMany(texts: string[]): Promise<string[]> {
 
   try {
     const result = await aiCompletion({
-      model: MODEL,
+      // Terjemahan judul = tugas ringan → GROQ_MODEL_LIGHT → cadangan OpenRouter.
+      tier: "light",
+      json: true,
+      feature: "translate",
       messages: [
         {
           role: "system",
@@ -58,7 +59,7 @@ export async function translateMany(texts: string[]): Promise<string[]> {
             `INPUT (JSON array):\n${JSON.stringify(originals)}`,
         },
       ],
-      max_tokens: 400,
+      max_tokens: 800, // gpt-oss reasoning memakai sebagian token untuk berpikir
       response_format: { type: "json_object" },
       temperature: 0.2,
     });

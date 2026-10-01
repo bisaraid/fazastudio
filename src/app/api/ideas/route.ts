@@ -13,6 +13,8 @@ import { buildAiFallbackRows } from "@/lib/ideas-fallback";
 import { checkRateLimit, buildBurstKey, getClientIp } from "@/lib/rate-limit";
 import { getServerIdentity } from "@/lib/identity";
 import { RATE_LIMIT_LIMITS, MINUTE_WINDOW_MS } from "@/lib/rate-limit-config";
+import { aiCompletion } from "@/lib/ai/completion";
+import { parseJsonArrayLoose } from "@/lib/ai/json";
 
 const CACHE_TTL_MS = 48 * 60 * 60 * 1000; // 48 jam
 
@@ -226,9 +228,6 @@ export async function GET(request: NextRequest) {
  * HANYA dipanggil kalau YouTube API gagal & cache kosong — agar token hemat.
  */
 async function generateAIFallback(niche: string, limit: number): Promise<string[]> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) return [];
-
   const nicheLabels: Record<string, string> = {
     skincare: "skincare & kecantikan",
     fashion: "fashion & outfit",
@@ -245,37 +244,31 @@ async function generateAIFallback(niche: string, limit: number): Promise<string[
   };
 
   const prompt = `Kamu membantu content creator. Berikan ${limit} ide topik konten video yang sedang populer di Indonesia untuk niche "${nicheLabels[niche] ?? niche}".
-Format: JSON array of strings (hanya judul/topik singkat, maks 8 kata tiap item), tanpa teks lain.
-Contoh: ["Review serum vitamin C lokal", "5 outfit hijab casual kekinian"]`;
+Format: JSON object dengan kunci "ideas" berisi array of strings (hanya judul/topik singkat, maks 8 kata tiap item), tanpa teks lain.
+Contoh: {"ideas": ["Review serum vitamin C lokal", "5 outfit hijab casual kekinian"]}`;
 
   try {
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 500,
-        temperature: 0.7,
-      }),
+    // Jalur AI bersama: Groq (GROQ_MODEL_LIGHT = openai/gpt-oss-20b) → OpenRouter.
+    // `json: true` → JSON rusak otomatis memicu pindah ke cadangan.
+    const res = await aiCompletion({
+      tier: "light",
+      json: true,
+      feature: "ideas",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 900, // gpt-oss = reasoning model → beri ruang untuk token berpikir
+      temperature: 0.7,
+      response_format: { type: "json_object" },
     });
 
-    if (!res.ok) return [];
-
-    const json = await res.json();
-    const content = (json.choices?.[0]?.message?.content ?? "[]").trim();
-
-    // Bersihkan wrapping code fence jika AI membungkus dengan ```json ... ```
-    const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-    const parsed = JSON.parse(cleaned);
+    const parsed = parseJsonArrayLoose(res.content);
     if (Array.isArray(parsed)) {
       return parsed.filter((s) => typeof s === "string").slice(0, limit);
     }
     return [];
-  } catch {
+  } catch (e) {
+    console.warn(
+      `[ideas] AI fallback gagal (${e instanceof Error ? e.message : String(e)}) → kembalikan ide kosong`
+    );
     return [];
   }
 }

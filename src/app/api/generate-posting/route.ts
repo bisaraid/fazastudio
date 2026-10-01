@@ -4,25 +4,9 @@ import { requireProjectOwnership } from "@/lib/project-ownership";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity } from "@/lib/identity";
-import { groqCompletion } from "@/lib/ai/groq";
-
-/** Ambil objek JSON dari content LLM (tahan ```json ... ``` / teks di sekitarnya). */
-function parseJsonLoose(content: string): Record<string, unknown> {
-  try {
-    const cleaned = content
-      .trim()
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/, "");
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start !== -1 && end > start) {
-      return JSON.parse(cleaned.slice(start, end + 1));
-    }
-    return JSON.parse(cleaned);
-  } catch {
-    return {};
-  }
-}
+import { aiCompletion } from "@/lib/ai/completion";
+import { parseJsonLoose } from "@/lib/ai/json";
+import { toUserFacingAiError } from "@/lib/ai/errors";
 
 export async function POST(request: NextRequest) {
   const auth = validateApiKey(request);
@@ -95,18 +79,23 @@ export async function POST(request: NextRequest) {
     const userPrompt =
       "Platform: " + platform + "\nGenre/Niche: " + (genre || "umum") + "\n\nScript:\n" + fullScript.slice(0, 4000);
 
-    const res = await groqCompletion({
-      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+    const res = await aiCompletion({
+      // Caption = tugas ringan → GROQ_MODEL_LIGHT (openai/gpt-oss-20b).
+      // `json: true` membuat JSON rusak otomatis memicu pindah ke OpenRouter.
+      tier: "light",
+      json: true,
+      feature: "caption",
       messages: [
         { role: "system", content: system },
         { role: "user", content: userPrompt },
       ],
-      max_tokens: 700,
+      max_tokens: 1200, // gpt-oss = model reasoning; token berpikir ikut jatah output
       temperature: 0.7,
+      response_format: { type: "json_object" },
     });
 
-    const parsed = parseJsonLoose(res.content);
-    if (!parsed || Object.keys(parsed).length === 0) {
+    const parsed = parseJsonLoose(res.content) ?? {};
+    if (Object.keys(parsed).length === 0) {
       // Gating key/format: JSON parse rapuh → log konten mentah (truncated) untuk diagnosis.
       console.warn(
         `[generate-posting] JSON parse gagal/empty untuk project ${projectId}. Content (300 char): ${res.content.slice(0, 300)}`
@@ -137,8 +126,20 @@ export async function POST(request: NextRequest) {
     );
     return NextResponse.json({ success: true, data: { optimizedTitle, caption, hashtags } });
   } catch (error) {
-    // GROQ_API_KEY hilang / HTTP error Groq / jaringan → satu pintu log di sini
-    // (groq.ts sudah console.error untuk status non-2xx).
+    // Semua provider AI gagal / key bermasalah / jaringan → pesan jelas bagi user,
+    // bukan 500 "Internal server error". Detail tetap dicatat (tanpa API key).
+    const friendly = toUserFacingAiError(error);
+    if (friendly) {
+      console.warn(
+        `[generate-posting] AI gagal (${friendly.status}, ${friendly.code}): ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return NextResponse.json(
+        { success: false, code: friendly.code, error: friendly.message },
+        { status: friendly.status }
+      );
+    }
     console.error("[generate-posting] Error:", error);
     return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
   }

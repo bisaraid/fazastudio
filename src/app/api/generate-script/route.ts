@@ -19,6 +19,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/ssr";
 import { getServerIdentity, deviceCookieOptions, DEVICE_ID_COOKIE } from "@/lib/identity";
 import { MAX_FREE_CONTENT_PROJECTS } from "@/lib/constants";
 import { countContentProjects, oldestContentProject } from "@/lib/project-media";
+import { toUserFacingAiError } from "@/lib/ai/errors";
 
 export async function POST(request: NextRequest) {
   const ip = getClientIp(request);
@@ -361,6 +362,16 @@ export async function POST(request: NextRequest) {
     }
     return res;
   } catch (error) {
+    // Kedua provider AI gagal (Groq + OpenRouter) → pesan jelas + 503, bukan 500
+    // generik. Kredit sudah dikembalikan oleh jalur refund di atas.
+    const friendly = toUserFacingAiError(error);
+    if (friendly) {
+      console.warn(`[generate-script] AI gagal (${friendly.status}, ${friendly.code})`);
+      return NextResponse.json(
+        { success: false, code: friendly.code, error: friendly.message },
+        { status: friendly.status }
+      );
+    }
     console.error("[generate-script] Error:", error);
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : "Terjadi kesalahan saat generate script" },

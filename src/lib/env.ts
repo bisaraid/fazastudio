@@ -23,10 +23,20 @@ const OPTIONAL_VARS = [
   'CARTESIA_API_KEY',
   'ELEVENLABS_API_KEY',
   'GOOGLE_TTS_API_KEY',
+  // Model AI dipisah per tier (bukan satu GROQ_MODEL global lagi):
+  // GROQ_MODEL_MAIN = script (default openai/gpt-oss-120b)
+  // GROQ_MODEL_LIGHT = caption/ide/terjemahan/klasifikasi (default openai/gpt-oss-20b)
+  'GROQ_MODEL_MAIN',
+  'GROQ_MODEL_LIGHT',
+  'GROQ_REASONING_EFFORT',
+  // Legacy — dipertahankan hanya sebagai kompatibilitas (diabaikan bila berisi
+  // model yang sudah dihentikan Groq, mis. llama-3.3-70b-versatile).
   'GROQ_MODEL',
   'OPENROUTER_API_KEY',
   'OPENROUTER_MODEL',
   'AI_FALLBACK_ENABLED',
+  'AI_GROQ_TIMEOUT_MS',
+  'AI_OPENROUTER_TIMEOUT_MS',
   'TRENDTRACKER_API_KEY',
   'TRENDTRACKER_API_URL',
 ] as const;

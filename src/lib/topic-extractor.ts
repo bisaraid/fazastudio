@@ -11,10 +11,16 @@
  * array kosong (tidak pernah throw).
  */
 
-const GROQ_API_BASE = "https://api.groq.com/openai/v1";
+import { aiCompletion } from "@/lib/ai/completion";
 
-/** Model sama dengan yang dipakai generate script / translate. */
-const MODEL = process.env.TOPIC_EXTRACTOR_GROQ_MODEL || "qwen/qwen3.8-27b";
+/**
+ * Model: default mengikuti model ringan Groq (GROQ_MODEL_LIGHT =
+ * openai/gpt-oss-20b, pengganti llama-3.1-8b-instant). Override opsional dibaca
+ * dari env TOPIC_EXTRACTOR_GROQ_MODEL pada setiap pemanggilan.
+ * Model `qwen/qwen3.8-27b` (dipakai sebelumnya) berstatus Preview sehingga
+ * tidak lagi dijadikan default.
+ */
+
 
 /** Ke-21 niche yang dipakai klasifikasi (sama seperti di seluruh sistem). */
 export const NICHE_SLUGS = [
@@ -41,11 +47,6 @@ interface RawItem {
   index?: unknown;
   topic?: unknown;
   niche?: unknown;
-}
-
-interface GroqMessage {
-  role: "system" | "user";
-  content: string;
 }
 
 /** Parse JSON-object dari content LLM + filter/validasi item. */
@@ -84,39 +85,13 @@ function parseItems(content: string, titles: string[]): ExtractedTopic[] {
 }
 
 /**
- * Fetch Groq dengan retry + backoff untuk status 429 (rate limit).
- * Pola sama dengan src/lib/ai/groq.ts: baca header Retry-After (default 15s).
+ * Panggil AI lewat jalur bersama (Groq → OpenRouter) memakai GROQ_API_KEY2.
+ * Retry 429 + perpindahan provider ditangani `src/lib/ai/completion.ts`.
  */
-async function callGroqWithRetry(
-  url: string,
-  init: RequestInit,
-  maxRetries: number = 3
-): Promise<Response> {
-  for (let i = 0; i < maxRetries; i++) {
-    const res = await fetch(url, init);
-    if (res.status === 429) {
-      const retryAfter = parseInt(res.headers.get("retry-after") ?? "15", 10);
-      const safeRetry = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 15;
-      console.warn(`[topic-extractor] Groq 429 - retry ${i + 1}/${maxRetries} after ${safeRetry}s`);
-      await new Promise((r) => setTimeout(r, safeRetry * 1000));
-      continue;
-    }
-    return res;
-  }
-  throw new Error("Groq max retries exceeded");
-}
-
-/** Panggil Groq chat/completions dengan GROQ_API_KEY2. */
 async function groqClassify(
   titles: string[],
   signal?: AbortSignal
 ): Promise<ExtractedTopic[]> {
-  const apiKey = process.env.GROQ_API_KEY2;
-  if (!apiKey) {
-    console.warn("[topic-extractor] GROQ_API_KEY2 tidak tersedia");
-    return [];
-  }
-
   const system =
     "Kamu adalah penulis konten. Ekstrak topik konten yang bermakna dari judul konten " +
     "dan klasifikasikan ke salah satu dari 21 niche: " +
@@ -135,44 +110,35 @@ async function groqClassify(
 
   const user = "Judul:\n" + JSON.stringify(titles);
 
-  const init: RequestInit = {
-    method: "POST",
+  const result = await aiCompletion({
+    tier: "light",
+    // Override opsional (model lain yang tersedia di akun); default di models.ts.
+    model: process.env.TOPIC_EXTRACTOR_GROQ_MODEL?.trim() || undefined,
+    groqApiKeySource: "secondary", // GROQ_API_KEY2 → kuota token terpisah
+    json: true,
+    feature: "topic-extractor",
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    max_tokens: MAX_TOKENS,
+    temperature: 0.2,
+    response_format: { type: "json_object" },
     signal,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ] as GroqMessage[],
-      max_tokens: MAX_TOKENS,
-      temperature: 0.2,
-    }),
-  };
+  });
 
-  const response = await callGroqWithRetry(`${GROQ_API_BASE}/chat/completions`, init);
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error(`[topic-extractor] Groq error ${response.status}:`, errorBody.slice(0, 300));
-    return [];
-  }
-
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content ?? "";
-console.log("[topic-extractor] raw response:", content?.slice(0, 500));
-  console.log(`[topic-extractor] groqClassify returned content length=${content?.length ?? 0}`);
-  const parsed = parseItems(content, titles);
+  console.log(
+    `[topic-extractor] provider=${result.provider} fallback=${result.fallback} content length=${result.content.length}`
+  );
+  const parsed = parseItems(result.content, titles);
   console.log(`[topic-extractor] parseItems result count=${parsed.length}`);
   return parsed;
 }
 
 /**
- * Ekstrak topik + niche dari array judul (max 50) via Groq (GROQ_API_KEY2).
- * Best-effort: kalau Groq gagal / key tak ada → array kosong.
+ * Ekstrak topik + niche dari array judul (max 50) lewat jalur AI bersama
+ * (Groq dengan GROQ_API_KEY2 → OpenRouter bila Groq gagal).
+ * Best-effort: kalau kedua provider gagal → array kosong (tidak pernah throw).
  */
 export async function extractTopicsFromTitles(
   titles: string[],
