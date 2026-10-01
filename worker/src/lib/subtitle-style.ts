@@ -7,7 +7,16 @@
  * (1920/288 = 6,67x) → FontSize=30 menjadi cap ~131-140px (subtitle raksasa).
  * FIX: force_style menyertakan PlayResX/PlayResY = ukuran video sehingga
  * semua nilai = PIKSEL NYATA; ukuran/margin per platform lewat
- * getSubtitlePlatformProfile (~48-56px @1080, margin bawah 20-24% = zona aman UI).
+ *
+ * PERBAIKAN POSISI + KETERBACAAN (dari render nyata):
+ *  - MASALAH 1 "teks tidak di tengah": margin kiri/kanan tidak simetris →
+ *    libass memusatkan teks di dalam area [MarginL, W-MarginR] sehingga blok
+ *    teks bergeser KE KIRI. FIX: margin horizontal SIMETRIS (kiri = kanan,
+ *    12-16% lebar) di semua profil.
+ *  - MASALAH 2 "teks kurang terbaca di footage cerah": FIX BorderStyle=3
+ *    (opaque box) → kotak hitam 60% pekat di belakang teks; libass mengambil
+ *    WARNA kotak dari OutlineColour dan PADDING dari Outline, BackColour
+ *    (warna shadow) diisi sama, Shadow=0.
  * SINKRONISASI: jaga identik dengan src/lib/subtitle-style.ts.
  */
 import type { SubtitleStyle } from "../queue";
@@ -29,12 +38,21 @@ export interface SubtitleAssStyle {
   fontSize: number;
   primaryColour: string;
   alignment: number;
-  /** Ketebalan outline (px). */
+  /**
+   * PADDING kotak latar (px). Saat BorderStyle=3 libass memakai Outline
+   * sebagai LEBAR KOTAK (bukan garis outline) → diturunkan dari ukuran font.
+   */
   outline: number;
+  /** Warna kotak latar ASS (&HAABBGGRR) = warna kotak saat BorderStyle=3. */
   outlineColour: string;
+  /** Selalu 3 = opaque box (kotak latar semi-transparan di belakang teks). */
   borderStyle: number;
+  /**
+   * Warna kotak ASS (sama dengan outlineColour). Di ASS, BackColour dipakai
+   * sebagai warna SHADOW saat BorderStyle=3 → diisi nilai sama agar konsisten.
+   */
   backColour: string;
-  /** Shadow (px). */
+  /** Shadow (px). 0 = tanpa shadow (tepi kotak bersih). */
   shadow: number;
   shadowColour: string;
   /** Margin (px). */
@@ -44,26 +62,33 @@ export interface SubtitleAssStyle {
 }
 
 // ===== Profil gaya subtitle per platform (platform → style) =====
+// MARGIN HORIZONTAL SIMETRIS (kiri == kanan) di semua platform → blok teks
+// tepat di tengah frame, tapi tetap 12-16% lebar agar tidak masuk area
+// tombol/rail UI kanan. Margin bawah per platform TIDAK diubah.
 
 export interface SubtitlePlatformProfile {
   /** Ukuran font (px) pada short-side referensi 1080. */
   fontPx: number;
   /** Margin bawah = fraksi tinggi frame (zona aman UI bawah). */
   marginBottomPct: number;
-  /** Margin kiri = fraksi lebar frame. */
+  /** Margin kiri = fraksi lebar frame. WAJIB sama dengan marginRightPct. */
   marginLeftPct: number;
-  /** Margin kanan = fraksi lebar frame (rail UI platform). */
+  /**
+   * Margin kanan = fraksi lebar frame. HARUS sama dengan marginLeftPct (fix
+   * "blok teks bergeser ke kiri"); 12-16% cukup lebar agar teks tidak masuk
+   * area tombol/rail UI kanan platform vertikal.
+   */
   marginRightPct: number;
   /** Target maks baris (desain — libass tak punya batas runtime). Statis. */
   maxLines: number;
 }
 
 const SUBTITLE_PROFILES: Record<string, SubtitlePlatformProfile> = {
-  tiktok:  { fontPx: 54, marginBottomPct: 0.24, marginLeftPct: 0.06, marginRightPct: 0.16, maxLines: 2 },
-  reels:   { fontPx: 52, marginBottomPct: 0.24, marginLeftPct: 0.06, marginRightPct: 0.18, maxLines: 2 },
-  youtube: { fontPx: 56, marginBottomPct: 0.20, marginLeftPct: 0.04, marginRightPct: 0.04, maxLines: 2 },
-  podcast: { fontPx: 48, marginBottomPct: 0.20, marginLeftPct: 0.08, marginRightPct: 0.08, maxLines: 2 },
-  shopee:  { fontPx: 50, marginBottomPct: 0.22, marginLeftPct: 0.06, marginRightPct: 0.18, maxLines: 2 },
+  tiktok:  { fontPx: 54, marginBottomPct: 0.24, marginLeftPct: 0.16, marginRightPct: 0.16, maxLines: 2 },
+  reels:   { fontPx: 52, marginBottomPct: 0.24, marginLeftPct: 0.16, marginRightPct: 0.16, maxLines: 2 },
+  youtube: { fontPx: 56, marginBottomPct: 0.20, marginLeftPct: 0.12, marginRightPct: 0.12, maxLines: 2 },
+  podcast: { fontPx: 48, marginBottomPct: 0.20, marginLeftPct: 0.12, marginRightPct: 0.12, maxLines: 2 },
+  shopee:  { fontPx: 50, marginBottomPct: 0.22, marginLeftPct: 0.16, marginRightPct: 0.16, maxLines: 2 },
 };
 
 /** Fallback aman: platform kosong / project lama / nilai tidak dikenal. */
@@ -79,6 +104,19 @@ const REF_SHORT_SIDE = 1080;
 const MIN_USER_FONT_PX = 32;
 const MIN_FONT_PX = 24;
 const MAX_FONT_PX = 120;
+
+// ===== Kotak latar teks (BorderStyle=3) =====
+/** Warna kotak default (hitam) bila project/UI tidak mengirim backgroundColor. */
+const BOX_COLOR_DEFAULT = "#000000";
+/** Alpha kotak default: 0x66 = 102/255 → 60% PEKAT (40% transparan). */
+const BOX_ALPHA_DEFAULT = 0x66;
+/** Batas alpha dari input UI: 0x59 = 65% pekat, 0x73 = 55% pekat. */
+const BOX_ALPHA_MIN = 0x59;
+const BOX_ALPHA_MAX = 0x73;
+/** Padding kotak = 16% ukuran font, dijepit 6..18 px (nilai Outline). */
+const BOX_PADDING_RATIO = 0.16;
+const BOX_PADDING_MIN_PX = 6;
+const BOX_PADDING_MAX_PX = 18;
 
 export function hexToAssColor(hex: string, alpha = 0): string {
   const m = /^#?([0-9a-f]{6})$/i.exec((hex || "").trim());
@@ -113,13 +151,16 @@ export function computeSubtitleStyle(input: SubtitleStyleInput): SubtitleAssStyl
       : profilePx;
 
   const primaryColour = hexToAssColor(style?.color || "#FFFFFF");
-  const outlineColour = hexToAssColor(style?.strokeColor || "#000000");
-  const outline = clamp(Math.round(style?.strokeWidth ?? 3), 1, 6);
-
-  const hasBox = !!style?.backgroundColor;
-  const borderStyle = hasBox ? 4 : 1;
-  const boxAlpha = clamp(style?.backgroundAlpha ?? 150, 0, 255);
-  const backColour = hasBox ? hexToAssColor(style!.backgroundColor!, boxAlpha) : "&H00000000";
+  // ===== KOTAK LATAR (BorderStyle=3 = opaque box) =====
+  // libass saat BorderStyle=3: OutlineColour = WARNA kotak, Outline = PADDING
+  // kotak (bukan garis outline); BackColour = warna shadow → diisi sama. Alpha
+  // ASS: 00 = pekat, FF = transparan; di sini 60% pekat (0x66).
+  const boxColor = style?.backgroundColor || BOX_COLOR_DEFAULT;
+  const requestedAlpha = Math.round(style?.backgroundAlpha ?? BOX_ALPHA_DEFAULT);
+  const boxAlpha = clamp(requestedAlpha, BOX_ALPHA_MIN, BOX_ALPHA_MAX);
+  const boxColour = hexToAssColor(boxColor, boxAlpha);
+  const outline = clamp(Math.round(fontSize * BOX_PADDING_RATIO), BOX_PADDING_MIN_PX, BOX_PADDING_MAX_PX);
+  const borderStyle = 3;
 
   const alignment = style?.position === "top" ? 8 : 2;
 
@@ -136,11 +177,11 @@ export function computeSubtitleStyle(input: SubtitleStyleInput): SubtitleAssStyl
     primaryColour,
     alignment,
     outline,
-    outlineColour,
+    outlineColour: boxColour,
     borderStyle,
-    backColour,
-    shadow: 2,
-    shadowColour: "&H99000000",
+    backColour: boxColour,
+    shadow: 0,
+    shadowColour: "&HFF000000",
     marginL,
     marginR,
     marginV,

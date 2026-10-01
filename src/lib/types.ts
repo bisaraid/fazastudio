@@ -181,13 +181,22 @@ export interface SubtitleStyle {
   color: string;
   position: "bottom" | "top";
   fontFamily?: string;
-  /** Warna outline/stroke teks (untuk keterbacaan di footage terang). FFmpeg OutlineColour. */
+  /**
+   * LEGACY (tidak dipakai lagi oleh render): warna outline lama. Keterbacaan
+   * sekarang dijamin kotak latar `backgroundColor` (BorderStyle=3).
+   */
   strokeColor?: string;
-  /** Ketebalan outline (px). Default 2. 0 = tanpa outline. */
+  /** LEGACY (tidak dipakai lagi): padding kotak kini diturunkan dari fontSize. */
   strokeWidth?: number;
-  /** Kotak semi-transparan di belakang teks — gaya Netflix. FFmpeg BorderStyle=4. */
+  /**
+   * Warna kotak latar teks caption (default "#000000" = hitam). Burn-in
+   * memakai FFmpeg BorderStyle=3 (opaque box) di belakang teks.
+   */
   backgroundColor?: string;
-  /** Transparansi kotak (0-255, 255 = opaque). NETflix biasanya ~160. */
+  /**
+   * Alpha kotak (nilai ASS: 0x00 = pekat, 0xFF = transparan). Dijepit ke
+   * 55-65% pekat (0x59..0x73) agar teks selalu terbaca; default 0x66 = 60%.
+   */
   backgroundAlpha?: number;
 }
 

@@ -50,9 +50,13 @@ export interface SubtitleSegment {
 export interface SubtitleStyle {
   fontSize?: number;
   color?: string;
+  /** LEGACY: warna outline lama (tidak dipakai; kotak latar menggantikannya). */
   strokeColor?: string;
+  /** LEGACY: padding kotak kini dihitung dari fontSize (16%, clamp 6-18 px). */
   strokeWidth?: number;
+  /** Warna kotak latar teks (default hitam). Burn-in: BorderStyle=3. */
   backgroundColor?: string;
+  /** Alpha kotak ASS 0x00..0xFF — dijepit ke 55-65% pekat (default 0x66). */
   backgroundAlpha?: number;
   position?: "top" | "bottom";
   fontFamily?: string;
