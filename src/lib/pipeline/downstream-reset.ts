@@ -54,6 +54,10 @@ export function invalidateDownstream(project: Project, upstream: UpstreamStep): 
 
   const metadata = { ...(project.metadata || {}) };
   if (drop.includes("subtitle")) delete metadata.subtitleSrt;
+  // Materi posting (caption/judul/hashtag) lahir dari script LAMA → tidak
+  // valid lagi setelah script diregenerasi. Kolom metadata ikut ter-persist
+  // lewat persistInvalidation (payload `metadata`).
+  if (upstream === "script") delete metadata.posting;
 
   const next: Project = {
     ...project,

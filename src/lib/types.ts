@@ -69,6 +69,12 @@ export interface ProjectMetadata {
   overridePlatform?: Platform | null;
   overrideDuration?: number | null;
   usedClosingIds?: string[];
+  /** Cache materi "Siap Posting" (lazy, /api/generate-posting) — di-invalidate saat script diregenerasi (5A). */
+  posting?: {
+    optimizedTitle?: string;
+    caption?: string;
+    hashtags?: string[];
+  };
 }
 
 export interface Project {

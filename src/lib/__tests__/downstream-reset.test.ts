@@ -83,6 +83,34 @@ describe("invalidateDownstream — script (regenerasi naskah)", () => {
     expect(base.steps.video).toBe("done");
     expect(base.status).toBe("completed");
   });
+
+  test("cache posting (caption) ikut di-invalidate saat script diregenerasi", () => {
+    const base = project({
+      metadata: {
+        subtitleSrt: "LAMA",
+        currentStep: "video",
+        posting: { optimizedTitle: "J", caption: "C", hashtags: ["#a"] },
+      },
+    });
+    const next = invalidateDownstream(base, "script");
+    expect(next.metadata?.posting).toBeUndefined();
+    // argumen asli tidak dimutasi
+    expect(base.metadata?.posting).toBeDefined();
+  });
+
+  test("regen audio/subtitle TIDAK menyentuh cache posting (caption berasal dari script)", () => {
+    const base = project({
+      metadata: {
+        subtitleSrt: "LAMA",
+        currentStep: "video",
+        posting: { optimizedTitle: "J", caption: "C", hashtags: ["#a"] },
+      },
+    });
+    for (const upstream of ["audio", "subtitle"] as const) {
+      const next = invalidateDownstream(base, upstream);
+      expect(next.metadata?.posting).toBeDefined();
+    }
+  });
 });
 
 describe("invalidateDownstream — audio & subtitle", () => {

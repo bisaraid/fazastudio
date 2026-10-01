@@ -1036,8 +1036,14 @@ useEffect(() => {
             />
           </div>
 
-          {/* D9: caption/hashtag SETELAH kartu Video supaya urutan langkah jelas */}
-          {projectAudio && <PostingCard script={currentProject?.script} />}
+          {/* D9: caption/hashtag SETELAH kartu Video — LAZY: kartu fetch caption
+              sendiri pertama kali tampil setelah video selesai (pre-video = hidden). */}
+          <PostingCard
+            projectId={projectId}
+            videoDone={videoHas}
+            script={projectScript}
+            posting={currentProject?.metadata?.posting}
+          />
         </div>
 
         {/* D3: satu tombol utama per saat — selalu terjangkau tanpa scroll */}

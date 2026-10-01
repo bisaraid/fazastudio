@@ -27,6 +27,7 @@ function parseJsonLoose(content: string): Record<string, unknown> {
 export async function POST(request: NextRequest) {
   const auth = validateApiKey(request);
   if (!auth.valid) {
+    console.warn(`[generate-posting] Ditolak (401): ${auth.error || "auth gagal"}`);
     return NextResponse.json({ success: false, error: auth.error || "Unauthorized" }, { status: 401 });
   }
 
@@ -48,6 +49,7 @@ export async function POST(request: NextRequest) {
     // Ownership guard (IDOR)
     const owned = await requireProjectOwnership({ projectId, identityKey, userId });
     if (!owned) {
+      console.warn(`[generate-posting] Ditolak (404): project ${projectId} tidak ditemukan/tanpa akses (identity=${identityKey}, userId=${userId ?? "-"})`);
       return NextResponse.json(
         { success: false, error: "Project tidak ditemukan of geen toegang" },
         { status: 404 }
@@ -62,6 +64,7 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (!proj?.script) {
+      console.warn(`[generate-posting] Ditolak (400): script belum ada untuk project ${projectId}`);
       return NextResponse.json({ success: false, error: "Script belum ada" }, { status: 400 });
     }
 
@@ -73,6 +76,7 @@ export async function POST(request: NextRequest) {
       fullScript = "";
     }
     if (!fullScript.trim()) {
+      console.warn(`[generate-posting] Ditolak (400): fullScript kosong untuk project ${projectId}`);
       return NextResponse.json({ success: false, error: "fullScript kosong" }, { status: 400 });
     }
 
@@ -102,6 +106,12 @@ export async function POST(request: NextRequest) {
     });
 
     const parsed = parseJsonLoose(res.content);
+    if (!parsed || Object.keys(parsed).length === 0) {
+      // Gating key/format: JSON parse rapuh → log konten mentah (truncated) untuk diagnosis.
+      console.warn(
+        `[generate-posting] JSON parse gagal/empty untuk project ${projectId}. Content (300 char): ${res.content.slice(0, 300)}`
+      );
+    }
     const optimizedTitle =
       typeof parsed.optimizedTitle === "string" ? parsed.optimizedTitle.trim().slice(0, 60) : "";
     const caption =
@@ -115,14 +125,20 @@ export async function POST(request: NextRequest) {
       : [];
 
     if (!optimizedTitle && !caption && hashtags.length === 0) {
+      console.warn(`[generate-posting] Gagal (502): hasil LLM kosong semua untuk project ${projectId}`);
       return NextResponse.json(
         { success: false, error: "Gagal menghasilkan materi posting. Coba lagi." },
         { status: 502 }
       );
     }
 
+    console.log(
+      `[generate-posting] OK project ${projectId}: title=${optimizedTitle.length}c caption=${caption.length}c hashtags=${hashtags.length}`
+    );
     return NextResponse.json({ success: true, data: { optimizedTitle, caption, hashtags } });
   } catch (error) {
+    // GROQ_API_KEY hilang / HTTP error Groq / jaringan → satu pintu log di sini
+    // (groq.ts sudah console.error untuk status non-2xx).
     console.error("[generate-posting] Error:", error);
     return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
   }

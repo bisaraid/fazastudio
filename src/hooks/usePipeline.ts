@@ -367,29 +367,11 @@ throw withErrorCode(new Error(json.error || "Generate script gagal"), res.status
             console.log(`[Pipeline] audio result URL: ${audioUrl}`);
             console.log(`[Pipeline] audio status: ${useProjectStore.getState().currentProject?.steps.audio}`);
 
-            // ===== "Siap Posting": generate judul/caption/hashtag otomatis di background =====
-            void (async () => {
-              try {
-                const postingRes = await fetch("/api/generate-posting", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ projectId }),
-                });
-                if (!postingRes.ok) return;
-                const postingJson = await postingRes.json();
-                if (!postingJson?.success || !postingJson.data) return;
-                const cur = useProjectStore.getState().currentProject;
-                if (!cur?.script) return;
-                store.setScriptResult({
-                  ...cur.script,
-                  optimizedTitle: postingJson.data.optimizedTitle,
-                  caption: postingJson.data.caption,
-                  hashtags: postingJson.data.hashtags ?? [],
-                });
-              } catch (err) {
-                console.warn("[Pipeline] generate-posting background errored:", err);
-              }
-            })();
+            // ===== "Siap Posting" (judul/caption/hashtag) — TIDAK lagi di-generate di sini.
+            // Di-generate LAZY oleh PostingCard setelah video selesai, dengan cache di
+            // project.metadata.posting (di-invalidate saat script diregenerasi — 5A).
+            // (Dulu: background fetch yang gagal diam-diam + setScriptResult yang justru
+            //  memicu invalidateDownstream sehingga media hilir ikut terhapus.)
             break;
           }
           case "subtitle": {
