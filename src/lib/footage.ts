@@ -5,6 +5,7 @@
  */
 
 import { FootageOption } from "./types";
+import { buildStockQuery, MIN_CLIP_DURATION_S } from "./stock-query";
 
 const PEXELS_API_URL = "https://api.pexels.com/videos/search";
 
@@ -63,7 +64,7 @@ export async function searchFootage(
   const json = await res.json();
   const videos = json.videos || [];
 
-  return videos.map((video: any, i: number) => {
+  const mapped: FootageOption[] = videos.map((video: any, i: number) => {
     const best = pickBestPortraitFile(video.video_files || []);
     const poster = pickBestPexelsThumbnail(video.video_pictures || []);
     return {
@@ -75,16 +76,40 @@ export async function searchFootage(
       source: "pexels",
     };
   });
+
+  // Tahap A: klip yang cukup panjang untuk satu scene didahulukan (stabil).
+  return orderFootageForUse(mapped);
 }
 
-/** Sederhanakan query input scene → string pencarian (dengan genre fallback). */
+/**
+ * Sederhanakan query input scene → string pencarian (dengan genre fallback).
+ *
+ * Tahap A: prompt visual adalah prompt GAMBAR AI (kata gaya + style suffix
+ * genre). Query dibangun lewat `buildStockQuery` (fungsi murni yang SAMA
+ * dipakai worker — lihat src/lib/stock-query.ts) supaya kedua jalur footage
+ * menghasilkan kata kunci yang identik. Fallback genre tetap dipakai apa
+ * adanya (string-nya sudah pendek & tidak melewati buildStockQuery).
+ */
 export function resolveSearchQuery(query: string | undefined, genre: string | undefined): string {
-  let q = (query || "").trim();
-  if (!q && genre) {
-    q = GENRE_FALLBACK_QUERY[genre] || GENRE_FALLBACK_QUERY.custom;
-  }
-  if (!q) {
-    q = GENRE_FALLBACK_QUERY.custom;
-  }
-  return q;
+  const built = buildStockQuery(query);
+  if (built) return built;
+  if (genre && GENRE_FALLBACK_QUERY[genre]) return GENRE_FALLBACK_QUERY[genre];
+  return GENRE_FALLBACK_QUERY.custom;
+}
+
+/**
+ * Urutkan opsi footage: klip dengan durasi cukup untuk satu scene
+ * (>= MIN_CLIP_DURATION_S) didahulukan — stabil, urutan relatif tidak berubah.
+ * Ini hanya PEMILIHAN klip: konsumen yang mengambil `data[0]` (usePipeline)
+ * otomatis mendapat klip yang tidak terpotong terlalu pendek.
+ */
+export function orderFootageForUse(footage: FootageOption[]): FootageOption[] {
+  return footage
+    .map((option, index) => ({ option, index }))
+    .sort((a, b) => {
+      const aShort = (Number(a.option.duration) || 0) < MIN_CLIP_DURATION_S ? 1 : 0;
+      const bShort = (Number(b.option.duration) || 0) < MIN_CLIP_DURATION_S ? 1 : 0;
+      return aShort - bShort || a.index - b.index;
+    })
+    .map((entry) => entry.option);
 }

@@ -20,6 +20,7 @@ import { isValidAudioBuffer } from "./lib/audio-validation";
 import { getUsage } from "./lib/usage";
 import { getServiceRoleClient } from "./lib/supabase";
 import { validatePublicUrl } from "./lib/public-url";
+import { buildStockQuery, buildStockQueryVariants, pickClipCandidate } from "./stock-query";
 import type { RenderJobData, SubtitleSegment, Scene } from "./queue";
 
 const PEXELS_API_URL = "https://api.pexels.com/videos/search";
@@ -357,9 +358,10 @@ async function prepareSubtitleFonts(workDir: string): Promise<{ fontsdir: string
 
 /**
  * Cerca video Pexels per una query, escludendo i video già usati (dedupe).
- * Ritorna i candidati portrait non-duplicati (link + id pexels).
+ * Ritorna i candidati portrait non-duplicati (link + id + durata). La durata
+ * serve a scartare i clip troppo corti per una scena (Tahap A).
  */
-async function searchPexelsVideos(query: string, perPage: number, usedIds: Set<string>): Promise<Array<{ id: string; link: string }>> {
+async function searchPexelsVideos(query: string, perPage: number, usedIds: Set<string>): Promise<Array<{ id: string; link: string; duration: number }>> {
   const apiKey = process.env.PEXELS_API_KEY;
   if (!apiKey) throw new Error('PEXELS_API_KEY tidak tersedia di .env');
   const res = await fetch(
@@ -368,7 +370,7 @@ async function searchPexelsVideos(query: string, perPage: number, usedIds: Set<s
   );
   if (!res.ok) throw new Error('Pexels API error (' + res.status + ')');
   const json: any = await res.json();
-  const out: Array<{ id: string; link: string }> = [];
+  const out: Array<{ id: string; link: string; duration: number }> = [];
   for (const v of json.videos ?? []) {
     const id = String(v.id);
     if (usedIds.has(id)) continue; // DEDUPE: ignora clip già usato in un'altra scena
@@ -376,19 +378,22 @@ async function searchPexelsVideos(query: string, perPage: number, usedIds: Set<s
     const best = files
       .filter((f: any) => f.width && f.height && f.height >= f.width)
       .sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0];
-    if (best) out.push({ id, link: best.link });
+    if (best) out.push({ id, link: best.link, duration: Number(v.duration) || 0 });
   }
   return out;
 }
 
 /**
- * Prende UN video per scene con DEDUPE (nessun clip ripetuto tra le scene) e
- * FALLBACK query: prova la query dello scene, poi il fallback per genero, infine
- * le query generiche. Se è già usato, passa al candidato successivo.
+ * Prende UN video per scene con DEDUPE (nessun clip ripetuto tra le scene).
+ * Ordine dei tentativi: varianti della query dello scene (dalla più specifica
+ * alla più corta) → fallback per genero → query generiche.
+ * Scelta del clip: pool di 5 candidati (non sempre il primo), durate >=
+ * MIN_CLIP_DURATION_S preferite, seed = usedIds.size ⇒ scene successive più
+ * varie ma deterministiche.
  */
-async function fetchPexelsScene(query: string, genre: string | undefined, usedIds: Set<string>): Promise<{ id: string; link: string }> {
+async function fetchPexelsScene(sceneQueries: string[], genre: string | undefined, usedIds: Set<string>): Promise<{ id: string; link: string; duration: number }> {
   const candidates: string[] = [];
-  if (query) candidates.push(query);
+  for (const q of sceneQueries) candidates.push(q);
   if (genre && GENRE_FALLBACK_QUERY[genre]) candidates.push(GENRE_FALLBACK_QUERY[genre]);
   for (const q of PEXELS_FALLBACK_QUERIES) candidates.push(q);
 
@@ -402,29 +407,45 @@ async function fetchPexelsScene(query: string, genre: string | undefined, usedId
     try {
       const videos = await searchPexelsVideos(q, 10, usedIds);
       if (videos.length === 0) continue;
-      const pick = videos[0];
+      const pick = pickClipCandidate(videos, usedIds, { seed: usedIds.size });
+      if (!pick) continue;
       usedIds.add(pick.id); // marchio usato così le scene successive non lo riprendono
       return pick;
     } catch (e) {
       console.warn('[render] Pexels search error (' + q + '):', e instanceof Error ? e.message : e);
     }
   }
-  throw new Error('Pexels: nessun video dopo fallback (dedupe) per query: ' + query);
+  throw new Error('Pexels: nessun video dopo fallback (dedupe) per query: ' + (sceneQueries[0] || ''));
 }
 
 /** Versione per lo sfondo singolo (1 clip) — mantiene il nome back-compat. */
-async function fetchPexelsBackground(query: string): Promise<string> {
+async function fetchPexelsBackground(fallbackGenre?: string): Promise<string> {
   const used = new Set<string>();
-  const clip = await fetchPexelsScene(query, undefined, used);
+  const clip = await fetchPexelsScene([], fallbackGenre, used);
   return clip.link;
 }
 
+/** Prompt visivo della scena (ordine di priorità invariato). */
+function scenePrompt(scene: Scene | null | undefined): string {
+  const s: any = scene || {};
+  return String(s.imagePrompt || s.visualPrompt || s.image_prompt || s.heading || s.content || '');
+}
+
+/**
+ * Query scene → keyword stok (Tahap A). Fungsi murni `buildStockQuery` SAMA
+ * dengan app (worker punya salinan identica: worker/src/stock-query.ts).
+ */
 function buildSceneQuery(scene: Scene | null | undefined, fallbackGenre?: string): string {
-  const raw = scene && (scene.imagePrompt || scene.visualPrompt || scene.image_prompt || scene.heading || scene.content) || '';
-  const cleaned = String(raw).replace(/\[.*?\]/g, '').replace(/\+/g, ' ').trim();
-  const words = cleaned ? cleaned.split(' ') : [];
-  const q = words.length > 10 ? words.slice(0, 10).join(' ') : cleaned;
+  const q = buildStockQuery(scenePrompt(scene));
   return q || fallbackGenre || 'cinematic';
+}
+
+/**
+ * Query scene + 2 varianti più corte (Tahap A, item 1), provate in ordine dal
+ * chiamante; lista vuota ⇒ fetchPexelsScene usa genero/generiche.
+ */
+function buildSceneQueryVariants(scene: Scene | null | undefined): string[] {
+  return buildStockQueryVariants(scenePrompt(scene));
 }
 
 /**
@@ -441,9 +462,12 @@ async function fetchSceneVisuals(scenes: Scene[] | undefined, workDir: string, f
   const results: Array<{ path: string; duration: number; ok: boolean; weight: number }> = [];
   for (let i = 0; i < limited.length; i++) {
     const scene = limited[i];
-    const query = buildSceneQuery(scene, fallbackGenre);
+    // Tahap A: query stok (bukan prompt gambar) + 2 varianti più corte come
+    // fallback, provate in ordine da fetchPexelsScene.
+    const queryVariants = buildSceneQueryVariants(scene);
+    const query = queryVariants[0] || buildSceneQuery(scene, fallbackGenre);
     try {
-      const clip = await fetchPexelsScene(query, fallbackGenre, usedIds);
+      const clip = await fetchPexelsScene(queryVariants, fallbackGenre, usedIds);
       const buf = await fetchBuffer(clip.link);
       const fpath = join(workDir, 'auto-scene-' + i + '.mp4');
       await writeFile(fpath, buf);
@@ -513,7 +537,11 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
   try {
     const resolvedAudioUrl = (await resolveMediaUrl('acs-audio', audioUrl)) || audioUrl;
     const resolvedSubtitleUrl = (await resolveMediaUrl('acs-subtitles', subtitleUrl)) || subtitleUrl;
-    const backgroundUrl = userBackgroundUrl || (await fetchPexelsBackground(genre || 'cinematic'));
+    // Tahap A (item 3): background TIDAK di-resolve di sini lagi. Jalur auto
+    // per-scene memakai klip per scene; memanggil Pexels untuk background lalu
+    // mengunduh video itu = satu panggilan + unduhan terbuang. Background
+    // di-resolve PIGRA hanya di cabang "klip tunggal" (lihat else paling bawah).
+    let backgroundUrl: string | undefined = userBackgroundUrl;
     let subtitleData;
     if (Array.isArray(subtitleSegments) && subtitleSegments.length > 0) {
       const srt = buildSrtFromSegments(subtitleSegments);
@@ -523,7 +551,7 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
       subtitleData = await fetchBuffer(resolvedSubtitleUrl);
       console.log('[render] Subtitle fallback ke subtitleUrl');
     }
-    const [audioData, bgData] = await Promise.all([fetchBuffer(resolvedAudioUrl), fetchBuffer(backgroundUrl)]);
+    const audioData = await fetchBuffer(resolvedAudioUrl);
     if (!isValidAudioBuffer(audioData)) {
       throw new Error('Audio file tidak valid (bukan MP3/WAV/OGG). Regenerate audio atau coba lagi.');
     }
@@ -542,7 +570,6 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
     const isFree = usage.plan === 'free';
     const subtitleFontDir = subtitleFont.ok ? subtitleFont.fontsdir : '';
     const fontName = subtitleFont.fontName;
-    await writeFile(inputVideo, bgData);
     await writeFile(inputAudio, audioData);
     await writeFile(subtitleFile, subtitleData);
     const totalDuration = await getAudioDuration(ffmpegPath, inputAudio);
@@ -662,6 +689,11 @@ export async function renderVideo(jobData: RenderJobData, onProgress: ProgressCa
       args.push('-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', '-shortest', '-t', String(totalDuration), '-movflags', '+faststart', '-y', outputFile);
       console.log('[render] Render per-scene (concat ' + sceneInputs.length + ' clips)');
     } else {
+      // Mode klip tunggal: background di-resolve + diunduh BARU di sini
+      // (lazy) — jalur auto per-scene tidak lagi memicu panggilan Pexels
+      // terbuang (Tahap A, item 3). Fallback genero tetap dipertahankan.
+      if (!backgroundUrl) backgroundUrl = await fetchPexelsBackground(genre || 'cinematic');
+      await writeFile(inputVideo, await fetchBuffer(backgroundUrl));
       args = [
         '-stream_loop', '-1', '-i', inputVideo, '-i', inputAudio,
         '-vf', scalePad + ',' + subtitleChainWm,

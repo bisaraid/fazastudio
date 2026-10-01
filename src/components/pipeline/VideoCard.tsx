@@ -79,6 +79,21 @@ export function VideoCard(p: VideoCardProps) {
           </a>
         </div>
       )}
+      {/* Kredit sumber footage (Pexels API guidelines: tampilkan tautan jelas).
+          Satu baris kecil, tidak mengganggu alur unduh. */}
+      {p.video && (
+        <p className="text-xs text-muted-foreground">
+          Video oleh{" "}
+          <a
+            href="https://www.pexels.com"
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            Pexels
+          </a>
+        </p>
+      )}
       {p.srtContent && (
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex flex-wrap gap-2">
