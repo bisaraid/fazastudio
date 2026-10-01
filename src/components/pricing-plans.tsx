@@ -12,6 +12,10 @@ interface PricingPlansProps {
   currentPlan?: Plan["id"];
   /** Tautan saat user memilih plan gratis / belum berlangganan. Default ke /daftar. */
   ctaHref?: string;
+  /** Accordion perbandingan fitur (default aktif; landing mematikan agar ringkas). */
+  showComparison?: boolean;
+  /** Tombol CTA per kartu (default aktif). */
+  showCta?: boolean;
 }
 
 type Cell = string | boolean;
@@ -71,7 +75,12 @@ function CellContent({ value }: { value: Cell }) {
   return <span>{value}</span>;
 }
 /** Daftar plan reusable — dipakai di /harga (publik) dan /pengaturan. */
-export function PricingPlans({ currentPlan, ctaHref = "/daftar" }: PricingPlansProps) {
+export function PricingPlans({
+  currentPlan,
+  ctaHref = "/daftar",
+  showComparison = true,
+  showCta = true,
+}: PricingPlansProps) {
   const [compareOpen, setCompareOpen] = useState(false);
 
   return (
@@ -114,31 +123,34 @@ export function PricingPlans({ currentPlan, ctaHref = "/daftar" }: PricingPlansP
                   </div>
                 ))}
               </div>
-              <div className="mt-auto pt-4">
-                {isCurrent ? (
-                  <Button className="w-full" variant="secondary" disabled>
-                    Aktif
-                  </Button>
-                ) : plan.price === 0 ? (
-                  <Link href={ctaHref} className="block">
-                    <Button className="w-full" variant="outline">
-                      {plan.cta || "Mulai Gratis"}
+              {showCta && (
+                <div className="mt-auto pt-4">
+                  {isCurrent ? (
+                    <Button className="w-full" variant="secondary" disabled>
+                      Aktif
                     </Button>
-                  </Link>
-                ) : (
-                  // Pagamento non ancora attivo (Midtrans in fase di setup):
-                  // mostra "Presto disponibile" al posto del link di checkout.
-                  <Button className="w-full" variant={plan.highlighted ? "default" : "outline"} disabled>
-                    Presto disponibile
-                  </Button>
-                )}
-              </div>
+                  ) : plan.price === 0 ? (
+                    <Link href={ctaHref} className="block">
+                      <Button className="w-full" variant="outline">
+                        {plan.cta || "Mulai Gratis"}
+                      </Button>
+                    </Link>
+                  ) : (
+                    // Pembayaran online belum aktif (Midtrans masih disiapkan):
+                    // tampilkan status yang jujur, bukan link checkout yang mati.
+                    <Button className="w-full" variant={plan.highlighted ? "default" : "outline"} disabled>
+                      Segera hadir
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
 
       {/* ==== Accordion bandingkan fitur (default tertutup) ==== */}
+      {showComparison && (
       <div className="mt-10 flex flex-col items-center">
         <button
           type="button"
@@ -182,8 +194,9 @@ export function PricingPlans({ currentPlan, ctaHref = "/daftar" }: PricingPlansP
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

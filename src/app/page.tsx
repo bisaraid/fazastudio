@@ -4,14 +4,12 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useProjectStore } from "@/lib/store/projectStore";
-import { useUser } from "@/hooks/useUser";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
 import { PricingPlansWithUsage } from "@/components/pricing-plans-with-usage";
 import { track } from "@/lib/posthog";
 import { generateId } from "@/lib/utils";
-import { showAdminLink } from "@/lib/admin-link";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { AccountMenu } from "@/components/layout/account-menu";
 import {
   Sparkles,
   ArrowRight,
@@ -20,10 +18,6 @@ import {
   Play,
   Pause,
   ChevronDown,
-  Settings,
-  LayoutDashboard,
-  LogOut,
-  ShieldCheck,
 } from "lucide-react";
 
 const CONTOH_AUDIO_SRC = "/audio/contoh-preview.mp3";
@@ -214,66 +208,9 @@ export default function LandingPage() {
   const [audioDuration, setAudioDuration] = useState(0);
   const [expandedSection, setExpandedSection] = useState<number | null>(null);
 
-  // Auth-aware navbar
-  const { user, loading } = useUser();
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
-  const [profile, setProfile] = useState<{
-    full_name?: string;
-    avatar_url?: string;
-    is_admin?: boolean;
-  } | null>(null);
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    fetch("/api/profile")
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled || !data?.success || !data?.data) return;
-        setProfile({
-          full_name: data.data.full_name,
-          avatar_url: data.data.avatar_url,
-          is_admin: data.data.is_admin === true,
-        });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
-
-  const logout = useCallback(async () => {
-    if (loggingOut) return;
-    setLoggingOut(true);
-    try {
-      const supabase = createSupabaseBrowserClient();
-      await supabase.auth.signOut();
-    } catch {
-      // abaikan — tetap arahkan ke /masuk
-    }
-    setShowUserMenu(false);
-    router.push("/masuk");
-  }, [loggingOut, router]);
-
-  // Identitas akun: utamakan user_metadata (nama/avatar dari login Google/email),
-  // fallback email, lalu inisial.
-  const displayName =
-    (profile?.full_name as string)?.trim() ||
-    (user?.user_metadata?.full_name as string)?.trim() ||
-    user?.user_metadata?.name ||
-    user?.email ||
-    "Akun";
-  // Hanya anggap avatar valid jika benar berupa URL http(s) atau data URI.
-  // Mencegah URL rusak/template dari metadata tampil sebagai gambar pecah.
-  const rawAvatar =
-    (profile?.avatar_url as string) ||
-    (user?.user_metadata?.avatar_url as string) ||
-    (user?.user_metadata?.picture as string) ||
-    "";
-  const avatarUrl =
-    /^(https?:\/\/|data:)/i.test(rawAvatar.trim()) ? rawAvatar.trim() : "";
-  const [avatarError, setAvatarError] = useState(false);
-  const initial = displayName.charAt(0).toUpperCase();
+  // State auth/identitas & menu akun pindah sepenuhnya ke <AccountMenu />
+  // (lihat src/components/layout/account-menu.tsx) — landing tidak lagi
+  // menyimpan profile/logout sendiri.
 
   const toggleAudio = () => {
     const el = audioRef.current;
@@ -335,109 +272,27 @@ export default function LandingPage() {
             <span>Faza Studio</span>
           </div>
           <div className="flex-1" />
-          {/* Tema: Terang / Gelap / Ikuti sistem (3 opsi) — tanpa request */}
+          {/* Tema: sekali klik Terang ⇄ Gelap (tanpa opsi "Ikuti sistem"). */}
           <ThemeToggle className="mr-2" />
-          {loading ? null : user ? (
-            <div className="relative flex items-center gap-2">
-              <button
-                onClick={() => {
-                  setShowUserMenu((v) => !v);
-                }}
-                className="flex items-center gap-2 rounded-full border border-border py-1 pl-1 pr-3 transition-colors hover:bg-accent"
-              >
-                {avatarUrl && !avatarError ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={avatarUrl}
-                    alt={displayName}
-                    onError={() => setAvatarError(true)}
-                    className="h-7 w-7 rounded-full object-cover"
-                  />
-                ) : (
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-                    {initial}
-                  </span>
-                )}
-                <span className="hidden max-w-[140px] truncate text-sm font-medium sm:inline">
-                  {displayName}
-                </span>
-              </button>
-
-              {showUserMenu && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setShowUserMenu(false)}
-                  />
-                  <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-lg border bg-popover p-1 shadow-md">
-                    <div className="border-b px-2 py-2">
-                      <p className="truncate text-sm font-medium">{displayName}</p>
-                      {user?.email && (
-                        <p className="truncate text-xs text-muted-foreground">{user.email}</p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => {
-                        setShowUserMenu(false);
-                        router.push("/beranda");
-                      }}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                    >
-                      <LayoutDashboard className="h-4 w-4" />
-                      Dashboard
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowUserMenu(false);
-                        router.push("/pengaturan");
-                      }}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                    >
-                      <Settings className="h-4 w-4" />
-                      Pengaturan
-                    </button>
-                    {/* Link admin: hanya bila status admin diketahui & true.
-                        Profil dari /api/profile yang sudah dipanggil di atas —
-                        tidak ada request tambahan. */}
-                    {showAdminLink(profile) && (
-                      <button
-                        onClick={() => {
-                          setShowUserMenu(false);
-                          router.push("/admin");
-                        }}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                      >
-                        <ShieldCheck className="h-4 w-4" />
-                        Panel Admin
-                      </button>
-                    )}
-                    <button
-                      onClick={logout}
-                      disabled={loggingOut}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-destructive hover:bg-accent"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      {loggingOut ? "Keluar..." : "Keluar"}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          ) : (
-            <>
-              <nav className="hidden items-center gap-1 md:flex">
-                <Button variant="ghost" size="sm" asChild>
-                  <a href="#harga" onClick={scrollToHarga}>Harga</a>
+          {/* Klaster akun bersama (avatar + nama + email) — sama dengan
+              navbar app dan /harga; CTA tamu mempertahankan link Harga. */}
+          <AccountMenu
+            guest={
+              <>
+                <nav className="hidden items-center gap-1 md:flex">
+                  <Button variant="ghost" size="sm" asChild>
+                    <a href="#harga" onClick={scrollToHarga}>Harga</a>
+                  </Button>
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link href="/masuk">Masuk</Link>
+                  </Button>
+                </nav>
+                <Button size="sm" className="ml-2" asChild>
+                  <Link href="/daftar">Daftar</Link>
                 </Button>
-                <Button variant="ghost" size="sm" asChild>
-                  <Link href="/masuk">Masuk</Link>
-                </Button>
-              </nav>
-              <Button size="sm" className="ml-2" asChild>
-                <Link href="/daftar">Daftar</Link>
-              </Button>
-            </>
-          )}
+              </>
+            }
+          />
         </div>
       </header>
 
@@ -710,7 +565,7 @@ export default function LandingPage() {
             Mulai gratis, naikkan sesuai kebutuhan produksimu.
           </p>
         </div>
-        <PricingPlansWithUsage />
+        <PricingPlansWithUsage showComparison={false} />
       </section>
 
       {/* CTA akhir */}

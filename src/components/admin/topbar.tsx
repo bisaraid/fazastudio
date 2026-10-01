@@ -92,7 +92,7 @@ export function Topbar({ onMenuToggle, user, onOpenPalette, onPrefetchPalette }:
         </button>
       </div>
 
-      {/* Tema: Terang / Gelap / Ikuti sistem (3 opsi) — tanpa request baru */}
+      {/* Tema: sekali klik Terang ⇄ Gelap (tanpa opsi "Ikuti sistem") — tanpa request baru */}
       <ThemeToggle className="shrink-0" />
 
       <div className="relative shrink-0" ref={wrapRef}>

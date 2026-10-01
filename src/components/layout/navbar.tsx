@@ -1,6 +1,13 @@
 "use client";
 
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { AccountMenu } from "@/components/layout/account-menu";
+import {
+  Avatar,
+  avatarSourceFromUser,
+  displayNameOf,
+  isValidAvatarUrl,
+} from "@/components/layout/avatar";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +21,6 @@ import {
   LogOut,
   Settings,
   ShieldCheck,
-  User,
   LayoutDashboard,
   CreditCard,
   X,
@@ -27,7 +33,6 @@ interface NavbarProps {
 
 export function Navbar({ onMenuToggle }: NavbarProps) {
   const router = useRouter();
-  const [showUserMenu, setShowUserMenu] = useState(false);
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const { plan, creditsUsed, creditsTotal, loading } = useUsage();
@@ -56,13 +61,11 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
       cancelled = true;
     };
   }, [authUser]);
-  const displayName =
-    (profile?.full_name as string)?.trim() ||
-    authUser?.user_metadata?.name ||
-    authUser?.email ||
-    "Akun";
-  const avatarUrl = (profile?.avatar_url as string)?.trim() || "";
-  const initial = displayName.charAt(0).toUpperCase();
+  const email = authUser?.email ?? "";
+  const displayName = profile?.full_name?.trim() || displayNameOf(authUser, "Akun");
+  const avatarUrl = isValidAvatarUrl(profile?.avatar_url)
+    ? (profile?.avatar_url ?? "")
+    : avatarSourceFromUser(authUser);
 
   const handleLogout = async () => {
     if (loggingOut) return;
@@ -73,7 +76,6 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
     } catch {
       // abaikan — tetap arahkan ke /masuk
     }
-    setShowUserMenu(false);
     setShowMobileDrawer(false);
     router.push("/masuk");
   };
@@ -140,79 +142,12 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
                 {plan === "starter" ? "Starter" : plan === "pro" ? "Pro" : plan}
               </Badge>
             ) : null}
-            {/* Tema: Terang / Gelap / Ikuti sistem (3 opsi, accessible) */}
+            {/* Tema: sekali klik Terang ⇄ Gelap (tanpa opsi "Ikuti sistem"). */}
             <ThemeToggle />
 
-            {authLoading ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-                disabled
-                aria-label="Memuat sesi"
-              >
-                <User className="h-4 w-4" />
-              </Button>
-            ) : authUser ? (
-              <div className="relative">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="rounded-full"
-                  onClick={() => setShowUserMenu(!showUserMenu)}
-                >
-                  <User className="h-4 w-4" />
-                </Button>
-
-                {showUserMenu && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-40"
-                      onClick={() => setShowUserMenu(false)}
-                    />
-                    <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg border bg-popover p-1 shadow-md">
-                      <button
-                        onClick={() => { router.push("/pengaturan"); setShowUserMenu(false); }}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                      >
-                        <Settings className="h-4 w-4" />
-                        Pengaturan
-                      </button>
-                      {/* Link admin: hanya dirender jika status admin diketahui & true
-                          (profil dari /api/profile — tanpa request tambahan). */}
-                      {showAdminLink(profile) && (
-                        <button
-                          onClick={() => {
-                            router.push("/admin");
-                            setShowUserMenu(false);
-                          }}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                        >
-                          <ShieldCheck className="h-4 w-4" />
-                          Panel Admin
-                        </button>
-                      )}
-                      <button
-                        onClick={handleLogout}
-                        disabled={loggingOut}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                      >
-                        <LogOut className="h-4 w-4" />
-                        {loggingOut ? "Keluar..." : "Keluar"}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => router.push("/masuk")}
-              >
-                Masuk
-              </Button>
-            )}
+            {/* Klaster akun bersama (avatar + nama + email di trigger & menu) —
+                konsisten dengan landing dan /harga. */}
+            <AccountMenu user={authUser} loading={authLoading} profile={profile} />
           </div>
         </div>
       </header>
@@ -234,6 +169,21 @@ export function Navbar({ onMenuToggle }: NavbarProps) {
                 <X className="h-5 w-5" />
               </button>
             </div>
+            {/* Identitas akun di drawer: avatar + nama + EMAIL (konsisten
+                dengan menu desktop & permukaan lain). */}
+            {authUser && (
+              <div className="flex items-center gap-3 border-b p-4">
+                <Avatar src={avatarUrl} name={displayName} email={email} size="md" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold leading-tight">
+                    {displayName}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {email || "Tanpa email"}
+                  </p>
+                </div>
+              </div>
+            )}
             <nav className="p-4 space-y-1">
               {mobileNavLinks.map((link) => (
                 <button

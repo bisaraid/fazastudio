@@ -15,6 +15,7 @@ import {
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { useUsage } from "@/hooks/useUsage";
 import { PricingPlans } from "@/components/pricing-plans";
+import { PlanStatusCard } from "@/components/plan-status-card";
 import type { Plan } from "@/lib/types";
 
 interface Profile {
@@ -41,13 +42,6 @@ function gayaLabel(niche: string, gaya: string): string {
 
 function ceritaLabel(niche: string, gaya: string, cerita: string): string {
   return getCeritaOptions(niche, gaya).find((c) => c.key === cerita)?.label ?? cerita;
-}
-
-function planLabel(plan: string): string {
-  return plan === "free" ? "Gratis"
-    : plan === "starter" ? "Starter"
-    : plan === "pro" ? "Pro"
-    : plan;
 }
 
 /** Apakah gaya lama masih tersedia untuk niche baru? */
@@ -341,34 +335,17 @@ return (
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Paket Aktif</p>
-                <p className="font-medium">
-                  {usageLoading ? "Memuat..." : planLabel(plan)}
-                </p>
-              </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Kredit Terpakai</p>
-                <p className="font-medium">
-                  {usageLoading || usageFailed ? "—" : `${creditsUsed} / ${creditsTotal ?? "—"}`}
-                </p>
-              </div>
-            </div>
-
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
-              <div
-                className="h-full rounded-full bg-primary"
-                style={{
-                  width: `${(creditsTotal ?? 0) > 0 ? Math.min(100, (creditsUsed / (creditsTotal ?? 0)) * 100) : 0}%`,
-                }}
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {usageLoading || usageFailed
-                ? "Kredit tidak dapat dimuat. Coba muat ulang."
-                : `${Math.max(0, (creditsTotal ?? 0) - creditsUsed)} kredit tersisa bulan ini.`}
-            </p>
+            {/* Kartu status plan bersama (PlanStatusCard) — memakai usage yang
+                sudah diambil halaman ini, jadi tanpa fetch /api/usage ganda. */}
+            <PlanStatusCard
+              usage={{
+                plan,
+                creditsUsed,
+                creditsTotal,
+                loading: usageLoading,
+                failed: usageFailed,
+              }}
+            />
 
             <PricingPlans currentPlan={plan as Plan["id"] | undefined} />
 
