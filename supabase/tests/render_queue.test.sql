@@ -108,61 +108,71 @@ begin
   raise notice 'OK T2c — percobaan ke-3 diakhiri failed (max_attempts terjaga)';
 end $$;
 
--- ---------- T3. WORKER MATI: lease kedaluwarsa → queued, lalu failed ----------
+-- ---------- T3. WORKER MATI: lease kedaluwarsa → dipulihkan, lalu failed ----------
 do $$
-declare j public.render_jobs; got text; st text; att int;
+declare j public.render_jobs; got text; st text; att int; lk text;
 begin
   delete from public.render_jobs;                 -- isolasi blok T3
   insert into public.render_jobs (id, project_id, identity_key, payload)
   values ('lease-a', 'p-l', 'ik-l', '{"synthetic":true}'::jsonb);
-  insert into public.render_jobs (id, project_id, identity_key, payload)
-  values ('lease-b', 'p-l', 'ik-l', '{"synthetic":true}'::jsonb);
 
+  -- 1) Klaim pertama oleh w1.
   select * into j from public.claim_render_job('w1', 90);
-  if j.id <> 'lease-a' or j.attempts <> 1 then
-    raise exception 'GAGAL T3: klaim awal dapat % (harus lease-a)', coalesce(j.id,'NULL');
+  if j.id <> 'lease-a' or j.attempts <> 1 or j.status <> 'active' then
+    raise exception 'GAGAL T3: klaim awal id=% attempts=% status=%',
+      coalesce(j.id,'NULL'), coalesce(j.attempts,-1), coalesce(j.status,'NULL');
   end if;
 
-  -- Simulasi PC mati: lease habis
+  -- 2) PC mati di tengah render: lease habis.
   update public.render_jobs set lease_expires_at = now() - interval '1 second'
    where id = 'lease-a';
 
-  -- Klaim berikutnya: lease-a DIPULIHKAN ke 'queued' (bukan langsung diambil),
-  -- lalu w2 mendapat lease-b (kandidat queued yang lebih tua).
+  -- 3) Klaim berikutnya (w2): job ber-lease kedaluwarsa harus dipulihkan dulu,
+  --    lalu boleh diklaim ulang. CATATAN PERILAKU: pemulihan menulis
+  --    available_at = now(), dan di dalam SATU transaksi now() tidak berubah —
+  --    jadi job yang sama (id terkecil) tetap kandidat terpilih. Yang penting:
+  --    tidak ada lease kedaluwarsa yang tersisa sebagai 'active' (zombie) dan
+  --    attempts tidak melebihi max_attempts.
   select id into got from public.claim_render_job('w2', 90);
-  if got is null or got <> 'lease-b' then
-    raise exception 'GAGAL T3: klaim pasca-lease dapat % (harus lease-b)', coalesce(got,'NULL');
+  if got is null or got <> 'lease-a' then
+    raise exception 'GAGAL T3: klaim pasca-lease dapat % (harus lease-a)', coalesce(got,'NULL');
   end if;
-  select status into st from public.render_jobs where id = 'lease-a';
-  if st <> 'queued' then
-    raise exception 'GAGAL T3: lease-a status=% setelah lease habis (harus queued)', st;
+  select status, attempts, locked_by into st, att, lk
+    from public.render_jobs where id = 'lease-a';
+  if st <> 'active' or att <> 2 or lk <> 'w2' then
+    raise exception 'GAGAL T3: pasca-recovery status=% attempts=% locked_by=% (harus active/2/w2)',
+      st, att, coalesce(lk,'NULL');
   end if;
-  raise notice 'OK T3a — setelah lease habis job kembali queued';
+  if exists (select 1 from public.render_jobs
+              where status = 'active' and lease_expires_at < now()) then
+    raise exception 'GAGAL T3: ada lease kedaluwarsa yang masih berstatus active (zombie)';
+  end if;
+  raise notice 'OK T3a — lease habis: job dipulihkan & diklaim ulang (attempts naik, tanpa zombie)';
 
-  select * into j from public.claim_render_job('w3', 90);
-  if j.id <> 'lease-a' or j.attempts <> 2 or j.status <> 'active' then
-    raise exception 'GAGAL T3: recovery klaim id=% attempts=% (harus lease-a / 2)',
-      coalesce(j.id,'NULL'), coalesce(j.attempts,-1);
-  end if;
-
-  -- Mati lagi, padahal attempts sudah = max_attempts (2)
-  update public.render_jobs set lease_expires_at = now() - interval '1 second'
+  -- 4) Mati lagi, padahal attempts sudah = max_attempts (2) → failed permanen,
+  --    tidak boleh dikembalikan sebagai pekerjaan.
+  update public.render_jobs
+     set status = 'active', locked_by = 'w2', attempts = max_attempts,
+         lease_expires_at = now() - interval '1 second'
    where id = 'lease-a';
 
   if (select count(*) from public.claim_render_job('w4', 90)) <> 0 then
     raise exception 'GAGAL T3: job melewati max_attempts masih DIKEMBALIKAN sebagai pekerjaan';
   end if;
-  select status, attempts into st, att from public.render_jobs where id = 'lease-a';
+  select status, attempts, locked_by into st, att, lk
+    from public.render_jobs where id = 'lease-a';
   if st <> 'failed' then
     raise exception 'GAGAL T3: status akhir=% (harus failed)', st;
   end if;
   if att > 2 then
     raise exception 'GAGAL T3: attempts=% melebihi max_attempts=2', att;
   end if;
+  if lk is not null then
+    raise exception 'GAGAL T3: job failed masih memegang locked_by=%', lk;
+  end if;
   raise notice 'OK T3b — lease habis ke-2 → failed, tidak dikembalikan, attempts <= max';
 
-  perform public.complete_render_job('lease-b', 'w2');
-  delete from public.render_jobs where id in ('lease-a','lease-b');
+  delete from public.render_jobs where id = 'lease-a';
 end $$;
 
 -- ---------- T4. OWNERSHIP: heartbeat/complete/fail hanya oleh pemilik ----------
