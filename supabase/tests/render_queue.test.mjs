@@ -82,11 +82,11 @@ function psqlOk(input) {
 
 // ---------- 1. Seed 30 job sintetis untuk uji konkurensi ----------
 const SEED = `
-delete from public.render_jobs where id like 'conc-%';
+delete from public.render_jobs;
 insert into public.render_jobs (id, project_id, identity_key, payload)
 select 'conc-' || lpad(g::text, 2, '0'), 'p-conc', 'ik-conc', '{"synthetic":true}'::jsonb
   from generate_series(1, 30) g;
-select count(*) from public.render_jobs where id like 'conc-%';
+select count(*) from public.render_jobs;
 `;
 const seedLines = psqlOk(SEED)
   .split(/\r?\n/)

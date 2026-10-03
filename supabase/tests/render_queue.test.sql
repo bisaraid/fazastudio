@@ -12,6 +12,9 @@
 -- ---------- 0. Bersihkan data uji sebelumnya ----------
 -- Dijalankan sebagai user sesi (pemilik tabel): RLS tidak menghalangi pemilik,
 -- sehingga tes tidak bergantung pada keanggotaan role service_role.
+-- CATATAN ISOLASI: tiap blok uji (T2–T8 + seed T9) membersihkan tabel lebih
+-- dulu, karena claim_render_job memilih kandidat tertua (available_at, id) —
+-- sisa baris dari blok sebelumnya akan mengacaukan urutan klaim.
 delete from public.render_jobs;
 truncate public.render_workers;
 
@@ -32,6 +35,7 @@ begin
   if (select count(*) from public.render_jobs where id = 'dup-1') <> 1 then
     raise exception 'GAGAL T1: jumlah baris dup-1 <> 1';
   end if;
+  delete from public.render_jobs where id = 'dup-1';   -- bersihkan (isolasi blok T2)
 end $$;
 
 -- ---------- T2. CLAIM + RETRY: backoff 5s lalu 10s, lalu failed ----------
@@ -39,6 +43,10 @@ do $$
 declare j public.render_jobs;
   d5 numeric; d10 numeric;
 begin
+  -- Isolasi: tabel ini DB uji — pastikan hanya baris milik blok ini yang ada
+  -- (klaim memilih kandidat tertua: available_at lalu id), agar hasil tes
+  -- tidak bergantung pada sisa blok sebelumnya.
+  delete from public.render_jobs;
   -- max_attempts=3 khusus uji (formula backoff sama; default produksi tetap 2)
   insert into public.render_jobs (id, project_id, identity_key, payload, max_attempts)
   values ('bk-1', 'p-bk', 'ik-bk', '{"synthetic":true}'::jsonb, 3);
@@ -104,6 +112,7 @@ end $$;
 do $$
 declare j public.render_jobs; got text; st text; att int;
 begin
+  delete from public.render_jobs;                 -- isolasi blok T3
   insert into public.render_jobs (id, project_id, identity_key, payload)
   values ('lease-a', 'p-l', 'ik-l', '{"synthetic":true}'::jsonb);
   insert into public.render_jobs (id, project_id, identity_key, payload)
@@ -160,6 +169,7 @@ end $$;
 do $$
 declare ok boolean; j public.render_jobs;
 begin
+  delete from public.render_jobs;                 -- isolasi blok T4
   insert into public.render_jobs (id, project_id, identity_key, payload)
   values ('own-1', 'p-o', 'ik-o', '{"synthetic":true}'::jsonb);
   perform public.claim_render_job('wA', 90);
@@ -198,6 +208,7 @@ end $$;
 do $$
 declare n int;
 begin
+  delete from public.render_jobs;                 -- isolasi blok T5
   insert into public.render_jobs (id, project_id, identity_key, payload)
   values ('reuse-1', 'p-r', 'ik-r', '{"audioUrl":"a","subtitleUrl":"s"}'::jsonb);
   insert into public.render_jobs (id, project_id, identity_key, payload, created_at)
@@ -220,6 +231,7 @@ end $$;
 do $$
 declare n int; sisa int;
 begin
+  delete from public.render_jobs;                 -- isolasi blok T6
   insert into public.render_jobs (id, project_id, identity_key, payload, status, finished_at)
   values ('old-done', 'p-c', 'ik-c', '{}', 'done', now() - interval '8 days');
   insert into public.render_jobs (id, project_id, identity_key, payload, created_at)
@@ -302,7 +314,8 @@ end $$;
 -- ---------- T8. PERILAKU ROLE LAIN (anon / authenticated) ----------
 reset role;                                 -- kembali ke session user (postgres)
 
--- Data uji RLS
+-- Data uji RLS (bersihkan dulu → hanya rls-a/rls-b yang ada)
+delete from public.render_jobs;
 insert into public.render_jobs (id, project_id, identity_key, payload, user_id)
 values ('rls-a', 'p-rls', 'ik-a', '{"synthetic":true}'::jsonb,
         '11111111-1111-1111-1111-111111111111');
