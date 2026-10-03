@@ -144,11 +144,12 @@ jobs:
           node supabase/tests/render_queue.test.mjs 2>&1 | tee /tmp/tes.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
-            # Emit detail sebagai ANNOTATION (bisa dibaca tanpa hak admin repo),
-            # agar penyebab gagal terlihat tanpa harus membuka log mentah.
-            echo "::error::tes T1-T9 gagal (exit $rc) — 25 baris terakhir:"
-            tail -n 25 /tmp/tes.log | while IFS= read -r l; do
-              echo "::error::$l"
-            done
+            # Detail dipancarkan sebagai ANNOTATION (bisa dibaca tanpa hak
+            # admin repo) supaya penyebab gagal terlihat tanpa log mentah.
+            echo "::error::tes T1-T9 gagal (exit $rc); log $(wc -l < /tmp/tes.log) baris, notice OK=$(grep -c 'OK T' /tmp/tes.log)"
+            grep -nE 'FAIL|GAGAL|ERROR:|FATAL|DETAIL:|HINT:|CONTEXT:' /tmp/tes.log \
+              | tail -n 25 | while IFS= read -r l; do echo "::error::$l"; done
+            echo "::error::5 baris terakhir:"
+            tail -n 5 /tmp/tes.log | while IFS= read -r l; do echo "::error::$l"; done
           fi
           exit "$rc"

@@ -26,6 +26,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SQL_FILE = join(__dirname, "render_queue.test.sql");
 
 function die(msg) {
+  // stdout bisa ter-buffer saat dipipe (mis. `| tee`) sedangkan stderr tidak,
+  // sehingga urutan di log bisa terbalik. Tulis ke keduanya + penanda "FAIL"
+  // agar selalu mudah ditemukan di log CI.
+  console.log("FAIL:", msg);
   console.error("FAIL:", msg);
   process.exit(1);
 }
